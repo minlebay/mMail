@@ -1,6 +1,7 @@
 <script>
   import { untrack } from 'svelte';
   import Icon from './Icon.svelte';
+  import Select from './Select.svelte';
   import { THEMES, applyTheme } from './themes.js';
   import { setAppearance, listAccounts, addAccount, removeAccount } from './api.js';
 
@@ -155,9 +156,9 @@
         </ul>
 
         <h3>Проверка новых писем</h3>
-        <select class="select" bind:value={pollSeconds}>
-          {#each POLL as [value, label] (value)}<option {value}>{label}</option>{/each}
-        </select>
+        <div class="poll">
+          <Select bind:value={pollSeconds} label="Интервал проверки" options={POLL.map(([value, label]) => ({ value, label }))} />
+        </div>
 
         <h3>Добавить ящик</h3>
         <form onsubmit={add}>
@@ -322,17 +323,9 @@
     accent-color: var(--accent);
   }
 
-  .select {
-    height: 34px;
-    padding: 0 10px;
-    border-radius: 9px;
-    border: 1px solid var(--glass-border);
-    background: rgba(255, 255, 255, 0.06);
-    color: inherit;
-    font: inherit;
-  }
-  .select option {
-    background: var(--surface);
+  .poll {
+    display: flex;
+    width: 240px;
   }
 
   .accounts {

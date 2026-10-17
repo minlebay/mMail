@@ -4,6 +4,7 @@
   import { listen } from '@tauri-apps/api/event';
   import TitleBar from './lib/TitleBar.svelte';
   import Icon from './lib/Icon.svelte';
+  import Select from './lib/Select.svelte';
   import { applyTheme } from './lib/themes.js';
   import { composeInit, sendMessage, pickAttachments, getAppearance } from './lib/api.js';
 
@@ -208,12 +209,10 @@
 
   <main class="panel compose">
     <div class="fields">
-      <label>
+      <div class="row">
         <span>От</span>
-        <select bind:value={from}>
-          {#each init?.accounts ?? [] as address (address)}<option value={address}>{address}</option>{/each}
-        </select>
-      </label>
+        <Select bind:value={from} label="Отправитель" options={(init?.accounts ?? []).map((a) => ({ value: a, label: a }))} />
+      </div>
       <label>
         <span>Кому</span>
         <input bind:value={to} placeholder="адрес@пример.ру, ещё@пример.ру" spellcheck="false" />
@@ -336,21 +335,22 @@
     display: flex;
     flex-direction: column;
   }
-  label {
+  label,
+  .row {
     display: flex;
     align-items: center;
     gap: 12px;
     min-height: 40px;
     border-bottom: 1px solid var(--glass-border);
   }
-  label span {
+  label span,
+  .row > span {
     width: 52px;
     flex: none;
     color: var(--muted);
     font-size: 13px;
   }
-  input,
-  select {
+  input {
     flex: 1;
     min-width: 0;
     height: 38px;
@@ -360,9 +360,6 @@
     font: inherit;
     color: inherit;
     user-select: text;
-  }
-  select option {
-    background: var(--surface);
   }
   .link {
     flex: none;
