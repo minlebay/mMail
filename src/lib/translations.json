@@ -1062,5 +1062,13 @@
   "Через {minutes} мин": {
     "en": "In {minutes} min",
     "sr": "Za {minutes} min"
+  },
+  "Прочитано": {
+    "en": "Mark read",
+    "sr": "Pročitano"
+  },
+  "Все прочитаны": {
+    "en": "Mark all read",
+    "sr": "Sve pročitano"
   }
 }

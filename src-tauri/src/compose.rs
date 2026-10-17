@@ -160,3 +160,13 @@ pub async fn pick_attachments(app: AppHandle, state: State<'_, ComposeState>) ->
     }
     Ok(infos)
 }
+
+/// «Ответить» из уведомления о письме: то же, что кнопка «Ответить» в просмотре.
+pub fn open_reply(app: &AppHandle, id: u32) -> Result<(), String> {
+    let store = tauri::Manager::state::<Store>(app);
+    let m = store.details(id).ok_or("письмо пропало")?;
+    let lower = m.subject.to_lowercase();
+    let subject = if lower.starts_with("re:") || lower.starts_with("fw:") || lower.starts_with("fwd:") { m.subject.clone() } else { format!("Re: {}", m.subject) };
+    let prefill = Prefill { from: m.account.clone(), to: m.from_addr.clone(), subject, source: Some(id), kind: "reply".into() };
+    open_compose(app.clone(), tauri::Manager::state::<ComposeState>(app), prefill)
+}

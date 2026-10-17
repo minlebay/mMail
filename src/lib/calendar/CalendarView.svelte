@@ -121,11 +121,13 @@
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div class="col" ondblclick={(e) => e.target === e.currentTarget && createAt(e, d)}>
               {#each layoutDay(dayEvents(d).filter((e) => !e.allDay), d) as { event: e, pos, column, columns: n } (e.id + e.calendarId)}
+                {@const height = Math.max(pos[1] * HOUR * 24 - 2, 18)}
                 <button
                   class="block"
+                  class:short={height < 38}
                   style:--c={color(e)}
                   style:top="{pos[0] * HOUR * 24}px"
-                  style:height="{Math.max(pos[1] * HOUR * 24 - 2, 18)}px"
+                  style:height="{height}px"
                   style:left="{(column / n) * 100}%"
                   style:width="{100 / n}%"
                   onclick={() => onopen(e)}
@@ -370,6 +372,8 @@
   }
   .block {
     position: absolute;
+    /* Кнопка центрирует содержимое по вертикали — у короткого события название уезжало за край. */
+    justify-content: flex-start;
     padding: 3px 6px;
     border-radius: 6px;
     overflow: hidden;
@@ -395,6 +399,21 @@
   .block span {
     color: var(--muted);
     font-size: 11px;
+  }
+  /* Короткое событие (меньше ~45 минут): одна строка «Название · 14:45». */
+  .block.short {
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+  .block.short b {
+    flex: 0 1 auto;
+    min-width: 0;
+  }
+  .block.short span {
+    flex: none;
   }
   .now {
     position: absolute;
