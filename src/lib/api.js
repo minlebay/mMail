@@ -28,6 +28,16 @@ export const setBodyDays = (days) => invoke('set_body_days', { days });
 export const clearCache = () => invoke('clear_cache');
 
 export const setShowAllAccounts = (show) => invoke('set_show_all_accounts', { show });
+// Google Календарь (OAuth: клиент из Google Cloud Console, вход — в браузере).
+export const googleStatus = () => invoke('google_status');
+export const googleConnect = (clientId, clientSecret) => invoke('google_connect', { clientId, clientSecret });
+export const googleDisconnect = () => invoke('google_disconnect');
+export const calendarList = () => invoke('calendar_list');
+export const calendarSetVisible = (id, visible) => invoke('calendar_set_visible', { id, visible });
+// from/to — RFC 3339; события: { id, calendarId, title, start, end, allDay, location, description, recurring }
+export const calendarEvents = (calendars, from, to) => invoke('calendar_events', { calendars, from, to });
+export const calendarSaveEvent = (calendarId, eventId, draft) => invoke('calendar_save_event', { calendarId, eventId, draft });
+export const calendarDeleteEvent = (calendarId, eventId) => invoke('calendar_delete_event', { calendarId, eventId });
 export const openSettings = () => invoke('open_settings');
 
 export const setZoom = (scale) => invoke('set_zoom', { scale });

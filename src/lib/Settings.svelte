@@ -7,7 +7,7 @@
   import Select from './Select.svelte';
   import TitleBar from './TitleBar.svelte';
   import { THEMES, applyTheme } from './themes.js';
-  import { setAppearance, listAccounts, addAccount, removeAccount, storageInfo, setBodyDays, clearCache, setShowAllAccounts } from './api.js';
+  import { setAppearance, listAccounts, addAccount, removeAccount, storageInfo, setBodyDays, clearCache, setShowAllAccounts, googleStatus, googleConnect, googleDisconnect } from './api.js';
 
   let { appearance } = $props();
 
@@ -119,6 +119,35 @@
   let closeToTray = $state(initial.closeToTray);
   // Сохраняется сразу отдельной командой: это дерево папок, а не оформление.
   let showAllAccounts = $state(initial.showAllAccounts ?? true);
+
+  // Google Календарь: клиент OAuth вводится один раз; секреты уходят сразу в KWallet через ядро.
+  let google = $state(null);
+  let clientId = $state('');
+  let clientSecret = $state('');
+  let connecting = $state(false);
+  let googleError = $state('');
+  googleStatus().then((s) => (google = s));
+
+  async function connectGoogle(e) {
+    e.preventDefault();
+    connecting = true;
+    googleError = '';
+    try {
+      const account = await googleConnect(clientId, clientSecret);
+      google = { account };
+      clientId = '';
+    } catch (err) {
+      googleError = String(err);
+    } finally {
+      clientSecret = '';
+      connecting = false;
+    }
+  }
+
+  async function disconnectGoogle() {
+    await googleDisconnect();
+    google = { account: null };
+  }
   let trayIcon = $state(initial.trayIcon);
   const TRAY_ICONS = $derived([
     ['color', $t("Цветной")],
@@ -345,6 +374,30 @@
           <input type="checkbox" bind:checked={() => showAllAccounts, (v) => setShowAllAccounts((showAllAccounts = v))} />
           {$t("Показывать раздел «Все ящики»")}
         </label>
+
+        <h3>{$t("Google Календарь")}</h3>
+        {#if google?.account}
+          <div class="storage">
+            <span>{$t("Подключён: {account}", { account: google.account })}</span>
+            <button class="chip" onclick={disconnectGoogle}>{$t("Отключить")}</button>
+          </div>
+        {:else if google}
+          <ol class="steps">
+            <li>{$t("Откройте console.cloud.google.com и создайте проект.")}</li>
+            <li>{$t("APIs & Services → Library: включите Google Calendar API.")}</li>
+            <li>{$t("Google Auth Platform → Audience: тип External, затем «Publish app» (в режиме Testing доступ истекает через 7 дней).")}</li>
+            <li>{$t("Clients → Create client → Desktop app. Скопируйте Client ID и Client secret сюда.")}</li>
+          </ol>
+          <form onsubmit={connectGoogle} class="google">
+            <input placeholder="Client ID" bind:value={clientId} required autocomplete="off" spellcheck="false" />
+            <input type="password" placeholder="Client secret" bind:value={clientSecret} required autocomplete="off" />
+            <button class="primary" disabled={connecting}>{connecting ? $t("Ждём вход в браузере…") : $t("Подключить")}</button>
+          </form>
+          {#if googleError}<div class="error">{googleError}</div>{/if}
+          <p class="hint">
+            {$t("Google покажет предупреждение «приложение не проверено» — это ваше собственное приложение, нажмите «Продолжить». Доступ можно отозвать здесь или в настройках аккаунта Google.")}
+          </p>
+        {/if}
 
         <h3>{$t("Хранилище на диске")}</h3>
         <div class="field">
@@ -595,6 +648,20 @@
   form {
     display: flex;
     gap: 8px;
+  }
+  form.google {
+    flex-wrap: wrap;
+  }
+  form.google input {
+    flex: 1 1 220px;
+  }
+  .steps {
+    margin: 0 0 10px;
+    padding-left: 20px;
+    color: var(--muted);
+    font-size: 12.5px;
+    line-height: 1.6;
+    user-select: text;
   }
   form input {
     flex: 1;

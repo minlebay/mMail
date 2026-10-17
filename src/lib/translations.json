@@ -902,5 +902,141 @@
   "Перевод": {
     "en": "Translation",
     "sr": "Prevod"
+  },
+  "Google Календарь": {
+    "en": "Google Calendar",
+    "sr": "Google kalendar"
+  },
+  "Подключён: {account}": {
+    "en": "Connected: {account}",
+    "sr": "Povezan: {account}"
+  },
+  "Отключить": {
+    "en": "Disconnect",
+    "sr": "Prekini vezu"
+  },
+  "Подключить": {
+    "en": "Connect",
+    "sr": "Poveži"
+  },
+  "Ждём вход в браузере…": {
+    "en": "Waiting for sign-in in the browser…",
+    "sr": "Čekamo prijavu u pregledaču…"
+  },
+  "Откройте console.cloud.google.com и создайте проект.": {
+    "en": "Open console.cloud.google.com and create a project.",
+    "sr": "Otvorite console.cloud.google.com i napravite projekat."
+  },
+  "APIs & Services → Library: включите Google Calendar API.": {
+    "en": "APIs & Services → Library: enable Google Calendar API.",
+    "sr": "APIs & Services → Library: uključite Google Calendar API."
+  },
+  "Google Auth Platform → Audience: тип External, затем «Publish app» (в режиме Testing доступ истекает через 7 дней).": {
+    "en": "Google Auth Platform → Audience: type External, then “Publish app” (in Testing mode access expires after 7 days).",
+    "sr": "Google Auth Platform → Audience: tip External, zatim „Publish app” (u režimu Testing pristup ističe za 7 dana)."
+  },
+  "Clients → Create client → Desktop app. Скопируйте Client ID и Client secret сюда.": {
+    "en": "Clients → Create client → Desktop app. Copy the Client ID and Client secret here.",
+    "sr": "Clients → Create client → Desktop app. Kopirajte Client ID i Client secret ovde."
+  },
+  "Google покажет предупреждение «приложение не проверено» — это ваше собственное приложение, нажмите «Продолжить». Доступ можно отозвать здесь или в настройках аккаунта Google.": {
+    "en": "Google will warn that the app is unverified — it is your own app, click “Continue”. Access can be revoked here or in your Google account settings.",
+    "sr": "Google će upozoriti da aplikacija nije proverena — to je vaša aplikacija, kliknite „Nastavi”. Pristup možete opozvati ovde ili u podešavanjima Google naloga."
+  },
+  "Почта": {
+    "en": "Mail",
+    "sr": "Pošta"
+  },
+  "Календарь": {
+    "en": "Calendar",
+    "sr": "Kalendar"
+  },
+  "Создать событие": {
+    "en": "New event",
+    "sr": "Novi događaj"
+  },
+  "Назад": {
+    "en": "Back",
+    "sr": "Nazad"
+  },
+  "Вперёд": {
+    "en": "Forward",
+    "sr": "Napred"
+  },
+  "Сегодня": {
+    "en": "Today",
+    "sr": "Danas"
+  },
+  "Месяц": {
+    "en": "Month",
+    "sr": "Mesec"
+  },
+  "Неделя": {
+    "en": "Week",
+    "sr": "Nedelja"
+  },
+  "День": {
+    "en": "Day",
+    "sr": "Dan"
+  },
+  "Подключите Google Календарь в настройках, на вкладке «Почтовые ящики».": {
+    "en": "Connect Google Calendar in Settings, on the “Mail accounts” tab.",
+    "sr": "Povežite Google kalendar u podešavanjima, na kartici „Nalozi e-pošte”."
+  },
+  "Открыть настройки": {
+    "en": "Open settings",
+    "sr": "Otvori podešavanja"
+  },
+  "ещё {count}": {
+    "en": "{count} more",
+    "sr": "još {count}"
+  },
+  "весь день": {
+    "en": "all day",
+    "sr": "ceo dan"
+  },
+  "Событие": {
+    "en": "Event",
+    "sr": "Događaj"
+  },
+  "Повторяющееся событие: изменения коснутся только этого повторения": {
+    "en": "Recurring event: changes apply only to this occurrence",
+    "sr": "Događaj koji se ponavlja: izmene važe samo za ovo ponavljanje"
+  },
+  "Удалить событие?": {
+    "en": "Delete event?",
+    "sr": "Obrisati događaj?"
+  },
+  "Изменить": {
+    "en": "Edit",
+    "sr": "Izmeni"
+  },
+  "Название": {
+    "en": "Title",
+    "sr": "Naziv"
+  },
+  "Весь день": {
+    "en": "All day",
+    "sr": "Ceo dan"
+  },
+  "Начало": {
+    "en": "Start",
+    "sr": "Početak"
+  },
+  "Конец": {
+    "en": "End",
+    "sr": "Kraj"
+  },
+  "Место": {
+    "en": "Location",
+    "sr": "Mesto"
+  },
+  "Описание": {
+    "en": "Description",
+    "sr": "Opis"
+  },
+  "Сохраняю…": {
+    "en": "Saving…",
+    "sr": "Čuvam…"
   }
 }

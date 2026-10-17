@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use zeroize::Zeroizing;
@@ -76,6 +76,7 @@ pub async fn google_connect(app: AppHandle, client_id: String, client_secret: St
     *app.state::<Google>().token.lock().await =
         Some(AccessToken { value: Zeroizing::new(tokens.access_token), expires: Instant::now() + Duration::from_secs(tokens.expires_in.saturating_sub(60)) });
     app.state::<ConfigStore>().update(|c| c.google_account = Some(email.clone()))?;
+    let _ = app.emit("google-changed", ());
     Ok(email)
 }
 
@@ -90,6 +91,7 @@ pub async fn google_disconnect(app: AppHandle) -> Result<(), String> {
     accounts::remove_google_secrets().await.map_err(|e| e.to_string())?;
     *app.state::<Google>().token.lock().await = None;
     app.state::<ConfigStore>().update(|c| c.google_account = None)?;
+    let _ = app.emit("google-changed", ());
     Ok(())
 }
 

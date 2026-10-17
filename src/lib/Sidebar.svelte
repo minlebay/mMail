@@ -3,9 +3,10 @@
   import { showContextMenu } from './contextMenu.js';
   import { writeClipboard, openSettings, markFolderRead } from './api.js';
   import Icon from './Icon.svelte';
+  import ModeSwitch from './ModeSwitch.svelte';
 
   // groups: [{ account: null | '' | email, title, folders: [{ id, name, unread }] }]
-  let { groups, active, onpick, oncompose, onrefresh, onerror } = $props();
+  let { mode, onmode, groups, active, onpick, oncompose, onrefresh, onerror } = $props();
 
   const ICONS = { inbox: 'inbox', starred: 'star', sent: 'send', drafts: 'file', trash: 'trash', junk: 'spam', archive: 'archive' };
   // Свои папки приходят с путём «Работа / Проекты»: в дереве — последняя часть с отступом.
@@ -58,6 +59,7 @@
 </script>
 
 <nav class="panel sidebar">
+  <ModeSwitch {mode} onchange={onmode} />
   <button class="compose" onclick={() => oncompose()}><Icon name="pencil" />{$t("Написать")}</button>
 
   <div class="tree scroll-gutter">

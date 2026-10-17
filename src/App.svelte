@@ -7,10 +7,15 @@
   import LinkDialog from './lib/LinkDialog.svelte';
   import TranslationDialog from './lib/TranslationDialog.svelte';
   import Splitter from './lib/Splitter.svelte';
+  import CalendarSidebar from './lib/calendar/CalendarSidebar.svelte';
+  import CalendarView from './lib/calendar/CalendarView.svelte';
+  import EventDialog from './lib/calendar/EventDialog.svelte';
+  import { visibleRange, toRfc3339 } from './lib/calendar/dates.js';
   import { applyTheme, DEFAULT_THEME, DEFAULT_OPACITY } from './lib/themes.js';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { listen } from '@tauri-apps/api/event';
   import { listFolders, syncStatus, getAppearance, setZoom, openSettings, openCompose as openComposeWindow } from './lib/api.js';
+  import { googleStatus, calendarList, calendarSetVisible, calendarEvents, calendarSaveEvent, calendarDeleteEvent } from './lib/api.js';
   import { setMenuErrorHandler } from './lib/contextMenu.js';
 
   const win = getCurrentWindow();
@@ -102,6 +107,7 @@
         applyTheme(appearance.theme, appearance.opacity);
       }),
       listen('message-sent', () => showToast('Письмо отправлено')),
+      listen('google-changed', () => refreshGoogle()),
       listen('operation-error', (e) => showToast(String(e.payload))),
       // Удалённое письмо больше не показываем в просмотре.
       listen('message-trashed', (e) => {
@@ -139,6 +145,80 @@
     setTimeout(() => (toast = ''), 3000);
   }
 
+  // Режим окна: почта или календарь (удобство этого компьютера — localStorage).
+  let mode = $state(readMode());
+  function readMode() {
+    try {
+      return localStorage.getItem('mmail.mode') === 'calendar' ? 'calendar' : 'mail';
+    } catch {
+      return 'mail';
+    }
+  }
+  function setMode(next) {
+    mode = next;
+    try {
+      localStorage.setItem('mmail.mode', next);
+    } catch {}
+  }
+
+  // Календарь: список календарей и события видимого периода (только в памяти).
+  let googleAccount = $state(null);
+  let calendars = $state([]);
+  let events = $state([]);
+  let calDate = $state(new Date());
+  let calView = $state('week');
+  let calLoading = $state(false);
+  let calError = $state('');
+  let eventDialog = $state(null); // { event } | { preset }
+  let calVersion = $state(0);
+  const calColors = $derived(Object.fromEntries(calendars.map((c) => [c.id, c.color])));
+
+  const refreshGoogle = () =>
+    googleStatus().then((s) => {
+      googleAccount = s.account;
+      if (googleAccount) calendarList().then((list) => (calendars = list), (e) => (calError = String(e)));
+      else {
+        calendars = [];
+        events = [];
+      }
+    });
+  refreshGoogle();
+
+  $effect(() => {
+    if (mode !== 'calendar' || !googleAccount) return;
+    const visible = calendars.filter((c) => c.visible).map((c) => c.id);
+    const [from, to] = visibleRange(calView, calDate);
+    calVersion;
+    let cancelled = false;
+    calLoading = true;
+    calError = '';
+    calendarEvents(visible, toRfc3339(from), toRfc3339(to))
+      .then((list) => !cancelled && (events = list))
+      .catch((e) => !cancelled && (calError = String(e)))
+      .finally(() => !cancelled && (calLoading = false));
+    // Изменения из других клиентов — раз в 5 минут, пока календарь на экране.
+    const timer = setInterval(() => calVersion++, 5 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  });
+
+  function toggleCalendar(id, visible) {
+    calendars = calendars.map((c) => (c.id === id ? { ...c, visible } : c));
+    calendarSetVisible(id, visible).catch((e) => showToast(String(e)));
+  }
+
+  async function saveEvent(calendarId, eventId, draft) {
+    await calendarSaveEvent(calendarId, eventId, draft);
+    calVersion++;
+  }
+
+  async function deleteEvent(calendarId, eventId) {
+    await calendarDeleteEvent(calendarId, eventId);
+    calVersion++;
+  }
+
   function pickFolder(account, folder) {
     active = { account, folder };
     selectedId = null;
@@ -156,13 +236,53 @@
     onsettings={openSettings}
   />
 
+  {#if mode === 'calendar'}
+    <main class="layout" style:grid-template-columns="minmax(150px, {sizes.sidebar}px) 12px minmax(400px, 1fr)">
+      <CalendarSidebar
+        {mode}
+        onmode={setMode}
+        date={calDate}
+        onpick={(d) => (calDate = d)}
+        {calendars}
+        ontoggle={toggleCalendar}
+        oncreate={() => (eventDialog = { preset: { start: new Date(calDate.getFullYear(), calDate.getMonth(), calDate.getDate(), new Date().getHours() + 1) } })}
+        connected={!!googleAccount}
+      />
+      <Splitter value={sizes.sidebar} min={150} max={380} initial={SIZES.sidebar} onchange={(px) => resize('sidebar', px)} />
+      <CalendarView
+        date={calDate}
+        ondate={(d) => (calDate = d)}
+        view={calView}
+        onview={(v) => (calView = v)}
+        {events}
+        colors={calColors}
+        onopen={(event) => (eventDialog = { event })}
+        oncreate={(start, allDay) => (eventDialog = { preset: { start, allDay } })}
+        loading={calLoading}
+        error={calError}
+        connected={!!googleAccount}
+        onconnect={openSettings}
+      />
+    </main>
+  {:else}
   <main class="layout" style:grid-template-columns="minmax(150px, {sizes.sidebar}px) 12px minmax(220px, {sizes.list}px) 12px minmax(280px, 1fr)">
-    <Sidebar {groups} {active} onpick={pickFolder} oncompose={(from) => openCompose(from ? { from } : {})} onrefresh={() => { version++; refreshFolders(); }} onerror={showToast} />
+    <Sidebar {mode} onmode={setMode} {groups} {active} onpick={pickFolder} oncompose={(from) => openCompose(from ? { from } : {})} onrefresh={() => { version++; refreshFolders(); }} onerror={showToast} />
     <Splitter value={sizes.sidebar} min={150} max={380} initial={SIZES.sidebar} onchange={(px) => resize('sidebar', px)} />
     <MessageList onreply={replyTo} onerror={showToast} account={active.account} folder={active.folder} {version} {selectedId} onselect={(id) => (selectedId = id)} />
     <Splitter value={sizes.list} min={220} max={640} initial={SIZES.list} onchange={(px) => resize('list', px)} />
     <Reader id={selectedId} onreply={replyTo} />
   </main>
+  {/if}
+  {#if eventDialog}
+    <EventDialog
+      event={eventDialog.event ?? null}
+      preset={eventDialog.preset ?? null}
+      {calendars}
+      onclose={() => (eventDialog = null)}
+      onsave={saveEvent}
+      ondelete={deleteEvent}
+    />
+  {/if}
 
   <LinkDialog />
   <TranslationDialog />
