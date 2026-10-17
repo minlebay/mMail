@@ -866,5 +866,17 @@
   "Перевести письмо": {
     "en": "Translate message",
     "sr": "Prevedi poruku"
+  },
+  "Заголовок недоступен": {
+    "en": "Header unavailable",
+    "sr": "Zaglavlje nedostupno"
+  },
+  "Сервер не отдал письмо": {
+    "en": "The server did not return this message",
+    "sr": "Server nije vratio poruku"
+  },
+  "Сервер сейчас не отдаёт это письмо; mMail попробует ещё раз позже": {
+    "en": "The server is not returning this message right now; mMail will try again later",
+    "sr": "Server trenutno ne vraća ovu poruku; mMail će pokušati ponovo kasnije"
   }
 }

@@ -191,12 +191,12 @@
         >
           {#if item}
             <div class="line">
-              <span class="from">{item.fromName}</span>
+              <span class="from" class:muted={item.unavailable}>{item.unavailable ? $t('Заголовок недоступен') : item.fromName}</span>
               {#if item.starred}<span class="star"><Icon name="star" size={12} /></span>{/if}
               <span class="date">{item.date}</span>
             </div>
             <div class="line">
-              <span class="subject">{item.subject}</span>
+              <span class="subject" class:muted={item.unavailable} title={item.unavailable ? $t('Сервер сейчас не отдаёт это письмо; mMail попробует ещё раз позже') : undefined}>{item.unavailable ? $t('Сервер не отдал письмо') : item.subject}</span>
               {#if item.hasAttachments}<span class="clip" title={$t("Есть вложения")}><Icon name="paperclip" size={13} /></span>{/if}
             </div>
           {:else}
@@ -211,6 +211,12 @@
 </section>
 
 <style>
+  .from.muted,
+  .subject.muted {
+    color: var(--muted);
+    font-style: italic;
+  }
+
   .list {
     display: flex;
     flex-direction: column;

@@ -25,6 +25,7 @@ pub fn generate(count: usize) -> Vec<Message> {
             references: Vec::new(),
             has_attachments: false,
             attachments: Vec::new(),
+            unavailable: false,
         });
     };
 

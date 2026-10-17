@@ -13,7 +13,7 @@ use zeroize::Zeroizing;
 use crate::imap::Result;
 use crate::store::{Auth, Folder, Message, Opened};
 
-const SCHEMA_VERSION: i32 = 2;
+const SCHEMA_VERSION: i32 = 3;
 
 pub struct Db(Mutex<Connection>);
 
@@ -63,7 +63,7 @@ impl Db {
         let conn = self.0.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT account, folder, uid, unread, starred, from_name, from_addr, subject, timestamp, auth,
-                    has_attachments, html, message_id, refs, attachments FROM messages",
+                    has_attachments, html, message_id, refs, attachments, unavailable FROM messages",
         )?;
         let messages = stmt
             .query_map([], |r| {
@@ -83,6 +83,7 @@ impl Db {
                     message_id: r.get(12)?,
                     references: serde_json::from_str(&r.get::<_, String>(13)?).unwrap_or_default(),
                     attachments: serde_json::from_str(&r.get::<_, String>(14)?).unwrap_or_default(),
+                    unavailable: r.get(15)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -100,8 +101,8 @@ impl Db {
         {
             let mut stmt = tx.prepare(
                 "INSERT OR IGNORE INTO messages (account, folder, uid, unread, starred, from_name, from_addr, subject,
-                    timestamp, auth, has_attachments, html, message_id, refs, attachments)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                    timestamp, auth, has_attachments, html, message_id, refs, attachments, unavailable)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             )?;
             for m in messages {
                 let (Some(account), Some(uid)) = (&m.account, m.uid) else { continue };
@@ -121,10 +122,23 @@ impl Db {
                     m.message_id,
                     serde_json::to_string(&m.references)?,
                     serde_json::to_string(&m.attachments)?,
+                    m.unavailable,
                 ])?;
             }
         }
         tx.commit()?;
+        Ok(())
+    }
+
+    /// Заголовок, который сервер наконец отдал, — вместо заглушки.
+    pub fn replace_headers(&self, m: &Message) -> Result<()> {
+        let (Some(account), Some(uid)) = (&m.account, m.uid) else { return Ok(()) };
+        self.0.lock().unwrap().execute(
+            "UPDATE messages SET from_name = ?4, from_addr = ?5, subject = ?6, timestamp = ?7, has_attachments = ?8,
+                unread = ?9, starred = ?10, unavailable = 0
+             WHERE account = ?1 AND folder = ?2 AND uid = ?3",
+            params![account, folder_to(m.folder), uid, m.from_name, m.from_addr, m.subject, m.timestamp, m.has_attachments, m.unread, m.starred],
+        )?;
         Ok(())
     }
 
@@ -207,6 +221,15 @@ impl Db {
         Ok(())
     }
 
+    pub fn remove_folder(&self, account: &str, folder: Folder) -> Result<()> {
+        let mut conn = self.0.lock().unwrap();
+        let tx = conn.transaction()?;
+        tx.execute("DELETE FROM messages WHERE account = ?1 AND folder = ?2", params![account, folder_to(folder)])?;
+        tx.execute("DELETE FROM folders WHERE account = ?1 AND folder = ?2", params![account, folder_to(folder)])?;
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn remove_account(&self, account: &str) -> Result<()> {
         let conn = self.0.lock().unwrap();
         conn.execute("DELETE FROM messages WHERE account = ?1", [account])?;
@@ -229,8 +252,12 @@ impl Db {
 }
 
 fn migrate(conn: &Connection) -> Result<()> {
-    let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    let mut version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if version >= SCHEMA_VERSION {
+        return Ok(());
+    }
+    if version == 0 {
+        create_schema(conn)?;
         return Ok(());
     }
     if version == 1 {
@@ -243,8 +270,21 @@ fn migrate(conn: &Connection) -> Result<()> {
              PRAGMA user_version = 2;
              COMMIT;"
         ))?;
-        return Ok(());
+        version = 2;
     }
+    if version == 2 {
+        // v3: заглушки писем, чей заголовок сервер не отдал (Яндекс: NO [UNAVAILABLE]).
+        conn.execute_batch(
+            "BEGIN;
+             ALTER TABLE messages ADD COLUMN unavailable INTEGER NOT NULL DEFAULT 0;
+             PRAGMA user_version = 3;
+             COMMIT;",
+        )?;
+    }
+    Ok(())
+}
+
+fn create_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE TABLE messages (
             account TEXT NOT NULL,
@@ -262,6 +302,7 @@ fn migrate(conn: &Connection) -> Result<()> {
             message_id TEXT,
             refs TEXT NOT NULL,
             attachments TEXT NOT NULL,
+            unavailable INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (account, folder, uid)
         ) WITHOUT ROWID;
         CREATE TABLE folders (
@@ -270,7 +311,7 @@ fn migrate(conn: &Connection) -> Result<()> {
             uidvalidity INTEGER NOT NULL,
             PRIMARY KEY (account, folder)
         ) WITHOUT ROWID;
-        PRAGMA user_version = 2;",
+        PRAGMA user_version = 3;",
     )?;
     Ok(())
 }
@@ -320,6 +361,7 @@ mod tests {
             references: Vec::new(),
             has_attachments: false,
             attachments: Vec::new(),
+            unavailable: false,
         }
     }
 

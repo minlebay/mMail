@@ -99,6 +99,9 @@ pub struct Message {
     pub has_attachments: bool,
     /// Известны после открытия письма.
     pub attachments: Vec<AttachmentMeta>,
+    /// Сервер отказал в заголовке (Яндекс: `NO [UNAVAILABLE]`): в списке — заглушка
+    /// с датой и флагами, заголовок запрашиваем позже ещё раз.
+    pub unavailable: bool,
 }
 
 struct Entry {
@@ -120,6 +123,8 @@ pub struct Summary {
     unread: bool,
     starred: bool,
     has_attachments: bool,
+    /// Заглушка: сервер не отдал заголовок.
+    unavailable: bool,
 }
 
 /// Всё, что нужно, чтобы открыть письмо.
@@ -228,6 +233,44 @@ impl Store {
         )
     }
 
+    /// UID заглушек папки (сервер не отдал заголовок), от новых к старым.
+    pub fn unavailable_uids(&self, account: &str, folder: Folder) -> Vec<u32> {
+        let entries = self.entries.read().unwrap();
+        entries
+            .iter()
+            .filter(|e| e.msg.unavailable && e.msg.folder == folder && e.msg.account.as_deref() == Some(account))
+            .filter_map(|e| e.msg.uid)
+            .collect()
+    }
+
+    /// Сервер отдал заголовки писем, которые были заглушками.
+    pub fn replace_headers(&self, messages: Vec<Message>) {
+        let mut entries = self.entries.write().unwrap();
+        for m in messages {
+            let Some(e) = entries.iter_mut().find(|e| e.msg.uid == m.uid && e.msg.folder == m.folder && e.msg.account == m.account) else {
+                continue;
+            };
+            self.persist(|db| db.replace_headers(&m));
+            e.haystack = format!("{} {} {}", m.from_name, m.from_addr, m.subject).to_lowercase();
+            e.msg.from_name = m.from_name;
+            e.msg.from_addr = m.from_addr;
+            e.msg.subject = m.subject;
+            e.msg.timestamp = m.timestamp;
+            e.msg.has_attachments = m.has_attachments;
+            e.msg.unread = m.unread;
+            e.msg.starred = m.starred;
+            e.msg.unavailable = false;
+        }
+        entries.sort_by(|a, b| b.msg.timestamp.cmp(&a.msg.timestamp));
+    }
+
+    /// Папку удалили на сервере: забываем её письма и UIDVALIDITY.
+    pub fn remove_folder(&self, account: &str, folder: Folder) {
+        self.entries.write().unwrap().retain(|e| !(e.msg.folder == folder && e.msg.account.as_deref() == Some(account)));
+        self.validity.lock().unwrap().remove(&(account.to_string(), folder));
+        self.persist(|db| db.remove_folder(account, folder));
+    }
+
     /// Папки ящика, письма которых есть в хранилище.
     pub fn folders_of(&self, account: &str) -> Vec<Folder> {
         let entries = self.entries.read().unwrap();
@@ -319,6 +362,7 @@ impl Store {
                     unread: e.msg.unread,
                     starred: e.msg.starred,
                     has_attachments: e.msg.has_attachments,
+                    unavailable: e.msg.unavailable,
                 });
             }
             total += 1;
@@ -417,7 +461,7 @@ impl Store {
         let entries = self.entries.read().unwrap();
         entries
             .iter()
-            .filter(|e| e.msg.html.is_none() && e.msg.folder == folder && e.msg.account.as_deref() == Some(account))
+            .filter(|e| e.msg.html.is_none() && !e.msg.unavailable && e.msg.folder == folder && e.msg.account.as_deref() == Some(account))
             .filter(|e| since.is_none_or(|since| e.msg.timestamp >= since))
             .filter_map(|e| e.msg.uid)
             .collect()
@@ -510,4 +554,49 @@ fn folder_filter(folder: &str) -> Option<Box<dyn Fn(&Message) -> bool>> {
 /// Всегда дата и время в местном часовом поясе: «17.10.2026 13:28».
 pub fn date_label(timestamp: i64) -> String {
     Local.timestamp_opt(timestamp, 0).single().map(|at| at.format("%d.%m.%Y %H:%M").to_string()).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn message(uid: u32) -> Message {
+        Message {
+            account: Some("me@ya.ru".into()),
+            folder: Folder::Inbox,
+            uid: Some(uid),
+            starred: false,
+            unread: true,
+            from_name: "a".into(),
+            from_addr: "a@b.example".into(),
+            subject: "s".into(),
+            timestamp: 1_700_000_000 + i64::from(uid),
+            auth: Auth::Unknown,
+            html: None,
+            message_id: None,
+            references: Vec::new(),
+            has_attachments: false,
+            attachments: Vec::new(),
+            unavailable: false,
+        }
+    }
+
+    #[test]
+    fn synced_batches_survive_restart() {
+        let dir = std::env::temp_dir().join(format!("mmail-test-store-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let key = [9u8; 32];
+        let store = Store::default();
+        store.attach_db(Db::open(&dir, &key).unwrap()).unwrap();
+        store.check_validity("me@ya.ru", Folder::Inbox, 7);
+        store.append((1..=3).map(message).collect());
+        store.append((3..=5).map(message).collect());
+        drop(store);
+
+        let again = Store::default();
+        again.attach_db(Db::open(&dir, &key).unwrap()).unwrap();
+        again.check_validity("me@ya.ru", Folder::Inbox, 7);
+        assert_eq!(again.uids("me@ya.ru", Folder::Inbox).len(), 5);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

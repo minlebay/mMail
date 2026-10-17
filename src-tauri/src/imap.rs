@@ -32,6 +32,13 @@ type Session = async_imap::Session<TlsStream<TcpStream>>;
 
 /// Писем за один FETCH: каждая порция сразу появляется в списке.
 const BATCH: u32 = 200;
+/// Порция меньше этого не бывает, даже на медленном сервере.
+const MIN_BATCH: usize = 25;
+/// Порция дольше — уменьшаем вдвое, быстрее — увеличиваем.
+const SLOW_BATCH: Duration = Duration::from_secs(10);
+const FAST_BATCH: Duration = Duration::from_secs(3);
+/// Как часто снова просить у сервера заголовки, в которых он отказал.
+const RETRY_UNAVAILABLE: Duration = Duration::from_secs(30 * 60);
 const TIMEOUT: Duration = Duration::from_secs(20);
 /// Как часто сверять флаги (прочитано/важное), изменённые в других клиентах.
 /// Новые письма проверяются чаще — интервал в настройках.
@@ -92,6 +99,8 @@ struct Cursor {
     total: usize,
     /// UID ещё не загруженных писем, от новых к старым; пусто — папка загружена целиком.
     missing: Vec<u32>,
+    /// Текущий размер порции (подстраивается под скорость сервера).
+    batch: usize,
 }
 
 async fn fetch_batch(session: &mut Session, account: &str, cursor: &mut Cursor) -> Result<Vec<Message>> {
@@ -99,13 +108,26 @@ async fn fetch_batch(session: &mut Session, account: &str, cursor: &mut Cursor) 
         return Ok(Vec::new());
     }
     session.examine(&cursor.name).await?;
-    let batch: Vec<u32> = cursor.missing.drain(..cursor.missing.len().min(BATCH as usize)).collect();
+    let batch: Vec<u32> = cursor.missing.drain(..cursor.missing.len().min(cursor.batch)).collect();
     let set = uid_set(&batch);
     let started = std::time::Instant::now();
     // Только нужные поля заголовка — так же синхронизирует Thunderbird.
     let fetches: Vec<Fetch> = session.uid_fetch(&set, HEADER_QUERY).await?.try_collect().await?;
-    eprintln!("mMail: {} {} писем за {:?}", cursor.name, batch.len(), started.elapsed());
-    Ok(fetches.iter().filter_map(|f| to_message(f, account, cursor.folder)).collect())
+    let took = started.elapsed();
+    let mut parsed: Vec<Message> = fetches.iter().filter_map(|f| to_message(f, account, cursor.folder)).collect();
+    eprintln!("mMail: {}: {} из {} писем за {took:?}", cursor.display, parsed.len(), batch.len());
+    // Сервер может отказать в заголовках (Яндекс отвечает «NO [UNAVAILABLE]» на старые письма),
+    // а библиотека превращает отказ в пустой ответ. Таким письмам — заглушки с датой и флагами,
+    // иначе каждый запуск заново ждал бы их минутами.
+    let got: HashSet<u32> = fetches.iter().filter_map(|f| f.uid).collect();
+    let lost: Vec<u32> = batch.iter().copied().filter(|uid| !got.contains(uid)).collect();
+    if !lost.is_empty() {
+        let meta: Vec<Fetch> = session.uid_fetch(uid_set(&lost), "(UID FLAGS INTERNALDATE)").await?.try_collect().await?;
+        eprintln!("mMail: {}: сервер не отдал заголовки {} писем — заглушки", cursor.display, meta.len());
+        parsed.extend(meta.iter().filter_map(|f| placeholder(f, account, cursor.folder)));
+    }
+    cursor.batch = if took > SLOW_BATCH { (cursor.batch / 2).max(MIN_BATCH) } else if took < FAST_BATCH { (cursor.batch * 2).min(BATCH as usize) } else { cursor.batch };
+    Ok(parsed)
 }
 
 /// Набор UID для команды IMAP: подряд идущие сворачиваются в диапазоны («1:3,7,9:10»).
@@ -147,6 +169,29 @@ async fn open_cache(app: &AppHandle) -> Result<()> {
     Ok(())
 }
 
+/// Письмо, заголовок которого сервер не отдал: только UID, флаги и дата получения.
+fn placeholder(fetch: &Fetch, account: &str, folder: Folder) -> Option<Message> {
+    let flags: Vec<_> = fetch.flags().collect();
+    Some(Message {
+        account: Some(account.to_string()),
+        folder,
+        uid: Some(fetch.uid?),
+        starred: flags.contains(&Flag::Flagged),
+        unread: !flags.contains(&Flag::Seen),
+        from_name: String::new(),
+        from_addr: String::new(),
+        subject: String::new(),
+        timestamp: fetch.internal_date().map(|d| d.timestamp()).unwrap_or_default(),
+        auth: Auth::Unknown,
+        html: None,
+        message_id: None,
+        references: Vec::new(),
+        has_attachments: false,
+        attachments: Vec::new(),
+        unavailable: true,
+    })
+}
+
 fn to_message(fetch: &Fetch, account: &str, folder: Folder) -> Option<Message> {
     let parsed = MessageParser::default().parse_headers(fetch.header()?)?;
     let from = parsed.from().and_then(|a| a.first());
@@ -179,6 +224,7 @@ fn to_message(fetch: &Fetch, account: &str, folder: Folder) -> Option<Message> {
             ct.ctype().eq_ignore_ascii_case("multipart") && ct.subtype().is_some_and(|s| s.eq_ignore_ascii_case("mixed"))
         }),
         attachments: Vec::new(),
+        unavailable: false,
     })
 }
 
@@ -212,12 +258,18 @@ pub struct SyncStatus {
 /// Подключённый ящик: папки на сервере и отдельная сессия для открытия писем.
 struct Connection {
     account: Account,
-    folders: HashMap<Folder, String>,
-    /// Папки в порядке дерева, с именами для людей.
-    list: Vec<ServerFolder>,
+    /// Папки в порядке дерева, с именами для людей; обновляются по LIST раз в минуту.
+    list: std::sync::Mutex<Vec<ServerFolder>>,
     reader: Mutex<Option<Session>>,
     /// Ящик удалён или добавлен заново — фоновая синхронизация должна остановиться.
     cancelled: AtomicBool,
+}
+
+impl Connection {
+    /// Имя папки на сервере для команд IMAP.
+    fn server_name(&self, folder: Folder) -> Option<String> {
+        self.list.lock().unwrap().iter().find(|f| f.folder == folder).map(|f| f.server_name.clone())
+    }
 }
 
 #[derive(Default)]
@@ -267,7 +319,7 @@ impl Imap {
 
     /// Папки подключённого ящика для дерева; `None`, пока ящик не подключился.
     pub fn folders(&self, email: &str) -> Option<Vec<ServerFolder>> {
-        self.connection(email).map(|c| c.list.clone())
+        self.connection(email).map(|c| c.list.lock().unwrap().clone())
     }
 
     fn connection(&self, email: &str) -> Option<Arc<Connection>> {
@@ -353,33 +405,30 @@ async fn run_sync(app: &AppHandle, account: Account) -> Result<()> {
     let reader = connect(&account, &password).await?;
     drop(password);
 
+    // Возможности спрашиваем сразу после входа, пока сессия чистая: у Яндекса после отказов
+    // в заголовках (NO [UNAVAILABLE]) ответ на CAPABILITY приходил пустым.
+    let capabilities = session.capabilities().await;
     let store = app.state::<Store>();
+    let started = std::time::Instant::now();
     let list = discover_folders(&mut session).await?;
-    let folders: HashMap<Folder, String> = list.iter().map(|f| (f.folder, f.server_name.clone())).collect();
+    eprintln!("mMail: {email}: LIST — {} папок за {:?}", list.len(), started.elapsed());
     let mut cursors = Vec::new();
-    for ServerFolder { folder, server_name: name, display } in &list {
-        let (folder, name) = (*folder, name);
-        let mailbox = match session.examine(name).await {
-            Ok(mailbox) => mailbox,
+    for f in &list {
+        match scan_folder(app, &mut session, &email, f).await {
+            Ok(cursor) => cursors.push(cursor),
             // Папка могла исчезнуть между LIST и EXAMINE или быть недоступной — остальные не ждут.
-            Err(e) => {
-                eprintln!("mMail: папка {display} недоступна: {e}");
-                continue;
-            }
-        };
-        store.check_validity(&email, folder, mailbox.uid_validity.unwrap_or_default());
-        // Список UID папки — дёшево даже для десятков тысяч писем; сверяем с кэшем.
-        let on_server: HashSet<u32> = if mailbox.exists == 0 { HashSet::new() } else { session.uid_search("ALL").await? };
-        if store.retain_on_server(&email, folder, &on_server) {
-            let _ = app.emit("mailbox-changed", ());
+            Err(e) => eprintln!("mMail: папка {} недоступна: {e}", f.display),
         }
-        let known = store.uids(&email, folder);
-        let mut missing: Vec<u32> = on_server.iter().copied().filter(|uid| !known.contains(uid)).collect();
-        missing.sort_unstable_by(|a, b| b.cmp(a));
-        cursors.push(Cursor { folder, name: name.clone(), display: display.clone(), total: on_server.len(), missing });
     }
-    let conn = Arc::new(Connection { account, folders, list, reader: Mutex::new(Some(reader)), cancelled: AtomicBool::new(false) });
+    // Папки, удалённые на сервере, пока программа была закрыта, — из кэша тоже.
+    for gone in store.folders_of(&email).into_iter().filter(|f| !list.iter().any(|s| s.folder == *f)) {
+        eprintln!("mMail: {email}: папки {gone:?} больше нет на сервере");
+        store.remove_folder(&email, gone);
+    }
+    let conn = Arc::new(Connection { account, list: std::sync::Mutex::new(list), reader: Mutex::new(Some(reader)), cancelled: AtomicBool::new(false) });
     app.state::<Imap>().register(conn.clone());
+    // Список папок с сервера готов — дерево должно перестроиться, даже если новых писем нет.
+    let _ = app.emit("mailbox-changed", ());
 
     let step = |cursor: &Cursor, messages: Vec<Message>| {
         if !messages.is_empty() {
@@ -395,71 +444,249 @@ async fn run_sync(app: &AppHandle, account: Account) -> Result<()> {
     };
     // Сначала свежие письма всех папок, потом в фоне — всё остальное, входящие первыми.
     for cursor in &mut cursors {
-        let messages = fetch_batch(&mut session, &email, cursor).await?;
-        step(cursor, messages);
+        // Письма из кэша уже на экране; до первой порции показываем, сколько ещё качать.
+        step(cursor, Vec::new());
+        match fetch_batch(&mut session, &email, cursor).await {
+            Ok(messages) => step(cursor, messages),
+            Err(e) => {
+                eprintln!("mMail: {email}: первая порция «{}» не загрузилась: {e}", cursor.display);
+                break;
+            }
+        }
     }
+
     let poll = || Duration::from_secs(app.state::<ConfigStore>().get().poll_seconds());
     let mut last_poll = std::time::Instant::now();
     let mut last_flags = std::time::Instant::now();
-    for i in 0..cursors.len() {
-        while !cursors[i].missing.is_empty() {
-            if conn.cancelled.load(Ordering::Relaxed) {
-                let _ = session.logout().await;
-                return Ok(());
-            }
-            let messages = fetch_batch(&mut session, &email, &mut cursors[i]).await?;
-            step(&cursors[i], messages);
-            // Пока догружается история, свежие письма и флаги тоже подтягиваем.
-            if last_poll.elapsed() >= poll() {
-                let with_flags = last_flags.elapsed() >= FLAGS_EVERY;
-                refresh(app, &mut session, &email, &cursors, with_flags).await?;
-                last_poll = std::time::Instant::now();
-                if with_flags {
-                    last_flags = last_poll;
-                }
-            }
-        }
-    }
-    set_status(app, &email, "ok", "");
-
-    // Дальше — периодическая проверка; при обрыве соединения переподключаемся.
-    // Между проверками, пока есть что, сохраняем тела писем для чтения без сети.
     let mut prefetching = store.has_db();
     let mut skipped = HashSet::new();
+    let idle = match capabilities {
+        Ok(caps) => {
+            let idle = caps.has_str("IDLE");
+            if !idle {
+                let names: Vec<String> = caps.iter().map(|c| format!("{c:?}")).collect();
+                eprintln!("mMail: {email}: возможности сервера: {}", names.join(" "));
+            }
+            idle
+        }
+        Err(e) => {
+            eprintln!("mMail: {email}: CAPABILITY не удалось: {e}");
+            false
+        }
+    };
+    eprintln!("mMail: {email}: IDLE {}", if idle { "есть — новые письма приходят сразу" } else { "нет — опрос по интервалу" });
+    let mut idle_ok = false;
+    // Заглушки (сервер не отдал заголовок) пробуем снова — не чаще раза в полчаса.
+    let mut last_retry = std::time::Instant::now();
+
+    // Один цикл с приоритетами: история папок → тела писем для офлайна → ожидание новостей.
+    // Раз в минуту — LIST (появившиеся и удалённые папки) и флаги. Любая ошибка — переподключение,
+    // а не остановка синхронизации.
     loop {
-        while last_poll.elapsed() < poll() {
-            if conn.cancelled.load(Ordering::Relaxed) {
-                let _ = session.logout().await;
-                return Ok(());
+        if conn.cancelled.load(Ordering::Relaxed) {
+            let _ = session.logout().await;
+            return Ok(());
+        }
+        // Всё загружено и сервер умеет IDLE: ждём его событий на «Входящих» до минуты.
+        // IDLE забирает сессию себе, поэтому эта ветка — отдельно от общего блока ниже.
+        let quiet = idle && !prefetching && cursors.iter().all(|c| c.missing.is_empty());
+        if quiet && last_flags.elapsed() < FLAGS_EVERY {
+            if !idle_ok {
+                set_status(app, &email, "ok", "");
+                idle_ok = true;
             }
-            if !prefetching {
-                tokio::time::sleep(Duration::from_millis(500)).await;
-                continue;
-            }
-            match prefetch_bodies(app, &mut session, &conn.account, &cursors, &mut skipped).await {
-                Ok(0) => {
-                    prefetching = false;
-                    set_status(app, &email, "ok", "");
+            let inbox = conn.server_name(Folder::Inbox).unwrap_or_else(|| "INBOX".into());
+            let limit = FLAGS_EVERY.saturating_sub(last_flags.elapsed()).max(Duration::from_secs(1));
+            let outcome = match idle_wait(session, &inbox, limit).await {
+                Ok((back, news)) => {
+                    session = back;
+                    if news { refresh(app, &mut session, &email, &cursors, true).await } else { Ok(()) }
                 }
-                Ok(left) => set_status(app, &email, "busy", format!("сохраняю письма: осталось {left}")),
                 Err(e) => {
-                    // Сессия могла оборваться — переподключится обновление ниже.
-                    eprintln!("mMail: загрузка тел {email} не удалась: {e}");
-                    break;
+                    // Сессия ушла в idle_wait и не вернулась — нужна новая.
+                    eprintln!("mMail: {email}: IDLE прервался ({e}) — переподключаюсь");
+                    session = reconnect(app, &conn).await?;
+                    Ok(())
                 }
+            };
+            if let Err(e) = outcome {
+                eprintln!("mMail: {email}: {e} — переподключаюсь");
+                session = reconnect(app, &conn).await?;
+                last_flags = std::time::Instant::now() - FLAGS_EVERY;
             }
+            continue;
         }
-        let with_flags = last_flags.elapsed() >= FLAGS_EVERY;
-        last_poll = std::time::Instant::now();
-        if with_flags {
-            last_flags = last_poll;
+        let result: Result<()> = async {
+            if last_flags.elapsed() >= FLAGS_EVERY {
+                resync_folders(app, &mut session, &conn, &mut cursors).await?;
+                refresh(app, &mut session, &email, &cursors, true).await?;
+                last_flags = std::time::Instant::now();
+                last_poll = last_flags;
+            }
+            if last_retry.elapsed() >= RETRY_UNAVAILABLE && cursors.iter().all(|c| c.missing.is_empty()) {
+                last_retry = std::time::Instant::now();
+                retry_unavailable(app, &mut session, &email, &cursors).await?;
+            }
+            if let Some(cursor) = cursors.iter_mut().find(|c| !c.missing.is_empty()) {
+                let messages = fetch_batch(&mut session, &email, cursor).await?;
+                step(cursor, messages);
+                idle_ok = false;
+            } else if prefetching {
+                match prefetch_bodies(app, &mut session, &conn.account, &cursors, &mut skipped).await? {
+                    0 => prefetching = false,
+                    left => set_status(app, &email, "busy", format!("сохраняю письма: осталось {left}")),
+                }
+            } else {
+                if !idle_ok {
+                    set_status(app, &email, "ok", "");
+                    idle_ok = true;
+                }
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+            // Пока идёт история или подкачка тел — новые письма проверяем по интервалу.
+            if last_poll.elapsed() >= poll() {
+                refresh(app, &mut session, &email, &cursors, false).await?;
+                last_poll = std::time::Instant::now();
+            }
+            Ok(())
         }
-        if let Err(e) = refresh(app, &mut session, &email, &cursors, with_flags).await {
-            eprintln!("mMail: обновление {email} не удалось ({e}), переподключаюсь");
-            let password = accounts::password(&email).await?;
-            session = connect(&conn.account, &password).await?;
+        .await;
+        if let Err(e) = result {
+            eprintln!("mMail: {email}: {e} — переподключаюсь");
+            session = reconnect(app, &conn).await?;
+            idle_ok = false;
+            // Папку могли удалить на сервере — сверяем список сразу, а не через минуту.
+            last_flags = std::time::Instant::now() - FLAGS_EVERY;
         }
     }
+}
+
+/// Повторная попытка получить заголовки заглушек — небольшой порцией из каждой папки.
+async fn retry_unavailable(app: &AppHandle, session: &mut Session, email: &str, cursors: &[Cursor]) -> Result<()> {
+    let store = app.state::<Store>();
+    for cursor in cursors {
+        let uids: Vec<u32> = store.unavailable_uids(email, cursor.folder).into_iter().take(MIN_BATCH).collect();
+        if uids.is_empty() {
+            continue;
+        }
+        session.examine(&cursor.name).await?;
+        let fetches: Vec<Fetch> = session.uid_fetch(uid_set(&uids), HEADER_QUERY).await?.try_collect().await?;
+        let found: Vec<Message> = fetches.iter().filter_map(|f| to_message(f, email, cursor.folder)).collect();
+        eprintln!("mMail: {email}: {}: повторно — заголовки {} из {} заглушек", cursor.display, found.len(), uids.len());
+        if !found.is_empty() {
+            store.replace_headers(found);
+            let _ = app.emit("mailbox-changed", ());
+        }
+    }
+    Ok(())
+}
+
+/// Открывает папку, сверяет UIDVALIDITY и кэш с сервером; курсор с недостающими письмами.
+async fn scan_folder(app: &AppHandle, session: &mut Session, email: &str, f: &ServerFolder) -> Result<Cursor> {
+    let store = app.state::<Store>();
+    let started = std::time::Instant::now();
+    let mailbox = session.examine(&f.server_name).await?;
+    store.check_validity(email, f.folder, mailbox.uid_validity.unwrap_or_default());
+    // Список UID папки — дёшево даже для десятков тысяч писем; сверяем с кэшем.
+    let examined = started.elapsed();
+    let on_server: HashSet<u32> = if mailbox.exists == 0 { HashSet::new() } else { session.uid_search("ALL").await? };
+    eprintln!("mMail: {email}: {}: EXAMINE {examined:?}, UID SEARCH {} писем {:?}", f.display, on_server.len(), started.elapsed() - examined);
+    if store.retain_on_server(email, f.folder, &on_server) {
+        let _ = app.emit("mailbox-changed", ());
+    }
+    let known = store.uids(email, f.folder);
+    let mut missing: Vec<u32> = on_server.iter().copied().filter(|uid| !known.contains(uid)).collect();
+    missing.sort_unstable_by(|a, b| b.cmp(a));
+    Ok(Cursor {
+        folder: f.folder,
+        name: f.server_name.clone(),
+        display: f.display.clone(),
+        total: on_server.len(),
+        missing,
+        batch: BATCH as usize,
+    })
+}
+
+/// LIST заново: удалённые на сервере папки убираем из дерева и кэша, новые — начинаем синхронизировать.
+async fn resync_folders(app: &AppHandle, session: &mut Session, conn: &Connection, cursors: &mut Vec<Cursor>) -> Result<()> {
+    let email = conn.account.email.as_str();
+    let store = app.state::<Store>();
+    let list = discover_folders(session).await?;
+    let mut changed = false;
+    cursors.retain(|c| {
+        let keep = list.iter().any(|f| f.folder == c.folder && f.server_name == c.name);
+        if !keep {
+            eprintln!("mMail: {email}: папки «{}» больше нет на сервере", c.display);
+            store.remove_folder(email, c.folder);
+            changed = true;
+        }
+        keep
+    });
+    for f in &list {
+        if cursors.iter().any(|c| c.folder == f.folder) {
+            continue;
+        }
+        match scan_folder(app, session, email, f).await {
+            Ok(cursor) => {
+                eprintln!("mMail: {email}: новая папка «{}»", f.display);
+                cursors.push(cursor);
+                changed = true;
+            }
+            Err(e) => eprintln!("mMail: папка {} недоступна: {e}", f.display),
+        }
+    }
+    cursors.sort_by_key(|c| (folders::rank(c.folder), c.display.to_lowercase()));
+    {
+        let mut current = conn.list.lock().unwrap();
+        changed |= current.len() != list.len() || current.iter().zip(&list).any(|(a, b)| a.display != b.display);
+        *current = list;
+    }
+    if changed {
+        let _ = app.emit("mailbox-changed", ());
+    }
+    Ok(())
+}
+
+/// Новое подключение после обрыва; пока сети нет — повторяем, не останавливая синхронизацию ящика.
+async fn reconnect(app: &AppHandle, conn: &Connection) -> Result<Session> {
+    let email = &conn.account.email;
+    let mut delay = Duration::from_secs(5);
+    loop {
+        if conn.cancelled.load(Ordering::Relaxed) {
+            return Err("ящик отключён".into());
+        }
+        let attempt: Result<Session> = async {
+            let password = accounts::password(email).await?;
+            connect(&conn.account, &password).await
+        }
+        .await;
+        match attempt {
+            Ok(session) => return Ok(session),
+            Err(e) => {
+                set_status(app, email, "error", format!("нет связи с сервером ({e}), повторю через {} с", delay.as_secs()));
+                tokio::time::sleep(delay).await;
+                delay = (delay * 2).min(Duration::from_secs(300));
+            }
+        }
+    }
+}
+
+/// IDLE (RFC 2177) на «Входящих»: ждём, пока сервер сообщит об изменениях, но не дольше `limit`.
+/// Возвращает сессию и признак, что что-то пришло (иначе — просто истёк срок).
+async fn idle_wait(mut session: Session, inbox: &str, limit: Duration) -> Result<(Session, bool)> {
+    // EXAMINE, а не SELECT: только читаем, флаги \Recent не трогаем.
+    session.examine(inbox).await?;
+    let mut handle = session.idle();
+    handle.init().await?;
+    let news = {
+        let (wait, _stop) = handle.wait_with_timeout(limit);
+        // Сервер может продлевать ожидание «* OK Still here» — ограничиваем снаружи.
+        match tokio::time::timeout(limit + Duration::from_secs(5), wait).await {
+            Ok(response) => matches!(response?, async_imap::extensions::idle::IdleResponse::NewData(_)),
+            Err(_) => false,
+        }
+    };
+    Ok((handle.done().await?, news))
 }
 
 /// Следующая порция тел писем, которых ещё нет в кэше (новые первыми). Возвращает, сколько осталось.
@@ -514,6 +741,10 @@ async fn refresh(app: &AppHandle, session: &mut Session, email: &str, cursors: &
         }
         let mailbox = session.examine(&cursor.name).await?;
         if mailbox.exists == 0 {
+            // Папку очистили на сервере — у нас тоже пусто.
+            if cursor.missing.is_empty() {
+                changed |= store.retain_on_server(email, cursor.folder, &HashSet::new());
+            }
             continue;
         }
         let max = store.max_uid(email, cursor.folder);
@@ -530,6 +761,12 @@ async fn refresh(app: &AppHandle, session: &mut Session, email: &str, cursors: &
                 store.append(fresh);
                 changed = true;
             }
+        }
+        // Писем на сервере не столько, сколько у нас, — что-то удалили или перенесли в другом клиенте.
+        // Тогда сверяем список UID (только когда история папки уже загружена).
+        if cursor.missing.is_empty() && mailbox.exists as usize != store.uids(email, cursor.folder).len() {
+            let on_server: HashSet<u32> = session.uid_search("ALL").await?;
+            changed |= store.retain_on_server(email, cursor.folder, &on_server);
         }
         if !with_flags {
             continue;
@@ -604,7 +841,7 @@ impl Imap {
     /// Письмо целиком с сервера (BODY.PEEK — не помечается прочитанным); одна попытка переподключения.
     pub async fn raw(&self, email: &str, folder: Folder, uid: u32) -> Result<Vec<u8>> {
         let conn = self.connection(email).ok_or("ящик ещё подключается")?;
-        let name = conn.folders.get(&folder).ok_or("папка не найдена на сервере")?;
+        let name = &conn.server_name(folder).ok_or("папка не найдена на сервере")?;
         let mut reader = conn.reader.lock().await;
         for attempt in 0..2 {
             if reader.is_none() {
@@ -659,7 +896,7 @@ impl Imap {
     /// Кладёт готовое письмо в папку ящика (копия отправленного).
     pub async fn append(&self, email: &str, folder: Folder, raw: &[u8], flags: &str) -> Result<()> {
         let conn = self.connection(email).ok_or("ящик ещё подключается")?;
-        let name = conn.folders.get(&folder).ok_or("папка не найдена на сервере")?;
+        let name = &conn.server_name(folder).ok_or("папка не найдена на сервере")?;
         let mut reader = conn.reader.lock().await;
         if reader.is_none() {
             let password = accounts::password(email).await?;
@@ -676,8 +913,8 @@ impl Imap {
     pub async fn move_to_trash(&self, email: &str, folder: Folder, uid: u32) -> Result<()> {
         if folder == Folder::Trash { return Ok(()); }
         let conn = self.connection(email).ok_or("ящик ещё подключается")?;
-        let source = conn.folders.get(&folder).ok_or("папка не найдена на сервере")?;
-        let target = conn.folders.get(&Folder::Trash).ok_or("Корзина не найдена на сервере")?;
+        let source = &conn.server_name(folder).ok_or("папка не найдена на сервере")?;
+        let target = &conn.server_name(Folder::Trash).ok_or("Корзина не найдена на сервере")?;
         if source == target { return Err("Письмо уже в корзине".into()); }
         let mut reader = conn.reader.lock().await;
         if reader.is_none() {
@@ -716,7 +953,7 @@ impl Imap {
             return Ok(());
         }
         let conn = self.connection(email).ok_or("ящик ещё подключается")?;
-        let name = conn.folders.get(&folder).ok_or("папка не найдена на сервере")?;
+        let name = &conn.server_name(folder).ok_or("папка не найдена на сервере")?;
         let mut reader = conn.reader.lock().await;
         if reader.is_none() {
             let password = accounts::password(email).await?;
