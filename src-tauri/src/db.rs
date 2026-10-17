@@ -194,9 +194,22 @@ impl Db {
 
     pub fn clear_bodies(&self, cutoff: i64) -> Result<u64> {
         let conn = self.0.lock().unwrap();
-        conn.execute("UPDATE messages SET html = NULL WHERE html IS NOT NULL AND timestamp < ?1", [cutoff])?;
-        // Без VACUUM SQLite лишь пометит страницы свободными, и файл не уменьшится.
-        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE); VACUUM; PRAGMA wal_checkpoint(TRUNCATE);")?;
+        let cleared = conn.execute("UPDATE messages SET html = NULL WHERE html IS NOT NULL AND timestamp < ?1", [cutoff])?;
+        let free: i64 = conn.query_row("PRAGMA freelist_count", [], |r| r.get(0))?;
+        // Очистка по сроку идёт при каждом запуске; если стирать нечего, базу не трогаем.
+        if cleared > 0 || free > 0 {
+            // Без сжатия SQLite лишь пометит страницы свободными, и файл не уменьшится.
+            // Полный VACUUM строит копию базы в памяти (SQLCipher не пишет временные файлы
+            // открытыми) — на гигабайтном кэше это гигабайт ОЗУ. Поэтому один раз переводим
+            // базу в режим incremental, а дальше просто отдаём свободные страницы.
+            let mode: i64 = conn.query_row("PRAGMA auto_vacuum", [], |r| r.get(0))?;
+            if mode == 2 {
+                conn.execute_batch("PRAGMA incremental_vacuum;")?;
+            } else {
+                conn.execute_batch("PRAGMA auto_vacuum = INCREMENTAL; VACUUM;")?;
+            }
+            conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+        }
         Ok(self.size_of(&conn))
     }
 
@@ -438,6 +451,9 @@ mod tests {
         assert!(!on_disk(1) && on_disk(2));
         assert_eq!(db.body("me@ya.ru", Folder::Inbox, 1).unwrap(), None);
         assert_eq!(db.body("me@ya.ru", Folder::Inbox, 2).unwrap().as_deref(), Some("новое"));
+        let mode: i64 = db.0.lock().unwrap().query_row("PRAGMA auto_vacuum", [], |r| r.get(0)).unwrap();
+        assert_eq!(mode, 2, "после первой очистки база сжимается по частям");
+        db.clear_bodies(0).unwrap();
         let _ = fs::remove_dir_all(&dir);
     }
 

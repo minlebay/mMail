@@ -506,10 +506,12 @@ impl Store {
                 e.body_on_disk = false;
             }
         }
-        match self.db.get() {
+        let size = match self.db.get() {
             Some(db) => db.clear_bodies(cutoff),
             None => Ok(0),
-        }
+        };
+        crate::memory::trim();
+        size
     }
 
     pub fn disk_size(&self) -> u64 {
@@ -664,6 +666,76 @@ mod tests {
         assert_eq!(again.unopened("me@ya.ru", Folder::Inbox, None), vec![2]);
         again.clear_bodies(i64::MAX).unwrap();
         assert_eq!(again.details(id).unwrap().html, None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod memory_probe {
+    use super::*;
+
+    fn rss_mb() -> u64 {
+        let status = std::fs::read_to_string("/proc/self/status").unwrap();
+        status.lines().find(|l| l.starts_with("VmRSS:")).and_then(|l| l.split_whitespace().nth(1)?.parse::<u64>().ok()).unwrap() / 1024
+    }
+
+    /// cargo test --release memory_probe -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn load_keeps_bodies_out_of_memory() {
+        let dir = std::env::temp_dir().join(format!("mmail-probe-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let key = [7u8; 32];
+        let body = "x".repeat(50_000);
+        {
+            let db = Db::open(&dir, &key).unwrap();
+            let messages: Vec<Message> = (1..=6000u32)
+                .map(|uid| Message {
+                    account: Some("me@ya.ru".into()),
+                    folder: Folder::Inbox,
+                    uid: Some(uid),
+                    starred: false,
+                    unread: false,
+                    from_name: "Имя Отправителя".into(),
+                    from_addr: "sender@example.com".into(),
+                    subject: "Тема письма средней длины".into(),
+                    timestamp: 1_700_000_000 + i64::from(uid),
+                    auth: Auth::Unknown,
+                    html: Some(body.clone()),
+                    message_id: Some("<id@example.com>".into()),
+                    references: Vec::new(),
+                    has_attachments: false,
+                    attachments: Vec::new(),
+                    unavailable: false,
+                })
+                .collect();
+            db.insert(&messages.iter().collect::<Vec<_>>()).unwrap();
+        }
+        crate::memory::trim();
+        let before = rss_mb();
+        let store = Store::default();
+        let db = Db::open(&dir, &key).unwrap();
+        println!("после open: {} МБ", rss_mb() - before);
+        let (loaded, _) = db.load().unwrap();
+        println!("после load: {} МБ ({} писем)", rss_mb() - before, loaded.len());
+        drop(loaded);
+        store.attach_db(db).unwrap();
+        println!("после attach_db: {} МБ", rss_mb() - before);
+        let peak = || {
+            let status = std::fs::read_to_string("/proc/self/status").unwrap();
+            status.lines().find(|l| l.starts_with("VmHWM:")).and_then(|l| l.split_whitespace().nth(1)?.parse::<u64>().ok()).unwrap() / 1024
+        };
+        // «5» в clear_refs сбрасывает пиковое RSS процесса.
+        let reset_peak = || std::fs::write("/proc/self/clear_refs", "5").unwrap();
+        reset_peak();
+        store.clear_bodies(0).unwrap();
+        println!("очистка, стирать нечего: пик {} МБ над исходным", peak() - before);
+        reset_peak();
+        store.clear_bodies(1_700_003_000).unwrap();
+        println!("очистка половины (первое сжатие, полный VACUUM): пик {} МБ над исходным", peak() - before);
+        reset_peak();
+        store.clear_bodies(1_700_005_000).unwrap();
+        println!("следующая очистка (incremental_vacuum): пик {} МБ над исходным", peak() - before);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
