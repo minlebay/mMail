@@ -88,6 +88,20 @@ fn main_focused(app: &AppHandle) -> bool {
     app.get_webview_window("main").is_some_and(|w| w.is_visible().unwrap_or(false) && w.is_focused().unwrap_or(false))
 }
 
+/// «Отложить» письмо и «Напомнить через 5 мин» о событии.
+const MAIL_SNOOZE: Duration = Duration::from_secs(15 * 60);
+const EVENT_SNOOZE: Duration = Duration::from_secs(5 * 60);
+
+/// Повторить уведомление позже (поток уведомления к этому времени уже закончился).
+fn later(app: &AppHandle, delay: Duration, then: impl FnOnce(&AppHandle) + Send + 'static) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(delay).await;
+        then(&app);
+    });
+}
+
+#[derive(Clone)]
 pub struct NewMail {
     pub id: u32,
     pub account: String,
@@ -100,12 +114,28 @@ pub fn new_mail(app: &AppHandle, mail: Vec<NewMail>) {
     if mail.is_empty() || !app.state::<ConfigStore>().get().notify_mail.unwrap_or(true) || main_focused(app) {
         return;
     }
+    mail_notification(app, mail);
+}
+
+/// Отложенные письма возвращаются, только если они ещё есть и не прочитаны.
+fn snooze_mail(app: &AppHandle, mail: Vec<NewMail>) {
+    later(app, MAIL_SNOOZE, move |app| {
+        let store = app.state::<crate::store::Store>();
+        let mail: Vec<NewMail> = mail.into_iter().filter(|m| store.details(m.id).is_some_and(|d| d.unread)).collect();
+        if !mail.is_empty() && app.state::<ConfigStore>().get().notify_mail.unwrap_or(true) {
+            mail_notification(app, mail);
+        }
+    });
+}
+
+fn mail_notification(app: &AppHandle, mail: Vec<NewMail>) {
     if let [one] = mail.as_slice() {
         let summary = plain(&one.from, 80);
         let body = escape(&plain(&one.subject, 200));
         let (id, account) = (one.id, one.account.clone());
-        let buttons = [("reply", "Ответить"), ("read", "Прочитано"), ("trash", "Удалить")];
+        let buttons = [("reply", "Ответить"), ("read", "Прочитано"), ("trash", "Удалить"), ("snooze", "Отложить")];
         show(app, summary, body, &buttons, move |app, action| match action {
+            "snooze" => snooze_mail(app, mail),
             "reply" => {
                 if let Err(e) = crate::compose::open_reply(app, id) {
                     eprintln!("mMail: ответ из уведомления: {e}");
@@ -120,8 +150,9 @@ pub fn new_mail(app: &AppHandle, mail: Vec<NewMail>) {
     let body = mail.iter().take(4).map(|m| format!("<b>{}</b> — {}", escape(&plain(&m.from, 40)), escape(&plain(&m.subject, 60)))).collect::<Vec<_>>().join("\n");
     let ids: Vec<u32> = mail.iter().map(|m| m.id).collect();
     let account = mail[0].account.clone();
-    show(app, summary, body, &[("read", "Все прочитаны")], move |app, action| match action {
+    show(app, summary, body, &[("read", "Все прочитаны"), ("snooze", "Отложить")], move |app, action| match action {
         "read" => act_on(app, ids, "read"),
+        "snooze" => snooze_mail(app, mail),
         _ => open_message(app, None, &account),
     });
 }
@@ -146,11 +177,7 @@ pub async fn reminders_loop(app: AppHandle) {
                 // Сработало в последние 2 минуты (компьютер мог спать — старые не показываем).
                 let due = r.fire_at <= now && now - r.fire_at < chrono::Duration::minutes(2);
                 if due && fired.lock().unwrap().insert(r.key.clone()) {
-                    let date = r.date_key.clone();
-                    show(&app, plain(&r.title, 120), escape(&r.when), &[], move |app, _| {
-                        crate::tray::show_main(app);
-                        let _ = app.emit_to("main", "open-date", date);
-                    });
+                    remind(&app, r.clone());
                 }
             }
         } else {
@@ -158,6 +185,18 @@ pub async fn reminders_loop(app: AppHandle) {
         }
         tokio::time::sleep(Duration::from_secs(30)).await;
     }
+}
+
+fn remind(app: &AppHandle, r: crate::calendar::Reminder) {
+    let (summary, body) = (plain(&r.title, 120), escape(&r.when(app)));
+    show(app, summary, body, &[("snooze", "Напомнить через 5 мин")], move |app, action| {
+        if action == "snooze" {
+            later(app, EVENT_SNOOZE, move |app| remind(app, r));
+        } else {
+            crate::tray::show_main(app);
+            let _ = app.emit_to("main", "open-date", r.date_key);
+        }
+    });
 }
 
 #[cfg(test)]

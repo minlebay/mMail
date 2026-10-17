@@ -37,6 +37,16 @@ fn main() {
         .manage(compose::ComposeState::default())
         .manage(tray::TrayState::default())
         .manage(google::Google::default())
+        // Второй запуск не создаёт копию, а передаёт аргументы работающему mMail (D-Bus):
+        // без аргументов — показать окно, `compose …` — открыть новое письмо.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| match compose::from_args(&argv) {
+            Ok(Some(prefill)) => compose::open_from_background(app, prefill),
+            Ok(None) => {
+                let handle = app.clone();
+                let _ = app.run_on_main_thread(move || tray::show_main(&handle));
+            }
+            Err(e) => eprintln!("mMail: compose: {e}"),
+        }))
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             commands::list_folders,

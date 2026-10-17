@@ -50,6 +50,7 @@
         from = data.from;
         to = data.to;
         subject = data.subject;
+        attachments = data.attachments ?? [];
         setupBody(data);
       })
       .catch((e) => (error = String(e)));
@@ -97,7 +98,9 @@
 
   function setupBody(data) {
     if (!data.quoteHtml && !data.quoteHeader) {
-      editor.innerHTML = '<div><br></div>';
+      // Готовый текст (письмо открыто извне) — закрытие окна переспросит, как после правки.
+      editor.innerHTML = data.body ? textToHtml(data.body) : '<div><br></div>';
+      if (data.body) touched = true;
       return;
     }
     const header = escapeHtml(data.quoteHeader ?? '').replace(/\n/g, '<br>');

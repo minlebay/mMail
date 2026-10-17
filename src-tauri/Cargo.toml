@@ -37,6 +37,7 @@ rusqlite = { version = "0.40.2", features = ["bundled-sqlcipher"] }
 getrandom = "0.4.3"
 sha2 = "0.11.1"
 notify-rust = "4.18.2"
+tauri-plugin-single-instance = "2"
 
 [profile.release]
 opt-level = 3
@@ -44,3 +45,11 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# Сборка для разработки без полной отладочной информации: target/ в разы меньше,
+# а в трассировке паники остаются файл и строка.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false

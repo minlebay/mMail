@@ -311,12 +311,14 @@ mod tests {
 }
 
 /// Напоминание календаря, которое пора показать уведомлением.
+#[derive(Clone)]
 pub struct Reminder {
     /// Чтобы не показать дважды: календарь, событие, начало, за сколько минут.
     pub key: String,
     pub title: String,
-    /// «Через 10 мин · 14:00–15:00».
-    pub when: String,
+    pub start: DateTime<chrono::Utc>,
+    /// «14:00–15:00» или «весь день».
+    pub span: String,
     /// День события — для перехода в календарь по клику.
     pub date_key: String,
     pub fire_at: DateTime<chrono::Utc>,
@@ -363,11 +365,11 @@ pub async fn upcoming_reminders(app: &AppHandle) -> Result<Vec<Reminder>, String
                     let end = DateTime::parse_from_rfc3339(&event.end).map(|d| d.with_timezone(&Local)).unwrap_or(start);
                     format!("{}–{}", start.format("%H:%M"), end.format("%H:%M"))
                 };
-                let soon = crate::i18n::text(app, "Через {minutes} мин").replace("{minutes}", &m.to_string());
                 out.push(Reminder {
                     key: format!("{calendar_id}\u{1}{}\u{1}{}\u{1}{m}", event.id, event.start),
                     title: event.title.clone(),
-                    when: format!("{soon} · {span}"),
+                    start: start.with_timezone(&chrono::Utc),
+                    span,
                     date_key: start.format("%Y-%m-%d").to_string(),
                     fire_at,
                 });
@@ -375,6 +377,19 @@ pub async fn upcoming_reminders(app: &AppHandle) -> Result<Vec<Reminder>, String
         }
     }
     Ok(out)
+}
+
+impl Reminder {
+    /// «Через 10 мин · 14:00–15:00» — считается в момент показа (напоминание могли отложить).
+    pub fn when(&self, app: &AppHandle) -> String {
+        let left = (self.start - chrono::Utc::now()).num_seconds();
+        let soon = if left > 0 {
+            crate::i18n::text(app, "Через {minutes} мин").replace("{minutes}", &((left + 59) / 60).to_string())
+        } else {
+            crate::i18n::text(app, "Уже началось")
+        };
+        format!("{soon} · {}", self.span)
+    }
 }
 
 /// Минуты напоминаний способом «уведомление» (письма-напоминания Google шлёт сам).

@@ -1070,5 +1070,17 @@
   "Все прочитаны": {
     "en": "Mark all read",
     "sr": "Sve pročitano"
+  },
+  "Отложить": {
+    "en": "Snooze",
+    "sr": "Odloži"
+  },
+  "Напомнить через 5 мин": {
+    "en": "Remind in 5 min",
+    "sr": "Podseti za 5 min"
+  },
+  "Уже началось": {
+    "en": "Started",
+    "sr": "Već je počelo"
   }
 }
