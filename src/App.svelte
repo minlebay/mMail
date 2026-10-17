@@ -1,5 +1,4 @@
 <script>
-  import ContextMenu from './lib/ContextMenu.svelte';
   import { t } from './lib/i18n.js';
   import TitleBar from './lib/TitleBar.svelte';
   import Sidebar from './lib/Sidebar.svelte';
@@ -11,6 +10,7 @@
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { listen } from '@tauri-apps/api/event';
   import { listFolders, syncStatus, getAppearance, setZoom, openSettings, openCompose as openComposeWindow } from './lib/api.js';
+  import { setMenuErrorHandler } from './lib/contextMenu.js';
 
   const win = getCurrentWindow();
   let maximized = $state(false);
@@ -129,6 +129,9 @@
     return openCompose({ kind, from: msg.account, to: kind === 'reply' ? msg.fromAddr : '', subject, source: msg.id });
   }
 
+  // Ошибки действий из контекстного меню — всплывающим сообщением.
+  setMenuErrorHandler((text) => showToast(text));
+
   function showToast(text) {
     toast = text;
     setTimeout(() => (toast = ''), 3000);
@@ -159,7 +162,6 @@
     <Reader id={selectedId} onreply={replyTo} />
   </main>
 
-  <ContextMenu onerror={showToast} />
   <LinkDialog />
   {#if toast}<div class="toast">{$t(toast)}</div>{/if}
 </div>

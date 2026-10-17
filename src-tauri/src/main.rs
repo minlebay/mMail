@@ -49,6 +49,7 @@ fn main() {
             commands::open_settings,
             commands::set_show_all_accounts,
             commands::write_clipboard,
+            context_menu::context_menu_items,
             commands::mark_message_read,
             commands::mark_folder_read,
             commands::set_message_flags,
@@ -123,9 +124,9 @@ pub(crate) fn finish_window(app: &AppHandle, window: &WebviewWindow) -> tauri::R
     let _ = window.set_zoom(zoom.clamp(commands::ZOOM_MIN, commands::ZOOM_MAX));
 
     // Редактирование и копирование доступны, навигация WebKit остаётся запрещена.
-    let handle = app.clone();
+    let (handle, label) = (app.clone(), window.label().to_string());
     window.with_webview(move |webview| {
-        crate::context_menu::install(&webview.inner(), handle);
+        crate::context_menu::install(&webview.inner(), handle, label);
     })?;
 
     if let Err(e) = blur::enable(window, CORNER_RADIUS) {

@@ -31,4 +31,5 @@ export function applyTheme(id, opacity = DEFAULT_OPACITY) {
   const surface = theme.tint.map((c) => Math.min(255, c + 14));
   root.setProperty('--surface', `rgba(${surface.join(', ')}, 0.97)`);
   root.setProperty('--glass-menu', `rgba(${surface.join(', ')}, 0.94)`);
+  root.setProperty('--native-menu', `rgba(${surface.join(', ')}, 0.62)`);
 }

@@ -4,6 +4,7 @@
   "description": "Главное окно: чтение ящика через команды ядра и управление своим окном.",
   "windows": ["main"],
   "permissions": [
+    "allow-context-menu-items",
     "allow-list-folders",
     "allow-write-clipboard",
     "allow-mark-message-read",

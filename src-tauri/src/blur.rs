@@ -31,7 +31,7 @@ extern "C" {
 }
 
 /// Текущая wl_surface окна GTK (null, пока окно не показано).
-fn wl_surface_of(w: &gtk::ApplicationWindow) -> *mut c_void {
+fn wl_surface_of(w: &gtk::Window) -> *mut c_void {
     match w.window() {
         // SAFETY: только читаем указатель, GTK владеет поверхностью.
         Some(gdk_window) => unsafe { gdk_wayland_window_get_wl_surface(gdk_window.to_glib_none().0) },
@@ -65,7 +65,7 @@ struct Glass {
 }
 
 impl Glass {
-    fn reshape(&self, w: &gtk::ApplicationWindow, width: i32, height: i32) {
+    fn reshape(&self, w: &gtk::Window, width: i32, height: i32) {
         if !w.is_mapped() {
             return;
         }
@@ -88,7 +88,7 @@ impl Glass {
         }
     }
 
-    fn attach(&self, w: &gtk::ApplicationWindow) {
+    fn attach(&self, w: &gtk::Window) {
         match KwinBlur::attach(w) {
             Ok(blur) => {
                 blur.set_skip_taskbar(self.skip_taskbar.get());
@@ -121,7 +121,19 @@ struct KwinBlur {
 /// Включает размытие под окном и держит его форму в актуальном состоянии при ресайзе.
 /// `corner_radius` — радиус скругления окна в UI; у развёрнутого окна углы прямые.
 pub fn enable(window: &tauri::WebviewWindow, corner_radius: i32) -> Result<(), Box<dyn Error>> {
-    let gtk_window = window.gtk_window()?;
+    let gtk_window: gtk::Window = window.gtk_window()?.upcast();
+    let glass = watch(&gtk_window, corner_radius);
+    WINDOWS.with(|windows| windows.borrow_mut().insert(window.label().to_string(), glass));
+    Ok(())
+}
+
+/// Размытие под всплывающим GTK-окном (родное контекстное меню): поверхность у него своя.
+pub fn enable_popup(window: &gtk::Window, corner_radius: i32) {
+    watch(window, corner_radius);
+}
+
+/// Подписка на жизненный цикл окна: заказ размытия при показе, форма при каждом ресайзе.
+fn watch(gtk_window: &gtk::Window, corner_radius: i32) -> Rc<Glass> {
     let glass = Rc::new(Glass { corner_radius, skip_taskbar: Cell::new(false), current: RefCell::new(None) });
     // configure-event приходит на каждое изменение размера, в логических пикселях.
     let g = glass.clone();
@@ -150,10 +162,9 @@ pub fn enable(window: &tauri::WebviewWindow, corner_radius: i32) -> Result<(), B
         }
     });
     // Подписываемся до первой попытки: у нового окна поверхность может ещё не существовать.
-    WINDOWS.with(|windows| windows.borrow_mut().insert(window.label().to_string(), glass.clone()));
     let (width, height) = gtk_window.size();
-    glass.reshape(&gtk_window, width, height);
-    Ok(())
+    glass.reshape(gtk_window, width, height);
+    glass
 }
 
 /// Прячет окно из панели задач (или возвращает). Вызывать в главном потоке.
@@ -171,7 +182,7 @@ pub fn set_skip_taskbar(window: &tauri::WebviewWindow, skip: bool) {
 }
 
 impl KwinBlur {
-    fn attach(gtk_window: &gtk::ApplicationWindow) -> Result<Self, Box<dyn Error>> {
+    fn attach(gtk_window: &gtk::Window) -> Result<Self, Box<dyn Error>> {
         let gdk_window = gtk_window.window().ok_or("окно ещё не создано")?;
         let display = gdk_window.display();
         if display.type_().name() != "GdkWaylandDisplay" {

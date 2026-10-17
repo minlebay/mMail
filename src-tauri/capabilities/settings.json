@@ -6,6 +6,7 @@
     "settings"
   ],
   "permissions": [
+    "allow-context-menu-items",
     "allow-get-appearance",
     "allow-set-appearance",
     "allow-list-accounts",

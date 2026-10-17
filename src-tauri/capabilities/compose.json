@@ -6,6 +6,7 @@
     "compose-*"
   ],
   "permissions": [
+    "allow-context-menu-items",
     "allow-compose-init",
     "allow-send-message",
     "allow-pick-attachments",

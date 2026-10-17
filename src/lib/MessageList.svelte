@@ -140,11 +140,6 @@
       if (item && !item.inTrash) trashMessage(item.id).catch((err) => onerror?.(String(err)));
       return;
     }
-    if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
-      const item = itemAt(selIndex);
-      if (item) menu(e, item);
-      return;
-    }
     const step = e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0;
     if (!step) return;
     e.preventDefault();
@@ -173,6 +168,10 @@
     bind:clientHeight={height}
     onscroll={() => (scrollTop = viewport.scrollTop)}
     onkeydown={onkey}
+    oncontextmenu={(event) => {
+      // Клавиша меню / Shift+F10: событие приходит на сам список — меню выбранного письма.
+      if (!event.target.closest('.row')) menu(event, itemAt(selIndex));
+    }}
   >
     <div class="spacer" style:height="{total * ROW}px">
       {#each rows as { i, item } (i)}

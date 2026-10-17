@@ -1,5 +1,6 @@
 import { getAppearance } from './lib/api.js';
 import { setLanguage } from './lib/i18n.js';
+import { installContextMenu } from './lib/contextMenu.js';
 import { listen } from '@tauri-apps/api/event';
 import { mount } from 'svelte';
 import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -23,4 +24,5 @@ try {
 } catch (error) {
   console.error('Could not load interface language:', error);
 }
+installContextMenu();
 mount(Root, { target: document.getElementById('app') });
