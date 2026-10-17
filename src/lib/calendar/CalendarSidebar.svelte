@@ -96,7 +96,7 @@
     color: var(--muted);
   }
   .nav:hover {
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(var(--ink), 0.08);
   }
   .grid {
     display: grid;
@@ -115,7 +115,7 @@
     font-size: 12px;
   }
   .day:hover {
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(var(--ink), 0.08);
   }
   .day.other {
     color: var(--muted);
@@ -146,7 +146,7 @@
     cursor: pointer;
   }
   .calendar:hover {
-    background: rgba(255, 255, 255, 0.05);
+    background: rgba(var(--ink), 0.05);
   }
   .calendar input {
     width: 15px;

@@ -231,7 +231,7 @@
     height: 36px;
     padding: 0 12px;
     border-radius: 9px;
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(var(--ink), 0.08);
     color: var(--muted);
   }
   .search input {
@@ -270,7 +270,7 @@
     cursor: default;
   }
   .row:hover {
-    background: rgba(255, 255, 255, 0.05);
+    background: rgba(var(--ink), 0.05);
   }
   .row.selected {
     background: var(--accent-soft);
@@ -313,7 +313,7 @@
   }
 
   .star {
-    color: #ffc95c;
+    color: var(--warn);
     align-self: center;
     display: flex;
   }
@@ -328,7 +328,7 @@
     height: 10px;
     width: 70%;
     border-radius: 5px;
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(var(--ink), 0.08);
   }
   .skeleton.short {
     width: 45%;

@@ -1122,5 +1122,21 @@
   "Кнопки «Поверх других окон» и «На всех рабочих столах»": {
     "en": "“Keep above” and “On all desktops” buttons",
     "sr": "Dugmad „Iznad drugih prozora” i „Na svim radnim površinama”"
+  },
+  "Схема": {
+    "en": "Scheme",
+    "sr": "Šema"
+  },
+  "Как в системе": {
+    "en": "System",
+    "sr": "Kao u sistemu"
+  },
+  "Тёмная": {
+    "en": "Dark",
+    "sr": "Tamna"
+  },
+  "Светлая": {
+    "en": "Light",
+    "sr": "Svetla"
   }
 }

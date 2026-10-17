@@ -177,12 +177,12 @@
     height: 26px;
     padding: 0 10px;
     border-radius: 13px;
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(var(--ink), 0.1);
     font-size: 12px;
     font-variant-numeric: tabular-nums;
   }
   .pill:hover {
-    background: rgba(255, 255, 255, 0.22);
+    background: rgba(var(--ink), 0.22);
   }
   .backdrop {
     position: fixed;
@@ -211,12 +211,12 @@
     width: 24px;
     height: 24px;
     border-radius: 50%;
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(var(--ink), 0.1);
     font-size: 15px;
     line-height: 1;
   }
   .step:hover {
-    background: rgba(255, 255, 255, 0.22);
+    background: rgba(var(--ink), 0.22);
   }
   .value {
     width: 40px;
@@ -232,10 +232,10 @@
     display: grid;
     place-items: center;
     border-radius: 50%;
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(var(--ink), 0.1);
   }
   .ctl:hover {
-    background: rgba(255, 255, 255, 0.22);
+    background: rgba(var(--ink), 0.22);
   }
   .ctl.close:hover {
     background: #ff4f78;

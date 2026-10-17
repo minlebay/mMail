@@ -1,4 +1,5 @@
 <script>
+  import { listen } from '@tauri-apps/api/event';
   import { t, setLanguage, LANGUAGES } from './i18n.js';
   // Настройки — отдельное окно (метка "settings"); размер подстраивается под содержимое.
   import { untrack, onMount } from 'svelte';
@@ -6,7 +7,7 @@
   import Icon from './Icon.svelte';
   import Select from './Select.svelte';
   import TitleBar from './TitleBar.svelte';
-  import { THEMES, applyTheme } from './themes.js';
+  import { THEMES, applyTheme, isDark } from './themes.js';
   import { setAppearance, listAccounts, addAccount, removeAccount, storageInfo, setBodyDays, clearCache, setShowAllAccounts, googleStatus, googleConnect, googleDisconnect, setNotifications, setTitleButtons } from './api.js';
 
   let { appearance } = $props();
@@ -109,6 +110,13 @@
   // Начальные значения формы; дальше форма сама пишет в appearance.
   const initial = untrack(() => $state.snapshot(appearance));
   let theme = $state(initial.theme);
+  let scheme = $state(initial.scheme ?? 'system');
+  // Схема KDE может смениться, пока открыты настройки, — ядро сообщает об этом.
+  let systemDark = $state(initial.systemDark ?? true);
+  $effect(() => {
+    const stop = listen('appearance-changed', (e) => (systemDark = e.payload.systemDark));
+    return () => stop.then((f) => f());
+  });
   let selectedLanguage = $state(initial.language || 'ru');
   let saveError = $state('');
   let opacity = $state(initial.opacity);
@@ -166,6 +174,11 @@
     ['tray', $t("Только в трее")],
     ['panel', $t("Только в панели задач")],
   ]);
+  const SCHEMES = $derived([
+    ['system', $t('Как в системе')],
+    ['dark', $t('Тёмная')],
+    ['light', $t('Светлая')],
+  ]);
   const POLL = $derived([
     [5, $t("каждые 5 секунд")],
     [10, $t("каждые 10 секунд")],
@@ -176,8 +189,9 @@
 
   // Тема применяется сразу, в конфиг пишется с небольшой задержкой (ползунок дёргается часто).
   $effect(() => {
-    applyTheme(theme, opacity);
+    applyTheme(theme, opacity, isDark({ scheme, systemDark }));
     setLanguage(selectedLanguage);
+    appearance.scheme = scheme;
     appearance.language = selectedLanguage;
     appearance.theme = theme;
     appearance.opacity = opacity;
@@ -194,7 +208,7 @@
   });
 
   async function saveAppearance() {
-    await setAppearance({ language: selectedLanguage, theme, opacity, middleClickMinimize, zoom, pollSeconds, trayMode, trayIcon, closeToTray });
+    await setAppearance({ language: selectedLanguage, theme, scheme, opacity, middleClickMinimize, zoom, pollSeconds, trayMode, trayIcon, closeToTray });
     saveError = '';
   }
 
@@ -290,6 +304,12 @@
       <section>
         <h3>{$t('Язык интерфейса')}</h3>
         <Select bind:value={selectedLanguage} label={$t('Язык интерфейса')} options={LANGUAGES} />
+        <h3>{$t("Схема")}</h3>
+        <div class="schemes">
+          {#each SCHEMES as [value, label] (value)}
+            <button class:active={scheme === value} onclick={() => (scheme = value)}>{label}</button>
+          {/each}
+        </div>
         <h3>{$t("Цветовая гамма")}</h3>
         <div class="themes">
           {#each THEMES as themeOption (themeOption.id)}
@@ -476,7 +496,7 @@
     flex-direction: column;
     overflow: hidden;
     border-radius: 12px;
-    border: 1px solid rgba(255, 255, 255, 0.14);
+    border: 1px solid rgba(var(--ink), 0.14);
     background: var(--window-tint);
   }
   .window.maximized {
@@ -525,7 +545,7 @@
     color: var(--muted);
   }
   nav button:hover {
-    background: rgba(255, 255, 255, 0.07);
+    background: rgba(var(--ink), 0.07);
   }
   nav button.active {
     background: var(--accent-soft);
@@ -540,6 +560,22 @@
     color: var(--muted);
   }
 
+  .schemes {
+    display: inline-flex;
+    padding: 3px;
+    border-radius: 10px;
+    background: rgba(var(--ink), 0.06);
+  }
+  .schemes button {
+    height: 30px;
+    padding: 0 14px;
+    border-radius: 8px;
+    color: var(--muted);
+  }
+  .schemes button.active {
+    background: var(--accent-soft);
+    color: var(--text);
+  }
   .themes {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(145px, 100%), 1fr));
@@ -552,12 +588,12 @@
     gap: 10px;
     padding: 8px;
     border-radius: 11px;
-    background: rgba(255, 255, 255, 0.05);
+    background: rgba(var(--ink), 0.05);
     border: 1px solid transparent;
     text-align: left;
   }
   .theme:hover {
-    background: rgba(255, 255, 255, 0.09);
+    background: rgba(var(--ink), 0.09);
   }
   .theme.active {
     border-color: var(--accent);
@@ -570,7 +606,7 @@
     height: 38px;
     flex: none;
     border-radius: 9px;
-    border: 1px solid rgba(255, 255, 255, 0.15);
+    border: 1px solid rgba(var(--ink), 0.15);
   }
   .dot {
     position: absolute;
@@ -659,7 +695,7 @@
     gap: 10px;
     padding: 8px 10px;
     border-radius: 9px;
-    background: rgba(255, 255, 255, 0.06);
+    background: rgba(var(--ink), 0.06);
   }
   .address {
     flex: 1;
@@ -694,7 +730,7 @@
     padding: 0 12px;
     border-radius: 9px;
     border: 1px solid var(--glass-border);
-    background: rgba(255, 255, 255, 0.06);
+    background: rgba(var(--ink), 0.06);
     outline: none;
   }
   form input:focus {
@@ -718,11 +754,11 @@
     height: 26px;
     padding: 0 12px;
     border-radius: 13px;
-    background: rgba(255, 255, 255, 0.12);
+    background: rgba(var(--ink), 0.12);
     font-size: 12.5px;
   }
   .chip:hover {
-    background: rgba(255, 255, 255, 0.22);
+    background: rgba(var(--ink), 0.22);
   }
   .chip.danger {
     background: rgba(255, 79, 120, 0.35);
@@ -733,7 +769,7 @@
     padding: 8px 12px;
     border-radius: 9px;
     background: rgba(255, 79, 120, 0.18);
-    color: #ffd0da;
+    color: var(--danger-text);
     font-size: 13px;
     user-select: text;
   }

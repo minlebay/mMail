@@ -145,7 +145,7 @@ fn update_unread(app: &AppHandle) {
 }
 
 /// Тёмная ли тема KDE: по цвету фона окон из `~/.config/kdeglobals` (панель Plasma следует ему же).
-fn dark_panel() -> bool {
+pub(crate) fn dark_panel() -> bool {
     let Some(path) = dirs_config().map(|d| d.join("kdeglobals")) else { return true };
     let Ok(text) = std::fs::read_to_string(path) else { return true };
     let mut in_window = false;

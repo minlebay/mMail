@@ -11,7 +11,7 @@
   import CalendarView from './lib/calendar/CalendarView.svelte';
   import EventDialog from './lib/calendar/EventDialog.svelte';
   import { visibleRange, toRfc3339, fromDateKey } from './lib/calendar/dates.js';
-  import { applyTheme, DEFAULT_THEME, DEFAULT_OPACITY } from './lib/themes.js';
+  import { applyTheme, isDark, DEFAULT_THEME, DEFAULT_OPACITY } from './lib/themes.js';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { listen } from '@tauri-apps/api/event';
   import { listFolders, syncStatus, getAppearance, setZoom, openSettings, openCompose as openComposeWindow } from './lib/api.js';
@@ -34,12 +34,14 @@
     appearance = {
       theme: a.theme || DEFAULT_THEME,
       opacity: a.opacity ?? DEFAULT_OPACITY,
+      scheme: a.scheme,
+      systemDark: a.systemDark,
       middleClickMinimize: a.middleClickMinimize,
       zoom: a.zoom,
       pollSeconds: a.pollSeconds,
     };
     zoom = a.zoom;
-    applyTheme(appearance.theme, appearance.opacity);
+    applyTheme(appearance.theme, appearance.opacity, isDark(appearance));
   });
 
   function changeZoom(value) {
@@ -104,7 +106,7 @@
         const a = e.payload;
         if (a.zoom !== appearance.zoom) changeZoom(a.zoom);
         appearance = { ...a, theme: a.theme || DEFAULT_THEME, opacity: a.opacity ?? DEFAULT_OPACITY };
-        applyTheme(appearance.theme, appearance.opacity);
+        applyTheme(appearance.theme, appearance.opacity, isDark(appearance));
       }),
       listen('message-sent', () => showToast('Письмо отправлено')),
       listen('google-changed', () => refreshGoogle()),
@@ -310,7 +312,7 @@
     flex-direction: column;
     overflow: hidden;
     border-radius: 12px;
-    border: 1px solid rgba(255, 255, 255, 0.14);
+    border: 1px solid rgba(var(--ink), 0.14);
     background: var(--window-tint);
   }
   .toast {

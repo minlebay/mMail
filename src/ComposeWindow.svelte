@@ -6,7 +6,7 @@
   import TitleBar from './lib/TitleBar.svelte';
   import Icon from './lib/Icon.svelte';
   import Select from './lib/Select.svelte';
-  import { applyTheme } from './lib/themes.js';
+  import { applyTheme, isDark } from './lib/themes.js';
   import { composeInit, sendMessage, pickAttachments, getAppearance, cleanComposeHtml } from './lib/api.js';
 
   const win = getCurrentWindow();
@@ -38,7 +38,7 @@
 
   // Оформление как у главного окна, и сразу подхватываем изменения из настроек.
   function applyAppearance(a) {
-    applyTheme(a.theme, a.opacity ?? undefined);
+    applyTheme(a.theme, a.opacity ?? undefined, isDark(a));
     middleClickMinimize = a.middleClickMinimize;
   }
 
@@ -408,7 +408,7 @@
     flex-direction: column;
     overflow: hidden;
     border-radius: 12px;
-    border: 1px solid rgba(255, 255, 255, 0.14);
+    border: 1px solid rgba(var(--ink), 0.14);
     background: var(--window-tint);
   }
   .window.maximized {
@@ -480,7 +480,7 @@
     font-size: 14px;
   }
   .toolbar > button:hover {
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(var(--ink), 0.1);
   }
   .sep {
     width: 1px;
@@ -498,7 +498,7 @@
     padding: 0 10px;
     border-radius: 7px;
     border: 1px solid var(--accent);
-    background: rgba(255, 255, 255, 0.06);
+    background: rgba(var(--ink), 0.06);
   }
   .linkform .ok {
     height: 30px;
@@ -511,7 +511,7 @@
     display: flex;
     padding: 2px;
     border-radius: 9px;
-    background: rgba(255, 255, 255, 0.06);
+    background: rgba(var(--ink), 0.06);
   }
   .modes button {
     font-size: 12.5px;
@@ -529,7 +529,7 @@
     padding: 12px 14px;
     border-radius: 10px;
     border: 1px solid var(--glass-border);
-    background: rgba(255, 255, 255, 0.04);
+    background: rgba(var(--ink), 0.04);
     outline: none;
     font: 15px/1.6 var(--font);
     color: inherit;
@@ -581,7 +581,7 @@
     height: 30px;
     padding: 0 6px 0 10px;
     border-radius: 15px;
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(var(--ink), 0.08);
     font-size: 12.5px;
   }
   .fname {
@@ -601,14 +601,14 @@
     flex: none;
   }
   .file button:hover {
-    background: rgba(255, 255, 255, 0.15);
+    background: rgba(var(--ink), 0.15);
   }
 
   .error {
     padding: 8px 12px;
     border-radius: 9px;
     background: rgba(255, 79, 120, 0.18);
-    color: #ffd0da;
+    color: var(--danger-text);
     font-size: 13px;
     user-select: text;
   }
@@ -639,9 +639,9 @@
     opacity: 0.6;
   }
   .secondary {
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(var(--ink), 0.1);
   }
   .secondary:hover {
-    background: rgba(255, 255, 255, 0.18);
+    background: rgba(var(--ink), 0.18);
   }
 </style>

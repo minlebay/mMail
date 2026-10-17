@@ -23,7 +23,7 @@
     gap: 4px;
     padding: 3px;
     border-radius: 10px;
-    background: rgba(255, 255, 255, 0.05);
+    background: rgba(var(--ink), 0.05);
   }
   button {
     display: flex;
@@ -36,7 +36,7 @@
     font-size: 13px;
   }
   button:hover {
-    background: rgba(255, 255, 255, 0.06);
+    background: rgba(var(--ink), 0.06);
   }
   button.active {
     background: var(--accent-soft);

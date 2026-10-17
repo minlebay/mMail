@@ -4,6 +4,11 @@
   import { showContextMenu } from './contextMenu.js';
   import { getMessage, writeClipboard, setSenderTrusted, saveAttachment, translateMessage } from './api.js';
   import { translateRequest } from './translate.js';
+  import { darkScheme } from './themes.js';
+
+  // Документ письма собирает ядро (sanitize::wrap, начинается с его <html>); схему окна
+  // передаём атрибутом — стили обеих схем уже в нём.
+  const withScheme = (doc, dark) => (dark ? doc : doc.replace('<html>', '<html data-scheme="light">'));
 
   let { id, onreply } = $props();
 
@@ -177,11 +182,11 @@
 
     {#if translation?.srcdoc}
       <!-- Перевод — тоже внешнее содержимое: экранирован и очищен ядром, CSP та же, ссылок нет — sandbox пустой. -->
-      <iframe class="body" title={$t("Перевод письма")} sandbox="" referrerpolicy="no-referrer" srcdoc={translation.srcdoc}></iframe>
+      <iframe class="body" title={$t("Перевод письма")} sandbox="" referrerpolicy="no-referrer" srcdoc={withScheme(translation.srcdoc, $darkScheme)}></iframe>
     {:else}
     <!-- Без скриптов, форм и доступа к origin приложения. allow-popups нужен только чтобы клик по ссылке
          дошёл до ядра как запрос нового окна: ядро его всегда отклоняет и спрашивает подтверждение. -->
-    <iframe class="body" title={$t("Содержимое письма")} sandbox="allow-popups" referrerpolicy="no-referrer" srcdoc={msg.srcdoc}></iframe>
+    <iframe class="body" title={$t("Содержимое письма")} sandbox="allow-popups" referrerpolicy="no-referrer" srcdoc={withScheme(msg.srcdoc, $darkScheme)}></iframe>
     {/if}
 
     {#if msg.attachments.length}
@@ -239,7 +244,7 @@
     display: grid;
     place-items: center;
     border-radius: 50%;
-    background: rgba(255, 255, 255, 0.14);
+    background: rgba(var(--ink), 0.14);
     font-weight: 600;
   }
 
@@ -283,7 +288,7 @@
     margin-top: 12px;
     padding: 8px 12px;
     border-radius: 9px;
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(var(--ink), 0.08);
     font-size: 13px;
   }
   .banner .text {
@@ -297,14 +302,14 @@
     height: 26px;
     padding: 0 12px;
     border-radius: 13px;
-    background: rgba(255, 255, 255, 0.14);
+    background: rgba(var(--ink), 0.14);
     font-size: 12.5px;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
   .chip:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.24);
+    background: rgba(var(--ink), 0.24);
   }
   .chip:disabled {
     opacity: 0.6;
@@ -312,7 +317,7 @@
   }
   .banner.danger {
     background: rgba(255, 79, 120, 0.18);
-    color: #ffd0da;
+    color: var(--danger-text);
   }
 
   .body {
@@ -338,12 +343,12 @@
     height: 32px;
     padding: 0 4px 0 12px;
     border-radius: 16px;
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(var(--ink), 0.08);
     font-size: 13px;
   }
   .file.dangerous {
     background: rgba(255, 79, 120, 0.18);
-    color: #ffd0da;
+    color: var(--danger-text);
   }
   .fname {
     min-width: 0;
@@ -364,7 +369,7 @@
     border-radius: 50%;
   }
   .save:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.16);
+    background: rgba(var(--ink), 0.16);
   }
 
   footer {
@@ -380,10 +385,10 @@
     height: 38px;
     padding: 0 16px;
     border-radius: 9px;
-    background: rgba(255, 255, 255, 0.12);
+    background: rgba(var(--ink), 0.12);
   }
   .action:hover {
-    background: rgba(255, 255, 255, 0.2);
+    background: rgba(var(--ink), 0.2);
   }
 
   .placeholder {

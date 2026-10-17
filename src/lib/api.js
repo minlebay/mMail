@@ -19,7 +19,7 @@ export const openLink = (id) => invoke('open_link', { id });
 
 export const getAppearance = () => invoke('get_appearance');
 
-// a: { language, theme, opacity, middleClickMinimize, zoom, pollSeconds, trayMode, trayIcon, closeToTray }
+// a: { language, theme, scheme, opacity, middleClickMinimize, zoom, pollSeconds, trayMode, trayIcon, closeToTray }
 export const setAppearance = (a) => invoke('set_appearance', a);
 
 // Шифрованный кэш писем: { bytes, bodyDays } (bodyDays null — хранить всё).

@@ -136,7 +136,7 @@
     text-align: left;
   }
   .account:hover {
-    background: rgba(255, 255, 255, 0.05);
+    background: rgba(var(--ink), 0.05);
   }
   .chevron {
     width: 12px;
@@ -180,7 +180,7 @@
     text-align: left;
   }
   .folder:hover {
-    background: rgba(255, 255, 255, 0.07);
+    background: rgba(var(--ink), 0.07);
   }
   .folder.active {
     background: var(--accent-soft);

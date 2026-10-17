@@ -224,7 +224,7 @@
     margin-top: 12px;
     padding: 10px 12px;
     border-radius: 9px;
-    background: rgba(255, 255, 255, 0.05);
+    background: rgba(var(--ink), 0.05);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     max-height: 240px;
@@ -243,7 +243,7 @@
     padding: 0 10px;
     border-radius: 9px;
     border: 1px solid var(--glass-border);
-    background: rgba(255, 255, 255, 0.06);
+    background: rgba(var(--ink), 0.06);
     color: inherit;
     font: inherit;
   }
@@ -293,7 +293,7 @@
     padding: 8px 12px;
     border-radius: 9px;
     background: rgba(255, 79, 120, 0.18);
-    color: #ffd0da;
+    color: var(--danger-text);
     font-size: 13px;
   }
   .buttons {
@@ -309,10 +309,10 @@
     border-radius: 9px;
   }
   .secondary {
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(var(--ink), 0.1);
   }
   .secondary:hover {
-    background: rgba(255, 255, 255, 0.18);
+    background: rgba(var(--ink), 0.18);
   }
   .danger-text {
     color: var(--danger);

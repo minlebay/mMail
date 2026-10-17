@@ -18,7 +18,12 @@ body{padding:0 0 16px}\
 a{color:#b3a8ff}\
 img{max-width:100%;height:auto}\
 table{max-width:100%}\
-blockquote{margin:0 0 0 .6em;padding-left:.8em;border-left:2px solid rgba(255,255,255,.2);color:#bdb8cc}";
+blockquote{margin:0 0 0 .6em;padding-left:.8em;border-left:2px solid rgba(255,255,255,.2);color:#bdb8cc}\
+:root{--ink:255,255,255}\
+html[data-scheme=light]{--ink:24,20,40}\
+html[data-scheme=light],html[data-scheme=light] body{color:#1d1a26}\
+html[data-scheme=light] a{color:#5a49d6}\
+html[data-scheme=light] blockquote{border-left-color:rgba(24,20,40,.2);color:#5b5768}";
 
 const SCROLLBAR_CSS: &str = include_str!("../../src/scrollbars.css");
 

@@ -12,7 +12,17 @@ let runs = [];
 let claimed = false;
 let onError = console.error;
 
-const cssVar = (name, fallback) => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+// Значение токена как готовый цвет: токены бывают составными (rgba(var(--ink), …)),
+// а GTK понимает только конечный цвет — поэтому пропускаем через вычисленный стиль.
+function cssVar(name, fallback) {
+  const probe = document.createElement('span');
+  probe.style.display = 'none';
+  probe.style.color = `var(${name})`;
+  document.body.append(probe);
+  const color = getComputedStyle(probe).color;
+  probe.remove();
+  return color || fallback;
+}
 
 function send(items) {
   token += 1;

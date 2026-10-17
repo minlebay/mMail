@@ -95,12 +95,12 @@
     gap: 8px;
     padding: 0 10px;
     border-radius: 9px;
-    background: rgba(255, 255, 255, 0.06);
+    background: rgba(var(--ink), 0.06);
     border: 1px solid transparent;
     text-align: left;
   }
   .field:hover {
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(var(--ink), 0.1);
   }
   .field:focus-visible,
   .field[aria-expanded='true'] {
@@ -148,10 +148,10 @@
     list-style: none;
     border-radius: 10px;
     background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02)),
+      linear-gradient(180deg, rgba(var(--ink), 0.07), rgba(var(--ink), 0.02)),
       var(--glass-menu);
     border: 1px solid var(--glass-border);
-    box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(var(--ink), 0.08);
   }
   .list.up {
     top: auto;
@@ -166,7 +166,7 @@
     white-space: nowrap;
   }
   li.highlighted {
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(var(--ink), 0.08);
   }
   li.selected {
     background: var(--accent-soft);

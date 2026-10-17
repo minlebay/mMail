@@ -17,6 +17,8 @@ pub struct Config {
     pub language: String,
     /// Цветовая тема UI (id из src/lib/themes.js).
     pub theme: String,
+    /// Схема: `dark`, `light` или `system` (как в KDE); `None` — как в системе.
+    pub scheme: Option<String>,
     /// Непрозрачность фона окна, 0.15–0.85; `None` — по умолчанию темы.
     pub opacity: Option<f32>,
     /// Масштаб интерфейса по умолчанию, 0.5–2.0; `None` — 100%.

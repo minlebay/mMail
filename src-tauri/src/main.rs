@@ -17,6 +17,7 @@ mod links;
 mod notify;
 mod remote;
 mod sanitize;
+mod scheme;
 mod smtp;
 mod store;
 mod tray;
@@ -99,6 +100,7 @@ fn main() {
         ])
         .setup(|app| {
             app.manage(config::ConfigStore::load(app.path().app_config_dir()?));
+            scheme::init(app.handle());
             let builder = glass_window(app.handle(), "main", "mMail").inner_size(1200.0, 780.0).min_inner_size(900.0, 560.0);
             let window = window_state::restore(app.handle(), "main", builder, (900.0, 560.0))
                 .on_new_window({

@@ -91,7 +91,7 @@
     padding: 8px 12px;
     border-radius: 9px;
     background: rgba(255, 79, 120, 0.18);
-    color: #ffd0da;
+    color: var(--danger-text);
     font-size: 13px;
   }
   .buttons {
@@ -106,10 +106,10 @@
     border-radius: 9px;
   }
   .secondary {
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(var(--ink), 0.1);
   }
   .secondary:hover {
-    background: rgba(255, 255, 255, 0.18);
+    background: rgba(var(--ink), 0.18);
   }
   .primary {
     background: var(--accent-strong);
@@ -119,7 +119,7 @@
     filter: brightness(1.1);
   }
   button:focus-visible {
-    outline: 2px solid rgba(255, 255, 255, 0.7);
+    outline: 2px solid rgba(var(--ink), 0.7);
     outline-offset: 2px;
   }
 </style>

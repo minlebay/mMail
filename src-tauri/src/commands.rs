@@ -243,6 +243,9 @@ pub fn set_sender_trusted(config: State<'_, ConfigStore>, address: String, trust
 pub struct Appearance {
     language: String,
     theme: String,
+    scheme: String,
+    /// Схема системы сейчас — для режима `system` (меняется на лету, см. scheme.rs).
+    system_dark: bool,
     opacity: Option<f32>,
     middle_click_minimize: bool,
     zoom: f64,
@@ -268,6 +271,8 @@ pub fn get_appearance(config: State<'_, ConfigStore>) -> Appearance {
     Appearance {
         language: c.language().into(),
         theme: c.theme,
+        scheme: c.scheme.clone().unwrap_or_else(|| "system".into()),
+        system_dark: crate::scheme::system_dark(),
         opacity: c.opacity,
         middle_click_minimize: c.middle_click_minimize.unwrap_or(true),
         zoom: c.zoom.unwrap_or(1.0),
@@ -316,6 +321,7 @@ pub fn set_appearance(
     app: tauri::AppHandle,
     config: State<'_, ConfigStore>,
     theme: String,
+    scheme: String,
     language: String,
     opacity: f32,
     middle_click_minimize: bool,
@@ -327,6 +333,9 @@ pub fn set_appearance(
 ) -> Result<(), String> {
     if !["ru", "en", "sr"].contains(&language.as_str()) {
         return Err("unsupported interface language".into());
+    }
+    if !["dark", "light", "system"].contains(&scheme.as_str()) {
+        return Err("неизвестная схема".into());
     }
     if !["color", "auto", "light", "dark"].contains(&tray_icon.as_str()) {
         return Err("неизвестный стиль значка".into());
@@ -341,6 +350,7 @@ pub fn set_appearance(
     config.update(|c| {
         c.language = language;
         c.theme = theme;
+        c.scheme = Some(scheme);
         c.opacity = Some(opacity.clamp(0.15, 0.85));
         c.middle_click_minimize = Some(middle_click_minimize);
         c.zoom = Some(zoom.clamp(ZOOM_MIN, ZOOM_MAX));

@@ -1,12 +1,15 @@
 @import './scrollbars.css';
 
 :root {
+  /* «Чернила» полупрозрачных подложек (наведение, поля, кнопки): белые в тёмной схеме,
+     тёмные в светлой. Использование: rgba(var(--ink), 0.08). */
+  --ink: 255, 255, 255;
   --window-tint: rgba(22, 17, 34, 0.42);
   --text: #f1eef8;
   --muted: rgba(241, 238, 248, 0.6);
-  --glass: rgba(255, 255, 255, 0.07);
-  --glass-strong: rgba(255, 255, 255, 0.14);
-  --glass-border: rgba(255, 255, 255, 0.14);
+  --glass: rgba(var(--ink), 0.07);
+  --glass-strong: rgba(var(--ink), 0.14);
+  --glass-border: rgba(var(--ink), 0.14);
   --accent: #8b7bff;
   --accent-soft: rgba(139, 123, 255, 0.28);
   --accent-strong: rgb(133, 118, 245);
@@ -17,11 +20,29 @@
   --native-menu: rgba(36, 31, 48, 0.62);
   --ok: #3ddc97;
   --danger: #ff6b8b;
+  /* Текст ошибки на розовой подложке и цвет предупреждений. */
+  --danger-text: #ffd0da;
+  --warn: #ffc95c;
   --radius: 14px;
   --panel-inset: 12px;
   --font: 'Inter', 'Noto Sans', system-ui, sans-serif;
 
   color-scheme: dark;
+}
+
+/* Светлая схема: фон окна, акцент и меню задаёт themes.js, здесь — текст и подложки. */
+:root[data-scheme='light'] {
+  --ink: 24, 20, 40;
+  --text: #1d1a26;
+  --muted: rgba(29, 26, 38, 0.62);
+  --glass: rgba(255, 255, 255, 0.5);
+  --glass-strong: rgba(255, 255, 255, 0.75);
+  --glass-border: rgba(24, 20, 40, 0.12);
+  --ok: #138a57;
+  --danger: #d0284f;
+  --danger-text: #a3153a;
+  --warn: #a86d00;
+  color-scheme: light;
 }
 
 * {

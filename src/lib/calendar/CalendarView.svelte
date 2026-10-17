@@ -177,10 +177,10 @@
     height: 30px;
     padding: 0 12px;
     border-radius: 8px;
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(var(--ink), 0.08);
   }
   .chip:hover {
-    background: rgba(255, 255, 255, 0.14);
+    background: rgba(var(--ink), 0.14);
   }
   .nav {
     width: 30px;
@@ -190,7 +190,7 @@
     border-radius: 8px;
   }
   .nav:hover {
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(var(--ink), 0.08);
   }
   .views {
     margin-left: auto;
@@ -198,7 +198,7 @@
     gap: 2px;
     padding: 3px;
     border-radius: 9px;
-    background: rgba(255, 255, 255, 0.05);
+    background: rgba(var(--ink), 0.05);
   }
   .views button {
     height: 26px;
@@ -225,7 +225,7 @@
     padding: 8px 12px;
     border-radius: 9px;
     background: rgba(255, 79, 120, 0.18);
-    color: #ffd0da;
+    color: var(--danger-text);
     font-size: 13px;
   }
 
@@ -270,7 +270,7 @@
     font-size: 12.5px;
   }
   .num:hover {
-    background: rgba(255, 255, 255, 0.08);
+    background: rgba(var(--ink), 0.08);
   }
   .num.today {
     background: var(--accent-strong);

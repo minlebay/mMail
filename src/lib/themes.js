@@ -1,3 +1,5 @@
+import { writable } from 'svelte/store';
+
 // Цветовые темы: акцент и оттенок стекла. Прозрачность окна настраивается отдельно.
 export const THEMES = [
   { id: 'amethyst', name: 'Аметист', accent: '#8b7bff', tint: [22, 17, 34] },
@@ -7,6 +9,9 @@ export const THEMES = [
   { id: 'rose', name: 'Роза', accent: '#ff5c95', tint: [34, 14, 26] },
   { id: 'graphite', name: 'Графит', accent: '#b4b8c2', tint: [18, 18, 22] },
 ];
+
+// Текущая схема окна — для документов во iframe (письмо, перевод), у которых свои стили.
+export const darkScheme = writable(true);
 
 export const DEFAULT_THEME = 'amethyst';
 export const DEFAULT_OPACITY = 0.42;
@@ -37,17 +42,43 @@ export function strongAccent(hex) {
   return `rgb(${rgb.join(', ')})`;
 }
 
-export function applyTheme(id, opacity = DEFAULT_OPACITY) {
+// Тёмная ли схема для этих настроек: «Как в системе» берёт текущую схему KDE от ядра.
+export function isDark(a) {
+  const scheme = a?.scheme ?? 'system';
+  return scheme === 'system' ? a?.systemDark !== false : scheme === 'dark';
+}
+
+// Смесь цвета с белым: светлое стекло с оттенком акцента темы.
+const towardWhite = (rgb, amount) => rgb.map((c) => Math.round(255 - (255 - c) * amount));
+
+export function applyTheme(id, opacity = DEFAULT_OPACITY, dark = true) {
   const theme = themeById(id);
-  const [r, g, b] = hexToRgb(theme.accent);
-  const root = document.documentElement.style;
-  root.setProperty('--accent', theme.accent);
-  root.setProperty('--accent-strong', strongAccent(theme.accent));
-  root.setProperty('--accent-soft', `rgba(${r}, ${g}, ${b}, 0.28)`);
-  root.setProperty('--window-tint', `rgba(${theme.tint.join(', ')}, ${opacity})`);
-  // Фон диалогов: оттенок темы, чуть светлее и почти непрозрачный.
-  const surface = theme.tint.map((c) => Math.min(255, c + 14));
-  root.setProperty('--surface', `rgba(${surface.join(', ')}, 0.97)`);
-  root.setProperty('--glass-menu', `rgba(${surface.join(', ')}, 0.94)`);
-  root.setProperty('--native-menu', `rgba(${surface.join(', ')}, 0.62)`);
+  const el = document.documentElement;
+  el.dataset.scheme = dark ? 'dark' : 'light';
+  darkScheme.set(dark);
+  const root = el.style;
+  // На светлом фоне светлые акценты (Графит, Изумруд) не читаются — берём затемнённый.
+  const strong = strongAccent(theme.accent);
+  const accent = dark ? theme.accent : strong;
+  const [r, g, b] = dark ? hexToRgb(theme.accent) : strong.match(/\d+/g).map(Number);
+  root.setProperty('--accent', accent);
+  root.setProperty('--accent-strong', strong);
+  root.setProperty('--accent-soft', `rgba(${r}, ${g}, ${b}, ${dark ? 0.28 : 0.2})`);
+  if (dark) {
+    root.setProperty('--window-tint', `rgba(${theme.tint.join(', ')}, ${opacity})`);
+    // Фон диалогов: оттенок темы, чуть светлее и почти непрозрачный.
+    const surface = theme.tint.map((c) => Math.min(255, c + 14));
+    root.setProperty('--surface', `rgba(${surface.join(', ')}, 0.97)`);
+    root.setProperty('--glass-menu', `rgba(${surface.join(', ')}, 0.94)`);
+    root.setProperty('--native-menu', `rgba(${surface.join(', ')}, 0.62)`);
+  } else {
+    // Тёмный текст на светлом стекле читается, только если стекло плотнее: обои под ним
+    // бывают тёмными. Ползунок прозрачности работает в диапазоне 0.62–0.97.
+    const tint = towardWhite(hexToRgb(theme.accent), 0.1);
+    root.setProperty('--window-tint', `rgba(${tint.join(', ')}, ${(0.55 + opacity * 0.5).toFixed(3)})`);
+    const surface = towardWhite(hexToRgb(theme.accent), 0.04);
+    root.setProperty('--surface', `rgba(${surface.join(', ')}, 0.98)`);
+    root.setProperty('--glass-menu', `rgba(${surface.join(', ')}, 0.96)`);
+    root.setProperty('--native-menu', `rgba(${surface.join(', ')}, 0.8)`);
+  }
 }
