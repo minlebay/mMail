@@ -19,6 +19,8 @@ pub struct Config {
     pub opacity: Option<f32>,
     /// Масштаб интерфейса по умолчанию, 0.5–2.0; `None` — 100%.
     pub zoom: Option<f64>,
+    /// Как часто проверять новые письма, секунд; `None` — 10.
+    pub poll_seconds: Option<u64>,
     /// Средний клик по заголовку сворачивает окно; `None` — включено.
     pub middle_click_minimize: Option<bool>,
     /// Отправители, у которых внешнее содержимое показывается сразу (адреса в нижнем регистре).
@@ -28,6 +30,14 @@ pub struct Config {
 pub struct ConfigStore {
     path: PathBuf,
     config: Mutex<Config>,
+}
+
+pub const POLL_CHOICES: [u64; 5] = [5, 10, 30, 60, 300];
+
+impl Config {
+    pub fn poll_seconds(&self) -> u64 {
+        self.poll_seconds.filter(|s| POLL_CHOICES.contains(s)).unwrap_or(10)
+    }
 }
 
 impl ConfigStore {

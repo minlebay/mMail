@@ -21,7 +21,7 @@
     return () => window.removeEventListener('resize', syncMaximized);
   });
 
-  let appearance = $state({ theme: DEFAULT_THEME, opacity: DEFAULT_OPACITY, middleClickMinimize: true, zoom: 1 });
+  let appearance = $state({ theme: DEFAULT_THEME, opacity: DEFAULT_OPACITY, middleClickMinimize: true, zoom: 1, pollSeconds: 10 });
   let settingsOpen = $state(false);
   // Текущий масштаб; при запуске ядро уже выставило масштаб по умолчанию из настроек.
   let zoom = $state(1);
@@ -31,6 +31,7 @@
       opacity: a.opacity ?? DEFAULT_OPACITY,
       middleClickMinimize: a.middleClickMinimize,
       zoom: a.zoom,
+      pollSeconds: a.pollSeconds,
     };
     zoom = a.zoom;
     applyTheme(appearance.theme, appearance.opacity);

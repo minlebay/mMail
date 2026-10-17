@@ -196,6 +196,7 @@ pub struct Appearance {
     opacity: Option<f32>,
     middle_click_minimize: bool,
     zoom: f64,
+    poll_seconds: u64,
 }
 
 pub const ZOOM_MIN: f64 = 0.5;
@@ -204,11 +205,13 @@ pub const ZOOM_MAX: f64 = 2.0;
 #[tauri::command]
 pub fn get_appearance(config: State<'_, ConfigStore>) -> Appearance {
     let c = config.get();
+    let poll_seconds = c.poll_seconds();
     Appearance {
         theme: c.theme,
         opacity: c.opacity,
         middle_click_minimize: c.middle_click_minimize.unwrap_or(true),
         zoom: c.zoom.unwrap_or(1.0),
+        poll_seconds,
     }
 }
 
@@ -219,7 +222,11 @@ pub fn set_appearance(
     opacity: f32,
     middle_click_minimize: bool,
     zoom: f64,
+    poll_seconds: u64,
 ) -> Result<(), String> {
+    if !crate::config::POLL_CHOICES.contains(&poll_seconds) {
+        return Err("недопустимый интервал проверки".into());
+    }
     if theme.len() > 32 || !theme.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
         return Err("некорректная тема".into());
     }
@@ -228,6 +235,7 @@ pub fn set_appearance(
         c.opacity = Some(opacity.clamp(0.15, 0.85));
         c.middle_click_minimize = Some(middle_click_minimize);
         c.zoom = Some(zoom.clamp(ZOOM_MIN, ZOOM_MAX));
+        c.poll_seconds = Some(poll_seconds);
     })
 }
 

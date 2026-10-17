@@ -20,6 +20,7 @@ use tokio_rustls::TlsConnector;
 use zeroize::Zeroizing;
 
 use crate::accounts::{self, Account};
+use crate::config::ConfigStore;
 use crate::fake;
 use crate::store::{Auth, Folder, Message, Store};
 
@@ -29,8 +30,9 @@ type Session = async_imap::Session<TlsStream<TcpStream>>;
 /// Писем за один FETCH: каждая порция сразу появляется в списке.
 const BATCH: u32 = 200;
 const TIMEOUT: Duration = Duration::from_secs(20);
-/// Как часто проверять новые письма и флаги (прочитано/важное), изменённые в других клиентах.
-const REFRESH_EVERY: Duration = Duration::from_secs(60);
+/// Как часто сверять флаги (прочитано/важное), изменённые в других клиентах.
+/// Новые письма проверяются чаще — интервал в настройках.
+const FLAGS_EVERY: Duration = Duration::from_secs(60);
 /// У скольких последних писем папки сверять флаги.
 const FLAGS_WINDOW: u32 = 500;
 const HEADER_QUERY: &str = "(UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])";
@@ -299,7 +301,9 @@ async fn run_sync(app: &AppHandle, account: Account) -> Result<()> {
         let messages = fetch_batch(&mut session, &email, cursor).await?;
         step(cursor, messages);
     }
-    let mut last_refresh = std::time::Instant::now();
+    let poll = || Duration::from_secs(app.state::<ConfigStore>().get().poll_seconds());
+    let mut last_poll = std::time::Instant::now();
+    let mut last_flags = std::time::Instant::now();
     for i in 0..cursors.len() {
         while cursors[i].next > 0 {
             if conn.cancelled.load(Ordering::Relaxed) {
@@ -308,10 +312,14 @@ async fn run_sync(app: &AppHandle, account: Account) -> Result<()> {
             }
             let messages = fetch_batch(&mut session, &email, &mut cursors[i]).await?;
             step(&cursors[i], messages);
-            // Пока догружается история, свежие изменения тоже подтягиваем.
-            if last_refresh.elapsed() >= REFRESH_EVERY {
-                refresh(app, &mut session, &email, &cursors).await?;
-                last_refresh = std::time::Instant::now();
+            // Пока догружается история, свежие письма и флаги тоже подтягиваем.
+            if last_poll.elapsed() >= poll() {
+                let with_flags = last_flags.elapsed() >= FLAGS_EVERY;
+                refresh(app, &mut session, &email, &cursors, with_flags).await?;
+                last_poll = std::time::Instant::now();
+                if with_flags {
+                    last_flags = last_poll;
+                }
             }
         }
     }
@@ -319,14 +327,19 @@ async fn run_sync(app: &AppHandle, account: Account) -> Result<()> {
 
     // Дальше — периодическая проверка; при обрыве соединения переподключаемся.
     loop {
-        for _ in 0..REFRESH_EVERY.as_secs() {
+        while last_poll.elapsed() < poll() {
             if conn.cancelled.load(Ordering::Relaxed) {
                 let _ = session.logout().await;
                 return Ok(());
             }
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(Duration::from_millis(500)).await;
         }
-        if let Err(e) = refresh(app, &mut session, &email, &cursors).await {
+        let with_flags = last_flags.elapsed() >= FLAGS_EVERY;
+        last_poll = std::time::Instant::now();
+        if with_flags {
+            last_flags = last_poll;
+        }
+        if let Err(e) = refresh(app, &mut session, &email, &cursors, with_flags).await {
             eprintln!("mMail: обновление {email} не удалось ({e}), переподключаюсь");
             let password = accounts::password(&email).await?;
             session = connect(&conn.account, &password).await?;
@@ -334,8 +347,8 @@ async fn run_sync(app: &AppHandle, account: Account) -> Result<()> {
     }
 }
 
-/// Новые письма (UID больше известных) и актуальные флаги последних писем каждой папки.
-async fn refresh(app: &AppHandle, session: &mut Session, email: &str, cursors: &[Cursor]) -> Result<()> {
+/// Новые письма (UID больше известных) и, если `with_flags`, актуальные флаги последних писем.
+async fn refresh(app: &AppHandle, session: &mut Session, email: &str, cursors: &[Cursor], with_flags: bool) -> Result<()> {
     let store = app.state::<Store>();
     let mut changed = false;
     for cursor in cursors {
@@ -357,6 +370,9 @@ async fn refresh(app: &AppHandle, session: &mut Session, email: &str, cursors: &
                 store.append(fresh);
                 changed = true;
             }
+        }
+        if !with_flags {
+            continue;
         }
         let first = mailbox.exists.saturating_sub(FLAGS_WINDOW - 1).max(1);
         let fetches: Vec<Fetch> = session.fetch(format!("{first}:*"), "(UID FLAGS)").await?.try_collect().await?;

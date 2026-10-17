@@ -13,6 +13,14 @@
   let opacity = $state(initial.opacity);
   let middleClickMinimize = $state(initial.middleClickMinimize);
   let zoom = $state(initial.zoom);
+  let pollSeconds = $state(initial.pollSeconds);
+  const POLL = [
+    [5, 'каждые 5 секунд'],
+    [10, 'каждые 10 секунд'],
+    [30, 'каждые 30 секунд'],
+    [60, 'каждую минуту'],
+    [300, 'каждые 5 минут'],
+  ];
 
   // Тема применяется сразу, в конфиг пишется с небольшой задержкой (ползунок дёргается часто).
   $effect(() => {
@@ -21,7 +29,8 @@
     appearance.opacity = opacity;
     appearance.middleClickMinimize = middleClickMinimize;
     appearance.zoom = zoom;
-    const t = setTimeout(() => setAppearance(theme, opacity, middleClickMinimize, zoom), 300);
+    appearance.pollSeconds = pollSeconds;
+    const t = setTimeout(() => setAppearance(theme, opacity, middleClickMinimize, zoom, pollSeconds), 300);
     return () => clearTimeout(t);
   });
 
@@ -144,6 +153,11 @@
             </li>
           {/each}
         </ul>
+
+        <h3>Проверка новых писем</h3>
+        <select class="select" bind:value={pollSeconds}>
+          {#each POLL as [value, label] (value)}<option {value}>{label}</option>{/each}
+        </select>
 
         <h3>Добавить ящик</h3>
         <form onsubmit={add}>
@@ -306,6 +320,19 @@
     width: 16px;
     height: 16px;
     accent-color: var(--accent);
+  }
+
+  .select {
+    height: 34px;
+    padding: 0 10px;
+    border-radius: 9px;
+    border: 1px solid var(--glass-border);
+    background: rgba(255, 255, 255, 0.06);
+    color: inherit;
+    font: inherit;
+  }
+  .select option {
+    background: var(--surface);
   }
 
   .accounts {

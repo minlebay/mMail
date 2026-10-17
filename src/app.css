@@ -73,7 +73,7 @@ input {
 /* Прокручиваемая область панели: полоса прокрутки занимает отступ панели справа,
    а содержимое заканчивается там же, где поиск и кнопки над ним. */
 .scroll-gutter {
-  overflow-y: auto;
-  scrollbar-gutter: stable;
+  /* scroll, а не auto: место под полосу резервируется всегда (scrollbar-gutter WebKitGTK не знает). */
+  overflow-y: scroll;
   margin-right: calc(-1 * var(--gutter));
 }
