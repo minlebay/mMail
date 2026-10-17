@@ -16,6 +16,7 @@ mod sanitize;
 mod smtp;
 mod store;
 mod tray;
+mod window_state;
 mod translation;
 
 use tauri::webview::NewWindowResponse;
@@ -66,9 +67,8 @@ fn main() {
         ])
         .setup(|app| {
             app.manage(config::ConfigStore::load(app.path().app_config_dir()?));
-            let window = glass_window(app.handle(), "main", "mMail")
-                .inner_size(1200.0, 780.0)
-                .min_inner_size(900.0, 560.0)
+            let builder = glass_window(app.handle(), "main", "mMail").inner_size(1200.0, 780.0).min_inner_size(900.0, 560.0);
+            let window = window_state::restore(app.handle(), "main", builder, (900.0, 560.0))
                 .on_new_window({
                     // Клик по ссылке в письме: окно не открываем никогда, а просим UI подтвердить.
                     let app = app.handle().clone();
@@ -82,6 +82,7 @@ fn main() {
                 })
                 .build()?;
             finish_window(app.handle(), &window)?;
+            window_state::track(app.handle(), &window, "main");
             // Крестик в режиме трея прячет окно; само приложение закрывается пунктом «Выйти».
             let handle = app.handle().clone();
             window.on_window_event(move |event| {

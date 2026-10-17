@@ -75,12 +75,13 @@ pub fn open_compose(app: AppHandle, state: State<'_, ComposeState>, prefill: Pre
     let title = if prefill.subject.is_empty() { crate::i18n::text(&app, "Новое письмо") } else { prefill.subject.clone() };
     state.prefills.lock().unwrap().insert(label.clone(), prefill);
 
-    let window = crate::glass_window(&app, &label, &title)
-        .inner_size(820.0, 680.0)
-        .min_inner_size(560.0, 420.0)
+    let builder = crate::glass_window(&app, &label, &title).inner_size(820.0, 680.0).min_inner_size(560.0, 420.0);
+    // Все окна письма открываются размера последнего изменённого.
+    let window = crate::window_state::restore(&app, "compose", builder, (560.0, 420.0))
         .on_new_window(|_, _| NewWindowResponse::Deny)
         .build()
         .map_err(|e| e.to_string())?;
+    crate::window_state::track(&app, &window, "compose");
     crate::finish_window(&app, &window).map_err(|e| e.to_string())
 }
 
