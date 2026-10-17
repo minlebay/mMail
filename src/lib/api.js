@@ -19,13 +19,15 @@ export const openLink = (id) => invoke('open_link', { id });
 
 export const getAppearance = () => invoke('get_appearance');
 
-// a: { theme, opacity, middleClickMinimize, zoom, pollSeconds, trayMode, closeToTray }
+// a: { theme, opacity, middleClickMinimize, zoom, pollSeconds, trayMode, trayIcon, closeToTray }
 export const setAppearance = (a) => invoke('set_appearance', a);
 
 // Шифрованный кэш писем: { bytes, bodyDays } (bodyDays null — хранить всё).
 export const storageInfo = () => invoke('storage_info');
 export const setBodyDays = (days) => invoke('set_body_days', { days });
 export const clearCache = () => invoke('clear_cache');
+
+export const openSettings = () => invoke('open_settings');
 
 export const setZoom = (scale) => invoke('set_zoom', { scale });
 

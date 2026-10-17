@@ -202,6 +202,7 @@ pub struct Appearance {
     zoom: f64,
     poll_seconds: u64,
     tray_mode: &'static str,
+    tray_icon: String,
     close_to_tray: bool,
 }
 
@@ -220,6 +221,7 @@ pub fn get_appearance(config: State<'_, ConfigStore>) -> Appearance {
         zoom: c.zoom.unwrap_or(1.0),
         poll_seconds,
         tray_mode,
+        tray_icon: c.tray_icon.clone().unwrap_or_else(|| "color".into()),
         close_to_tray: c.close_to_tray.unwrap_or(true),
     }
 }
@@ -234,8 +236,12 @@ pub fn set_appearance(
     zoom: f64,
     poll_seconds: u64,
     tray_mode: String,
+    tray_icon: String,
     close_to_tray: bool,
 ) -> Result<(), String> {
+    if !["color", "auto", "light", "dark"].contains(&tray_icon.as_str()) {
+        return Err("неизвестный стиль значка".into());
+    }
     if !crate::config::POLL_CHOICES.contains(&poll_seconds) {
         return Err("недопустимый интервал проверки".into());
     }
@@ -251,6 +257,7 @@ pub fn set_appearance(
         c.poll_seconds = Some(poll_seconds);
         c.tray_mode = Some(tray_mode.as_str().into());
         c.close_to_tray = Some(close_to_tray);
+        c.tray_icon = Some(tray_icon);
     })?;
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
@@ -355,4 +362,21 @@ pub async fn clear_cache(app: tauri::AppHandle) -> Result<StorageInfo, String> {
     .await
     .map_err(|e| e.to_string())??;
     Ok(StorageInfo { bytes, body_days })
+}
+
+/// Окно настроек: одно на приложение, независимое от главного; повторный вызов — показать его.
+#[tauri::command]
+pub fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("settings") {
+        let _ = window.unminimize();
+        return window.set_focus().map_err(|e| e.to_string());
+    }
+    // Высоту окно подберёт само по содержимому (Settings.svelte).
+    let window = crate::glass_window(&app, "settings", "Настройки mMail")
+        .inner_size(680.0, 640.0)
+        .min_inner_size(520.0, 300.0)
+        .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
+        .build()
+        .map_err(|e| e.to_string())?;
+    crate::finish_window(&app, &window).map_err(|e| e.to_string())
 }

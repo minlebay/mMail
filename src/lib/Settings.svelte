@@ -1,11 +1,46 @@
 <script>
-  import { untrack } from 'svelte';
+  // Настройки — отдельное окно (метка "settings"); размер подстраивается под содержимое.
+  import { untrack, onMount } from 'svelte';
+  import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
   import Icon from './Icon.svelte';
   import Select from './Select.svelte';
+  import TitleBar from './TitleBar.svelte';
   import { THEMES, applyTheme } from './themes.js';
   import { setAppearance, listAccounts, addAccount, removeAccount, storageInfo, setBodyDays, clearCache } from './api.js';
 
-  let { appearance, onzoom, onclose } = $props();
+  let { appearance } = $props();
+
+  const win = getCurrentWindow();
+  const onclose = () => win.close();
+  let maximized = $state(false);
+  let titlebar = $state();
+  let content = $state();
+
+  // Высота окна = шапка + содержимое, но не больше 90% экрана (дальше — прокрутка).
+  // Переводим CSS-пиксели в логические через текущее соотношение: у окна может быть свой масштаб.
+  async function fitToContent() {
+    if (!content || !titlebar || maximized) return;
+    const scale = await win.scaleFactor();
+    const inner = await win.innerSize();
+    const ratio = inner.height / scale / window.innerHeight;
+    const style = getComputedStyle(content);
+    const margins = parseFloat(style.marginTop) + parseFloat(style.marginBottom);
+    // + рамка окна (по 1px сверху и снизу).
+    const css = titlebar.offsetHeight + content.offsetHeight + margins + 2;
+    const height = Math.min(css * ratio, window.screen.availHeight * 0.9);
+    await win.setSize(new LogicalSize(inner.width / scale, Math.round(height)));
+  }
+
+  onMount(() => {
+    const observer = new ResizeObserver(() => fitToContent());
+    observer.observe(content);
+    const syncMaximized = () => win.isMaximized().then((m) => (maximized = m));
+    window.addEventListener('resize', syncMaximized);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', syncMaximized);
+    };
+  });
 
   let tab = $state('appearance');
   // Начальные значения формы; дальше форма сама пишет в appearance.
@@ -17,6 +52,13 @@
   let pollSeconds = $state(initial.pollSeconds);
   let trayMode = $state(initial.trayMode);
   let closeToTray = $state(initial.closeToTray);
+  let trayIcon = $state(initial.trayIcon);
+  const TRAY_ICONS = [
+    ['color', 'Цветной'],
+    ['auto', 'Монохромный, по теме KDE'],
+    ['light', 'Монохромный светлый (тёмная панель)'],
+    ['dark', 'Монохромный тёмный (светлая панель)'],
+  ];
   const TRAY = [
     ['panelTray', 'В панели задач и в трее'],
     ['tray', 'Только в трее'],
@@ -40,8 +82,9 @@
     appearance.pollSeconds = pollSeconds;
     appearance.trayMode = trayMode;
     appearance.closeToTray = closeToTray;
+    appearance.trayIcon = trayIcon;
     const t = setTimeout(
-      () => setAppearance({ theme, opacity, middleClickMinimize, zoom, pollSeconds, trayMode, closeToTray }),
+      () => setAppearance({ theme, opacity, middleClickMinimize, zoom, pollSeconds, trayMode, trayIcon, closeToTray }),
       300,
     );
     return () => clearTimeout(t);
@@ -120,16 +163,17 @@
 
 <svelte:window {onkeydown} />
 
-<div class="overlay" role="presentation" onclick={(e) => e.target === e.currentTarget && onclose()}>
-  <div class="dialog" role="dialog" aria-modal="true" aria-label="Настройки">
+<div class="window" class:maximized>
+  <div bind:this={titlebar}>
+    <TitleBar title="Настройки" middleClickMinimize={appearance.middleClickMinimize} {onclose} />
+  </div>
+  <div class="scroll">
+  <div class="content" bind:this={content}>
     <header>
       <nav>
         <button class:active={tab === 'appearance'} onclick={() => (tab = 'appearance')}>Оформление</button>
         <button class:active={tab === 'accounts'} onclick={() => (tab = 'accounts')}>Почтовые ящики</button>
       </nav>
-      <button class="close" aria-label="Закрыть" onclick={onclose}>
-        <svg viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6" /></svg>
-      </button>
     </header>
 
     {#if tab === 'appearance'}
@@ -165,7 +209,7 @@
             max="2"
             step="0.05"
             bind:value={zoom}
-            oninput={() => onzoom(zoom)}
+            
           />
           <span>200%</span>
           <span class="current">{Math.round(zoom * 100)}%</span>
@@ -178,8 +222,21 @@
         </label>
 
         <h3>Значок приложения</h3>
-        <div class="poll">
-          <Select bind:value={trayMode} label="Где показывать значок" options={TRAY.map(([value, label]) => ({ value, label }))} />
+        <div class="field">
+          <span>Где показывать</span>
+          <div class="poll">
+            <Select bind:value={trayMode} label="Где показывать значок" options={TRAY.map(([value, label]) => ({ value, label }))} />
+          </div>
+        </div>
+        <div class="field" class:disabled={trayMode === 'panel'}>
+          <span>Вид в трее</span>
+          <div class="poll">
+            <Select
+              bind:value={trayIcon}
+              label="Вид значка в трее"
+              options={TRAY_ICONS.map(([value, label]) => ({ value, label }))}
+            />
+          </div>
         </div>
         <label class="toggle" class:disabled={trayMode === 'panel'}>
           <input type="checkbox" bind:checked={closeToTray} disabled={trayMode === 'panel'} />
@@ -209,7 +266,7 @@
         </ul>
 
         <h3>Хранилище на диске</h3>
-        <div class="storage">
+        <div class="field">
           <span>Хранить содержимое</span>
           <div class="poll">
             <Select
@@ -252,28 +309,35 @@
       </section>
     {/if}
   </div>
+  </div>
 </div>
 
 <style>
-  .overlay {
+  .window {
     position: fixed;
     inset: 0;
-    z-index: 10;
-    display: grid;
-    place-items: center;
-    background: rgba(10, 8, 18, 0.5);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
     border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: var(--window-tint);
   }
-
-  .dialog {
-    width: min(620px, calc(100% - 48px));
-    max-height: calc(100% - 48px);
+  .window.maximized {
+    border-radius: 0;
+    border: 0;
+  }
+  .scroll {
+    flex: 1;
+    min-height: 0;
     overflow-y: auto;
+  }
+  .content {
+    margin: 4px 16px 16px;
     padding: 14px 22px 22px;
     border-radius: var(--radius);
     background: var(--surface);
     border: 1px solid var(--glass-border);
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
   }
 
   header {
@@ -301,25 +365,6 @@
     color: var(--text);
   }
 
-  .close {
-    width: 28px;
-    height: 28px;
-    display: grid;
-    place-items: center;
-    border-radius: 50%;
-    background: rgba(255, 255, 255, 0.1);
-  }
-  .close:hover {
-    background: rgba(255, 255, 255, 0.2);
-  }
-  .close svg {
-    width: 12px;
-    height: 12px;
-    fill: none;
-    stroke: currentColor;
-    stroke-width: 1.4;
-    stroke-linecap: round;
-  }
 
   h3 {
     margin: 18px 0 10px;
@@ -404,6 +449,23 @@
     accent-color: var(--accent);
   }
 
+  .field {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+  .field > span {
+    width: 150px;
+    flex: none;
+  }
+  .field .poll {
+    margin-bottom: 0;
+  }
+  .field.disabled {
+    opacity: 0.45;
+    pointer-events: none;
+  }
   .storage {
     display: flex;
     align-items: center;
@@ -412,7 +474,8 @@
   }
   .poll {
     display: flex;
-    width: 280px;
+    width: 320px;
+    margin-bottom: 10px;
   }
 
   .accounts {

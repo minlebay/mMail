@@ -6,12 +6,26 @@
 
   let open = $state(false);
   let highlighted = $state(0);
+  // Куда раскрываться и сколько места есть: у края окна список открывается вверх.
+  let up = $state(false);
+  let maxHeight = $state(260);
   let root;
+
+  const OPTION_HEIGHT = 34;
+  function place() {
+    const rect = root.getBoundingClientRect();
+    const wanted = Math.min(260, options.length * OPTION_HEIGHT + 10);
+    const below = window.innerHeight - rect.bottom - 12;
+    const above = rect.top - 12;
+    up = below < wanted && above > below;
+    maxHeight = Math.max(80, Math.min(260, up ? above : below));
+  }
 
   const current = $derived(options.find((o) => o.value === value));
 
   function toggle() {
     open = !open;
+    if (open) place();
     if (open) highlighted = Math.max(0, options.findIndex((o) => o.value === value));
   }
 
@@ -48,7 +62,7 @@
   {#if open}
     <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
     <div class="backdrop" onclick={() => (open = false)}></div>
-    <ul class="list" role="listbox">
+    <ul class="list" class:up role="listbox" style:max-height="{maxHeight}px">
       {#each options as option, i (option.value)}
         <!-- svelte-ignore a11y_click_events_have_key_events -->
         <li
@@ -136,6 +150,10 @@
     background: var(--surface);
     border: 1px solid var(--glass-border);
     box-shadow: 0 12px 36px rgba(0, 0, 0, 0.4);
+  }
+  .list.up {
+    top: auto;
+    bottom: calc(100% + 4px);
   }
   li {
     padding: 8px 10px;

@@ -4,12 +4,11 @@
   import MessageList from './lib/MessageList.svelte';
   import Reader from './lib/Reader.svelte';
   import LinkDialog from './lib/LinkDialog.svelte';
-  import Settings from './lib/Settings.svelte';
   import Splitter from './lib/Splitter.svelte';
   import { applyTheme, DEFAULT_THEME, DEFAULT_OPACITY } from './lib/themes.js';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { listen } from '@tauri-apps/api/event';
-  import { listFolders, syncStatus, getAppearance, setZoom, openCompose as openComposeWindow } from './lib/api.js';
+  import { listFolders, syncStatus, getAppearance, setZoom, openSettings, openCompose as openComposeWindow } from './lib/api.js';
 
   const win = getCurrentWindow();
   let maximized = $state(false);
@@ -21,7 +20,6 @@
   });
 
   let appearance = $state({ theme: DEFAULT_THEME, opacity: DEFAULT_OPACITY, middleClickMinimize: true, zoom: 1, pollSeconds: 10 });
-  let settingsOpen = $state(false);
   // Текущий масштаб; при запуске ядро уже выставило масштаб по умолчанию из настроек.
   let zoom = $state(1);
   getAppearance().then((a) => {
@@ -93,6 +91,13 @@
         refreshFolders();
       }),
       listen('sync-status', (e) => (sync = e.payload)),
+      // Настройки живут в своём окне: тему и масштаб по умолчанию применяем, когда их там меняют.
+      listen('appearance-changed', (e) => {
+        const a = e.payload;
+        if (a.zoom !== appearance.zoom) changeZoom(a.zoom);
+        appearance = { ...a, theme: a.theme || DEFAULT_THEME, opacity: a.opacity ?? DEFAULT_OPACITY };
+        applyTheme(appearance.theme, appearance.opacity);
+      }),
       listen('message-sent', () => showToast('Письмо отправлено')),
     ];
     // Всё, что случилось до подписки, забираем явно.
@@ -137,7 +142,7 @@
     {zoom}
     onzoom={changeZoom}
     middleClickMinimize={appearance.middleClickMinimize}
-    onsettings={() => (settingsOpen = true)}
+    onsettings={openSettings}
   />
 
   <main class="layout" style:grid-template-columns="minmax(150px, {sizes.sidebar}px) 12px minmax(220px, {sizes.list}px) 12px minmax(280px, 1fr)">
@@ -150,9 +155,6 @@
 
   <LinkDialog />
   {#if toast}<div class="toast">{toast}</div>{/if}
-  {#if settingsOpen}
-    <Settings {appearance} onzoom={changeZoom} onclose={() => (settingsOpen = false)} />
-  {/if}
 </div>
 
 <style>

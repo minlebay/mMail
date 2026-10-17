@@ -26,6 +26,8 @@ pub struct Config {
     /// Где виден значок: `panelTray` (панель и трей), `tray` (только трей), `panel` (только панель);
     /// `None` — панель и трей.
     pub tray_mode: Option<String>,
+    /// Значок в трее: `color`, `auto` (монохромный по теме KDE), `light`, `dark`; `None` — цветной.
+    pub tray_icon: Option<String>,
     /// Крестик прячет окно в трей, а не закрывает приложение; `None` — прячет.
     pub close_to_tray: Option<bool>,
     /// За сколько дней хранить на диске содержимое писем (заголовки — всегда);

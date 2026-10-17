@@ -1,0 +1,27 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "settings",
+  "description": "Окно настроек: оформление, ящики, хранилище и своё окно. Читать почту не может.",
+  "windows": ["settings"],
+  "permissions": [
+    "allow-get-appearance",
+    "allow-set-appearance",
+    "allow-list-accounts",
+    "allow-add-account",
+    "allow-remove-account",
+    "allow-storage-info",
+    "allow-set-body-days",
+    "allow-clear-cache",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-minimize",
+    "core:window:allow-is-maximized",
+    "core:window:allow-close",
+    "core:window:allow-set-size",
+    "core:window:allow-inner-size",
+    "core:window:allow-scale-factor"
+  ]
+}

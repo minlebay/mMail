@@ -41,6 +41,7 @@ fn main() {
             commands::storage_info,
             commands::set_body_days,
             commands::clear_cache,
+            commands::open_settings,
             links::open_link,
             imap::sync_status,
             imap::list_accounts,

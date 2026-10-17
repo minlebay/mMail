@@ -1,7 +1,6 @@
 //! Значок в трее (StatusNotifierItem): меню, отметка непрочитанных, режимы «панель / трей».
 //! На Linux значок не получает кликов — всё через меню (KDE открывает его и по левому клику).
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use tauri::image::Image;
@@ -13,19 +12,22 @@ use crate::config::{ConfigStore, TrayMode};
 use crate::store::{Scope, Store};
 
 const TRAY_ID: &str = "main";
-const ICON: &[u8] = include_bytes!("../icons/tray/normal.png");
-const ICON_UNREAD: &[u8] = include_bytes!("../icons/tray/unread.png");
+/// Значки: (обычный, с меткой непрочитанных).
+const COLOR: (&[u8], &[u8]) = (include_bytes!("../icons/tray/normal.png"), include_bytes!("../icons/tray/unread.png"));
+const MONO_LIGHT: (&[u8], &[u8]) =
+    (include_bytes!("../icons/tray/mono-light.png"), include_bytes!("../icons/tray/mono-light-unread.png"));
+const MONO_DARK: (&[u8], &[u8]) =
+    (include_bytes!("../icons/tray/mono-dark.png"), include_bytes!("../icons/tray/mono-dark-unread.png"));
 
 /// Пункт меню с числом непрочитанных: заголовок-подсказка (у SNI на Linux нет всплывающих подсказок).
 #[derive(Default)]
 pub struct TrayState {
     unread_item: Mutex<Option<MenuItem<Wry>>>,
-    /// Последнее показанное число; `usize::MAX` — ещё не показывали.
-    shown: AtomicUsize,
+    /// Что сейчас показано: число непрочитанных и картинка; `None` — ещё ничего.
+    shown: Mutex<Option<(usize, usize)>>,
 }
 
 pub fn init(app: &AppHandle) -> tauri::Result<()> {
-    app.state::<TrayState>().shown.store(usize::MAX, Ordering::Relaxed);
     apply(app)?;
     let handle = app.clone();
     app.listen_any("mailbox-changed", move |_| update_unread(&handle));
@@ -35,15 +37,19 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
 /// Приводит трей и панель задач в соответствие с настройками. Вызывать в главном потоке.
 pub fn apply(app: &AppHandle) -> tauri::Result<()> {
     let mode = app.state::<ConfigStore>().get().tray_mode();
-    let has_tray = app.tray_by_id(TRAY_ID).is_some();
-    if mode.tray() && !has_tray {
-        create(app)?;
-    } else if !mode.tray() && has_tray {
-        app.remove_tray_by_id(TRAY_ID);
-        *app.state::<TrayState>().unread_item.lock().unwrap() = None;
+    // Значок создаётся один раз и дальше только прячется: удалённый appindicator не освобождает
+    // свой путь в D-Bus, и пересозданный значок оставался бы мёртвым, без меню.
+    match app.tray_by_id(TRAY_ID) {
+        Some(tray) => tray.set_visible(mode.tray())?,
+        None if mode.tray() => create(app)?,
+        None => {}
+    }
+    let hidden = app.get_webview_window("main").is_some_and(|w| w.is_visible().is_ok_and(|v| !v));
+    if !mode.tray() && hidden {
         // Без трея скрытое окно было бы не вернуть.
         show_main(app);
     }
+    update_unread(app);
     if let Some(window) = app.get_webview_window("main") {
         crate::blur::set_skip_taskbar(&window, mode == TrayMode::Tray);
     }
@@ -65,12 +71,13 @@ fn create(app: &AppHandle) -> tauri::Result<()> {
             &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, "show", "Открыть mMail", true, None::<&str>)?,
             &MenuItem::with_id(app, "compose", "Написать письмо", true, None::<&str>)?,
+            &MenuItem::with_id(app, "settings", "Настройки", true, None::<&str>)?,
             &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, "quit", "Выйти", true, None::<&str>)?,
         ],
     )?;
     TrayIconBuilder::with_id(TRAY_ID)
-        .icon(Image::from_bytes(ICON)?)
+        .icon(Image::from_bytes(COLOR.0)?)
         .title("mMail")
         .menu(&menu)
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -81,14 +88,16 @@ fn create(app: &AppHandle) -> tauri::Result<()> {
                     eprintln!("mMail: окно письма не открылось: {e}");
                 }
             }
+            "settings" => {
+                if let Err(e) = crate::commands::open_settings(app.clone()) {
+                    eprintln!("mMail: окно настроек не открылось: {e}");
+                }
+            }
             "quit" => app.exit(0),
             _ => {}
         })
         .build(app)?;
-    let state = app.state::<TrayState>();
-    *state.unread_item.lock().unwrap() = Some(unread);
-    state.shown.store(usize::MAX, Ordering::Relaxed);
-    update_unread(app);
+    *app.state::<TrayState>().unread_item.lock().unwrap() = Some(unread);
     Ok(())
 }
 
@@ -104,11 +113,19 @@ pub fn show_main(app: &AppHandle) {
 fn update_unread(app: &AppHandle) {
     let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
     let count = app.state::<Store>().unread(Scope::All, "inbox");
+    let set = match app.state::<ConfigStore>().get().tray_icon.as_deref() {
+        Some("light") => MONO_LIGHT,
+        Some("dark") => MONO_DARK,
+        Some("auto") if dark_panel() => MONO_LIGHT,
+        Some("auto") => MONO_DARK,
+        _ => COLOR,
+    };
+    let icon = if count > 0 { set.1 } else { set.0 };
     let state = app.state::<TrayState>();
-    if state.shown.swap(count, Ordering::Relaxed) == count {
+    let key = (count, icon.as_ptr() as usize);
+    if state.shown.lock().unwrap().replace(key) == Some(key) {
         return;
     }
-    let icon = if count > 0 { ICON_UNREAD } else { ICON };
     if let Ok(image) = Image::from_bytes(icon) {
         let _ = tray.set_icon(Some(image));
     }
@@ -116,4 +133,28 @@ fn update_unread(app: &AppHandle) {
     if let Some(item) = item {
         let _ = item.set_text(if count > 0 { format!("Непрочитанных: {count}") } else { "Нет непрочитанных".into() });
     }
+}
+
+/// Тёмная ли тема KDE: по цвету фона окон из `~/.config/kdeglobals` (панель Plasma следует ему же).
+fn dark_panel() -> bool {
+    let Some(path) = dirs_config().map(|d| d.join("kdeglobals")) else { return true };
+    let Ok(text) = std::fs::read_to_string(path) else { return true };
+    let mut in_window = false;
+    for line in text.lines().map(str::trim) {
+        if line.starts_with('[') {
+            in_window = line == "[Colors:Window]";
+        } else if let Some(rgb) = line.strip_prefix("BackgroundNormal=").filter(|_| in_window) {
+            let c: Vec<f32> = rgb.split(',').filter_map(|v| v.trim().parse().ok()).collect();
+            if let [r, g, b, ..] = c[..] {
+                return 0.2126 * r + 0.7152 * g + 0.0722 * b < 128.0;
+            }
+        }
+    }
+    true
+}
+
+fn dirs_config() -> Option<std::path::PathBuf> {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
 }

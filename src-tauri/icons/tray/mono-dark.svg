@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Монохромный значок для трея в стиле Breeze: кольцо и конверт, как у цветного шара. -->
+  <defs>
+    <mask id="cut">
+      <rect width="512" height="512" fill="#fff"/>
+      
+    </mask>
+  </defs>
+  <g fill="none" stroke="#232629" stroke-linecap="round" stroke-linejoin="round" mask="url(#cut)">
+    <circle cx="256" cy="256" r="222" stroke-width="36"/>
+    <rect x="136" y="166" width="240" height="180" rx="30" stroke-width="34"/>
+    <path d="M160 194l96 74 96-74" stroke-width="34"/>
+  </g>
+  
+</svg>
