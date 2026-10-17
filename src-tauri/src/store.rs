@@ -361,6 +361,15 @@ impl Store {
         })
     }
 
+    pub fn set_starred(&self, id: u32, starred: bool) {
+        let mut entries = self.entries.write().unwrap();
+        let Some(e) = entries.iter_mut().find(|e| e.id == id) else { return };
+        e.msg.starred = starred;
+        if let (Some(account), Some(uid)) = (&e.msg.account, e.msg.uid) {
+            self.persist(|db| db.set_flags(account, e.msg.folder, &[(uid, e.msg.unread, starred)]));
+        }
+    }
+
     pub fn set_unread(&self, id: u32, unread: bool) {
         let mut entries = self.entries.write().unwrap();
         let Some(e) = entries.iter_mut().find(|e| e.id == id) else { return };

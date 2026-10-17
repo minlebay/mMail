@@ -528,3 +528,33 @@ pub async fn mark_folder_read(
         _ => Ok(marked),
     }
 }
+
+/// Прочитано/непрочитано и «важное» (флаг `\\Flagged`, письмо остаётся в своей папке).
+/// Локально меняем только после подтверждения сервера.
+#[tauri::command]
+pub async fn set_message_flags(
+    app: tauri::AppHandle,
+    store: State<'_, Store>,
+    imap: State<'_, Imap>,
+    id: u32,
+    unread: Option<bool>,
+    starred: Option<bool>,
+) -> Result<(), String> {
+    let message = store.details(id).ok_or("письмо пропало")?;
+    if let (Some(account), Some(uid)) = (message.account.as_deref(), message.uid) {
+        if let Some(unread) = unread {
+            imap.set_flag(account, message.folder, &[uid], "\\Seen", !unread).await.map_err(|e| e.to_string())?;
+        }
+        if let Some(starred) = starred {
+            imap.set_flag(account, message.folder, &[uid], "\\Flagged", starred).await.map_err(|e| e.to_string())?;
+        }
+    }
+    if let Some(unread) = unread {
+        store.set_unread(id, unread);
+    }
+    if let Some(starred) = starred {
+        store.set_starred(id, starred);
+    }
+    let _ = tauri::Emitter::emit(&app, "mailbox-changed", ());
+    Ok(())
+}

@@ -8,6 +8,7 @@
     "allow-write-clipboard",
     "allow-mark-message-read",
     "allow-mark-folder-read",
+    "allow-set-message-flags",
     "allow-trash-message",
     "allow-message-translation-text",
     "allow-translate-text",

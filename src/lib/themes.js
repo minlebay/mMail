@@ -30,4 +30,5 @@ export function applyTheme(id, opacity = DEFAULT_OPACITY) {
   // Фон диалогов: оттенок темы, чуть светлее и почти непрозрачный.
   const surface = theme.tint.map((c) => Math.min(255, c + 14));
   root.setProperty('--surface', `rgba(${surface.join(', ')}, 0.97)`);
+  root.setProperty('--glass-menu', `rgba(${surface.join(', ')}, 0.62)`);
 }

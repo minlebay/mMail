@@ -101,6 +101,10 @@
         applyTheme(appearance.theme, appearance.opacity);
       }),
       listen('message-sent', () => showToast('Письмо отправлено')),
+      // Удалённое письмо больше не показываем в просмотре.
+      listen('message-trashed', (e) => {
+        if (selectedId === e.payload) selectedId = null;
+      }),
     ];
     // Всё, что случилось до подписки, забираем явно.
     Promise.all(stops).then(() => {
@@ -150,7 +154,7 @@
   <main class="layout" style:grid-template-columns="minmax(150px, {sizes.sidebar}px) 12px minmax(220px, {sizes.list}px) 12px minmax(280px, 1fr)">
     <Sidebar {groups} {active} onpick={pickFolder} oncompose={(from) => openCompose(from ? { from } : {})} onrefresh={() => { version++; refreshFolders(); }} onerror={showToast} />
     <Splitter value={sizes.sidebar} min={150} max={380} initial={SIZES.sidebar} onchange={(px) => resize('sidebar', px)} />
-    <MessageList onreply={replyTo} account={active.account} folder={active.folder} {version} {selectedId} onselect={(id) => (selectedId = id)} />
+    <MessageList onreply={replyTo} onerror={showToast} account={active.account} folder={active.folder} {version} {selectedId} onselect={(id) => (selectedId = id)} />
     <Splitter value={sizes.list} min={220} max={640} initial={SIZES.list} onchange={(px) => resize('list', px)} />
     <Reader id={selectedId} onreply={replyTo} />
   </main>

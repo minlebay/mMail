@@ -77,7 +77,7 @@
       {#if item.separator}
         <div class="separator" role="separator"></div>
       {:else}
-        <button role="menuitem" tabindex="-1" disabled={item.disabled} onclick={() => activate(item)}>{$t(item.label)}</button>
+        <button role="menuitem" tabindex="-1" class:danger={item.danger} disabled={item.disabled} onclick={() => activate(item)}>{$t(item.label)}</button>
       {/if}
     {/each}
   </div>
@@ -93,9 +93,12 @@
     overflow: auto;
     padding: 6px;
     border: 1px solid var(--glass-border);
-    border-radius: 10px;
-    background: var(--surface);
-    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.4);
+    border-radius: 12px;
+    /* Матовое стекло, как у окна: размываем то, что под меню внутри окна. */
+    background: var(--glass-menu);
+    -webkit-backdrop-filter: blur(22px) saturate(1.5);
+    backdrop-filter: blur(22px) saturate(1.5);
+    box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.08);
   }
   button {
     display: block;
@@ -107,5 +110,6 @@
   }
   button:hover, button:focus-visible { background: var(--accent-soft); outline: none; }
   button:disabled { opacity: 0.45; }
+  button.danger { color: var(--danger); }
   .separator { height: 1px; margin: 5px 6px; background: var(--glass-border); }
 </style>

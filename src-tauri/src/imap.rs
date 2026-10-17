@@ -704,6 +704,14 @@ impl Imap {
 
     /// Помечает прочитанными письма одной папки: одна команда STORE на порцию UID.
     pub async fn mark_seen_many(&self, email: &str, folder: Folder, uids: &[u32]) -> Result<()> {
+        self.set_flag(email, folder, uids, "\\Seen", true).await
+    }
+
+    /// Ставит (`add`) или снимает системный флаг (`\Seen`, `\Flagged`) у писем одной папки.
+    pub async fn set_flag(&self, email: &str, folder: Folder, uids: &[u32], flag: &str, add: bool) -> Result<()> {
+        if !matches!(flag, "\\Seen" | "\\Flagged") {
+            return Err("недопустимый флаг".into());
+        }
         if uids.is_empty() {
             return Ok(());
         }
@@ -718,7 +726,8 @@ impl Imap {
         let result: Result<()> = async {
             session.select(name).await?;
             for chunk in uids.chunks(500) {
-                let _: Vec<Fetch> = session.uid_store(uid_set(chunk), "+FLAGS.SILENT (\\Seen)").await?.try_collect().await?;
+                let query = format!("{}FLAGS.SILENT ({flag})", if add { '+' } else { '-' });
+                let _: Vec<Fetch> = session.uid_store(uid_set(chunk), query).await?.try_collect().await?;
             }
             Ok(())
         }

@@ -55,5 +55,7 @@ export const writeClipboard = (text) => invoke('write_clipboard', { text });
 export const markMessageRead = (id) => invoke('mark_message_read', { id });
 export const markFolderRead = (account, folder) => invoke('mark_folder_read', { account, folder });
 export const trashMessage = (id) => invoke('trash_message', { id });
+// flags: { unread?: boolean, starred?: boolean } — «важное» это флаг, письмо остаётся в своей папке.
+export const setMessageFlags = (id, flags) => invoke('set_message_flags', { id, unread: flags.unread ?? null, starred: flags.starred ?? null });
 export const messageTranslationText = (id) => invoke('message_translation_text', { id });
 export const translateText = (text) => invoke('translate_text', { text });

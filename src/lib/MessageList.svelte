@@ -4,9 +4,9 @@
   import { SvelteMap } from 'svelte/reactivity';
   import Icon from './Icon.svelte';
   import { showContextMenu } from './contextMenu.js';
-  import { listMessages, writeClipboard } from './api.js';
+  import { listMessages, writeClipboard, setMessageFlags, trashMessage, messageTranslationText, translateText } from './api.js';
 
-  let { account, folder, version, selectedId, onselect, onreply } = $props();
+  let { account, folder, version, selectedId, onselect, onreply, onerror } = $props();
 
   // Виртуальный список: в DOM только видимые строки, данные подгружаются страницами из ядра.
   const ROW = 64;
@@ -120,12 +120,26 @@
       { label: 'Ответить', run: () => onreply(item, 'reply') },
       { label: 'Переслать', run: () => onreply(item, 'forward') },
       { separator: true },
+      item.unread
+        ? { label: 'Отметить прочитанным', run: () => setMessageFlags(item.id, { unread: false }) }
+        : { label: 'Отметить непрочитанным', run: () => setMessageFlags(item.id, { unread: true }) },
+      item.starred
+        ? { label: 'Снять отметку «Важное»', run: () => setMessageFlags(item.id, { starred: false }) }
+        : { label: 'Отметить важным', run: () => setMessageFlags(item.id, { starred: true }) },
+      { label: 'Перевести письмо', run: () => messageTranslationText(item.id).then(translateText) },
+      { separator: true },
       { label: 'Копировать адрес отправителя', run: () => writeClipboard(item.fromAddr) },
       { label: 'Копировать тему', run: () => writeClipboard(item.subject) },
+      ...(item.inTrash ? [] : [{ separator: true }, { label: 'Удалить', danger: true, run: () => trashMessage(item.id) }]),
     ]);
   }
 
   function onkey(e) {
+    if (e.key === 'Delete') {
+      const item = itemAt(selIndex);
+      if (item && !item.inTrash) trashMessage(item.id).catch((err) => onerror?.(String(err)));
+      return;
+    }
     if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
       const item = itemAt(selIndex);
       if (item) menu(e, item);

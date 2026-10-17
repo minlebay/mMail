@@ -51,6 +51,7 @@ fn main() {
             commands::write_clipboard,
             commands::mark_message_read,
             commands::mark_folder_read,
+            commands::set_message_flags,
             commands::trash_message,
             commands::message_translation_text,
             translation::translate_text,

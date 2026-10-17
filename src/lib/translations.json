@@ -846,5 +846,25 @@
   "Показывать раздел «Все ящики»": {
     "en": "Show the “All accounts” section",
     "sr": "Prikaži odeljak „Svi nalozi”"
+  },
+  "Отметить прочитанным": {
+    "en": "Mark as read",
+    "sr": "Označi kao pročitano"
+  },
+  "Отметить непрочитанным": {
+    "en": "Mark as unread",
+    "sr": "Označi kao nepročitano"
+  },
+  "Отметить важным": {
+    "en": "Mark as important",
+    "sr": "Označi kao važno"
+  },
+  "Снять отметку «Важное»": {
+    "en": "Remove “Important” mark",
+    "sr": "Ukloni oznaku „Važno”"
+  },
+  "Перевести письмо": {
+    "en": "Translate message",
+    "sr": "Prevedi poruku"
   }
 }
