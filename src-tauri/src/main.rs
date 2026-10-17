@@ -46,6 +46,7 @@ fn main() {
             commands::set_body_days,
             commands::clear_cache,
             commands::open_settings,
+            commands::set_show_all_accounts,
             commands::write_clipboard,
             commands::mark_message_read,
             commands::mark_folder_read,

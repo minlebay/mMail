@@ -27,6 +27,7 @@ export const storageInfo = () => invoke('storage_info');
 export const setBodyDays = (days) => invoke('set_body_days', { days });
 export const clearCache = () => invoke('clear_cache');
 
+export const setShowAllAccounts = (show) => invoke('set_show_all_accounts', { show });
 export const openSettings = () => invoke('open_settings');
 
 export const setZoom = (scale) => invoke('set_zoom', { scale });

@@ -842,5 +842,9 @@
   "Отметить входящие прочитанными": {
     "en": "Mark inbox as read",
     "sr": "Označi prijemno sanduče kao pročitano"
+  },
+  "Показывать раздел «Все ящики»": {
+    "en": "Show the “All accounts” section",
+    "sr": "Prikaži odeljak „Svi nalozi”"
   }
 }

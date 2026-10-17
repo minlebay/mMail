@@ -7,7 +7,7 @@
   import Select from './Select.svelte';
   import TitleBar from './TitleBar.svelte';
   import { THEMES, applyTheme } from './themes.js';
-  import { setAppearance, listAccounts, addAccount, removeAccount, storageInfo, setBodyDays, clearCache } from './api.js';
+  import { setAppearance, listAccounts, addAccount, removeAccount, storageInfo, setBodyDays, clearCache, setShowAllAccounts } from './api.js';
 
   let { appearance } = $props();
 
@@ -117,6 +117,8 @@
   let pollSeconds = $state(initial.pollSeconds);
   let trayMode = $state(initial.trayMode);
   let closeToTray = $state(initial.closeToTray);
+  // Сохраняется сразу отдельной командой: это дерево папок, а не оформление.
+  let showAllAccounts = $state(initial.showAllAccounts ?? true);
   let trayIcon = $state(initial.trayIcon);
   const TRAY_ICONS = $derived([
     ['color', $t("Цветной")],
@@ -339,6 +341,10 @@
             </li>
           {/each}
         </ul>
+        <label class="toggle">
+          <input type="checkbox" bind:checked={() => showAllAccounts, (v) => setShowAllAccounts((showAllAccounts = v))} />
+          {$t("Показывать раздел «Все ящики»")}
+        </label>
 
         <h3>{$t("Хранилище на диске")}</h3>
         <div class="field">

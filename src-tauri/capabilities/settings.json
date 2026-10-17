@@ -14,6 +14,7 @@
     "allow-storage-info",
     "allow-set-body-days",
     "allow-clear-cache",
+    "allow-set-show-all-accounts",
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "core:window:allow-start-dragging",

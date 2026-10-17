@@ -30,6 +30,8 @@ pub struct Config {
     pub tray_mode: Option<String>,
     /// Значок в трее: `color`, `auto` (монохромный по теме KDE), `light`, `dark`; `None` — цветной.
     pub tray_icon: Option<String>,
+    /// Показывать в дереве общий раздел «Все ящики»; `None` — показывать.
+    pub show_all_accounts: Option<bool>,
     /// Крестик прячет окно в трей, а не закрывает приложение; `None` — прячет.
     pub close_to_tray: Option<bool>,
     /// За сколько дней хранить на диске содержимое писем (заголовки — всегда);

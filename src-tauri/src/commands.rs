@@ -65,7 +65,7 @@ pub struct MessageView {
 }
 
 #[tauri::command]
-pub fn list_folders(store: State<'_, Store>, imap: State<'_, Imap>) -> Vec<FolderGroup> {
+pub fn list_folders(store: State<'_, Store>, imap: State<'_, Imap>, config: State<'_, ConfigStore>) -> Vec<FolderGroup> {
     let info = |scope: Scope, folder: Folder, display: Option<String>| {
         let id = folder.key();
         let unread = store.unread(scope, &id);
@@ -118,7 +118,7 @@ pub fn list_folders(store: State<'_, Store>, imap: State<'_, Imap>) -> Vec<Folde
     accounts.sort();
 
     let mut groups = Vec::new();
-    if accounts.len() > 1 {
+    if accounts.len() > 1 && config.get().show_all_accounts.unwrap_or(true) {
         groups.push(FolderGroup { account: None, title: "Все ящики".into(), folders: folders(Scope::All, None) });
     }
     for account in accounts {
@@ -250,6 +250,7 @@ pub struct Appearance {
     tray_mode: &'static str,
     tray_icon: String,
     close_to_tray: bool,
+    show_all_accounts: bool,
 }
 
 pub const ZOOM_MIN: f64 = 0.5;
@@ -270,7 +271,16 @@ pub fn get_appearance(config: State<'_, ConfigStore>) -> Appearance {
         tray_mode,
         tray_icon: c.tray_icon.clone().unwrap_or_else(|| "color".into()),
         close_to_tray: c.close_to_tray.unwrap_or(true),
+        show_all_accounts: c.show_all_accounts.unwrap_or(true),
     }
+}
+
+/// Раздел «Все ящики» в дереве папок; главное окно перестраивает дерево по mailbox-changed.
+#[tauri::command]
+pub fn set_show_all_accounts(app: tauri::AppHandle, config: State<'_, ConfigStore>, show: bool) -> Result<(), String> {
+    config.update(|c| c.show_all_accounts = Some(show))?;
+    let _ = tauri::Emitter::emit(&app, "mailbox-changed", ());
+    Ok(())
 }
 
 #[tauri::command]
