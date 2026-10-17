@@ -108,6 +108,8 @@ struct Entry {
     id: u32,
     msg: Message,
     haystack: String,
+    /// Тело лежит в кэше на диске, а не в `msg.html`: в памяти держим только заголовки.
+    body_on_disk: bool,
 }
 
 #[derive(Serialize)]
@@ -173,7 +175,7 @@ impl Store {
         }
         let (messages, validity) = db.load()?;
         *self.validity.lock().unwrap() = validity.into_iter().map(|(a, f, v)| ((a, f), v)).collect();
-        self.replace(|m| m.account.is_some(), messages);
+        self.replace_entries(|m| m.account.is_some(), messages);
         let _ = self.db.set(db);
         Ok(())
     }
@@ -332,12 +334,18 @@ impl Store {
 
     /// Удаляет письма, подходящие под `drop`, добавляет новые; держит порядок от новых к старым.
     fn replace(&self, drop: impl Fn(&Message) -> bool, messages: Vec<Message>) {
+        self.replace_entries(drop, messages.into_iter().map(|m| (m, false)).collect());
+    }
+
+    /// Как [`Store::replace`]; второе в паре — тело уже лежит в кэше на диске.
+    fn replace_entries(&self, drop: impl Fn(&Message) -> bool, messages: Vec<(Message, bool)>) {
         let mut entries = self.entries.write().unwrap();
         entries.retain(|e| !drop(&e.msg));
-        entries.extend(messages.into_iter().map(|msg| Entry {
+        entries.extend(messages.into_iter().map(|(msg, body_on_disk)| Entry {
             id: self.next_id.fetch_add(1, Ordering::Relaxed),
             haystack: format!("{} {} {}", msg.from_name, msg.from_addr, msg.subject).to_lowercase(),
             msg,
+            body_on_disk,
         }));
         entries.sort_by(|a, b| b.msg.timestamp.cmp(&a.msg.timestamp));
     }
@@ -390,9 +398,24 @@ impl Store {
     }
 
     pub fn details(&self, id: u32) -> Option<Details> {
-        let entries = self.entries.read().unwrap();
-        let e = entries.iter().find(|e| e.id == id)?;
-        Some(Details {
+        let mut details = {
+            let entries = self.entries.read().unwrap();
+            let e = entries.iter().find(|e| e.id == id)?;
+            (self.details_of(e), e.body_on_disk)
+        };
+        // Тело читаем с диска уже без блокировки списка.
+        if let (true, Some(db), Some(account), Some(uid)) = (details.1, self.db.get(), details.0.account.as_deref(), details.0.uid) {
+            match db.body(account, details.0.folder, uid) {
+                Ok(html) => details.0.html = html,
+                Err(e) => eprintln!("mMail: чтение письма из кэша: {e}"),
+            }
+        }
+        Some(details.0)
+    }
+
+    fn details_of(&self, e: &Entry) -> Details {
+        let id = e.id;
+        Details {
             id,
             account: e.msg.account.clone(),
             folder: e.msg.folder,
@@ -408,7 +431,7 @@ impl Store {
             message_id: e.msg.message_id.clone(),
             references: e.msg.references.clone(),
             attachments: e.msg.attachments.clone(),
-        })
+        }
     }
 
     pub fn set_starred(&self, id: u32, starred: bool) {
@@ -467,7 +490,7 @@ impl Store {
         let entries = self.entries.read().unwrap();
         entries
             .iter()
-            .filter(|e| e.msg.html.is_none() && !e.msg.unavailable && e.msg.folder == folder && e.msg.account.as_deref() == Some(account))
+            .filter(|e| e.msg.html.is_none() && !e.body_on_disk && !e.msg.unavailable && e.msg.folder == folder && e.msg.account.as_deref() == Some(account))
             .filter(|e| since.is_none_or(|since| e.msg.timestamp >= since))
             .filter_map(|e| e.msg.uid)
             .collect()
@@ -479,6 +502,7 @@ impl Store {
         for e in self.entries.write().unwrap().iter_mut() {
             if e.msg.account.is_some() && e.msg.timestamp < cutoff {
                 e.msg.html = None;
+                e.body_on_disk = false;
             }
         }
         match self.db.get() {
@@ -509,10 +533,16 @@ impl Store {
     /// Запоминает загруженное с сервера письмо: тело, проверку отправителя, идентификаторы цепочки.
     pub fn set_opened(&self, id: u32, opened: Opened) {
         if let Some(e) = self.entries.write().unwrap().iter_mut().find(|e| e.id == id) {
-            if let (Some(account), Some(uid)) = (&e.msg.account, e.msg.uid) {
-                self.persist(|db| db.set_opened(account, e.msg.folder, uid, &opened));
+            let mut saved = false;
+            if let (Some(account), Some(uid), Some(db)) = (&e.msg.account, e.msg.uid, self.db.get()) {
+                match db.set_opened(account, e.msg.folder, uid, &opened) {
+                    Ok(()) => saved = true,
+                    Err(err) => eprintln!("mMail: запись в кэш не удалась: {err}"),
+                }
             }
-            e.msg.html = Some(opened.html);
+            // Записали на диск — в памяти тело не держим; без кэша (хранилище закрыто) — держим.
+            e.body_on_disk = saved;
+            e.msg.html = if saved { None } else { Some(opened.html) };
             e.msg.auth = opened.auth;
             e.msg.message_id = opened.message_id;
             e.msg.references = opened.references;
@@ -603,6 +633,36 @@ mod tests {
         again.attach_db(Db::open(&dir, &key).unwrap()).unwrap();
         again.check_validity("me@ya.ru", Folder::Inbox, 7);
         assert_eq!(again.uids("me@ya.ru", Folder::Inbox).len(), 5);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn opened_bodies_live_on_disk_not_in_memory() {
+        let dir = std::env::temp_dir().join(format!("mmail-test-bodies-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let key = [5u8; 32];
+        let store = Store::default();
+        store.attach_db(Db::open(&dir, &key).unwrap()).unwrap();
+        store.check_validity("me@ya.ru", Folder::Inbox, 1);
+        store.append(vec![message(1), message(2)]);
+        let opened = || Opened { html: "<p>тело</p>".into(), auth: Auth::Unknown, message_id: None, references: Vec::new(), attachments: Vec::new() };
+        assert!(store.set_opened_uid("me@ya.ru", Folder::Inbox, 1, opened()) == false);
+        {
+            let entries = store.entries.read().unwrap();
+            assert!(entries.iter().all(|e| e.msg.html.is_none()), "в памяти тел нет");
+        }
+        let id = store.id_of("me@ya.ru", Folder::Inbox, 1).unwrap();
+        assert_eq!(store.details(id).unwrap().html.as_deref(), Some("<p>тело</p>"));
+        assert_eq!(store.unopened("me@ya.ru", Folder::Inbox, None), vec![2]);
+        drop(store);
+
+        let again = Store::default();
+        again.attach_db(Db::open(&dir, &key).unwrap()).unwrap();
+        let id = again.id_of("me@ya.ru", Folder::Inbox, 1).unwrap();
+        assert_eq!(again.details(id).unwrap().html.as_deref(), Some("<p>тело</p>"));
+        assert_eq!(again.unopened("me@ya.ru", Folder::Inbox, None), vec![2]);
+        again.clear_bodies(i64::MAX).unwrap();
+        assert_eq!(again.details(id).unwrap().html, None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

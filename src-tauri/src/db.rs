@@ -7,7 +7,7 @@ use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 use std::sync::Mutex;
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use zeroize::Zeroizing;
 
 use crate::imap::Result;
@@ -59,15 +59,17 @@ impl Db {
         Ok(conn)
     }
 
-    pub fn load(&self) -> Result<(Vec<Message>, Vec<(String, Folder, u32)>)> {
+    /// Заголовки писем без содержимого: тело читается с диска при открытии ([`Db::body`]),
+    /// иначе весь кэш (сотни мегабайт) висел бы в памяти. Второе в паре — есть ли тело на диске.
+    pub fn load(&self) -> Result<(Vec<(Message, bool)>, Vec<(String, Folder, u32)>)> {
         let conn = self.0.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT account, folder, uid, unread, starred, from_name, from_addr, subject, timestamp, auth,
-                    has_attachments, html, message_id, refs, attachments, unavailable FROM messages",
+                    has_attachments, html IS NOT NULL, message_id, refs, attachments, unavailable FROM messages",
         )?;
         let messages = stmt
             .query_map([], |r| {
-                Ok(Message {
+                let message = Message {
                     account: Some(r.get(0)?),
                     folder: folder_from(r.get(1)?),
                     uid: Some(r.get(2)?),
@@ -79,12 +81,13 @@ impl Db {
                     timestamp: r.get(8)?,
                     auth: auth_from(&r.get::<_, String>(9)?),
                     has_attachments: r.get(10)?,
-                    html: r.get(11)?,
+                    html: None,
                     message_id: r.get(12)?,
                     references: serde_json::from_str(&r.get::<_, String>(13)?).unwrap_or_default(),
                     attachments: serde_json::from_str(&r.get::<_, String>(14)?).unwrap_or_default(),
                     unavailable: r.get(15)?,
-                })
+                };
+                Ok((message, r.get(11)?))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         let mut stmt = conn.prepare("SELECT account, folder, uidvalidity FROM folders")?;
@@ -176,6 +179,19 @@ impl Db {
     }
 
     /// Стирает содержимое писем старше `cutoff` (или всех) и ужимает файл. Возвращает размер на диске.
+    /// Содержимое письма из кэша (`None` — не скачано или стёрто по сроку хранения).
+    pub fn body(&self, account: &str, folder: Folder, uid: u32) -> Result<Option<String>> {
+        let conn = self.0.lock().unwrap();
+        let html = conn
+            .query_row(
+                "SELECT html FROM messages WHERE account = ?1 AND folder = ?2 AND uid = ?3",
+                params![account, folder_to(folder), uid],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .optional()?;
+        Ok(html.flatten())
+    }
+
     pub fn clear_bodies(&self, cutoff: i64) -> Result<u64> {
         let conn = self.0.lock().unwrap();
         conn.execute("UPDATE messages SET html = NULL WHERE html IS NOT NULL AND timestamp < ?1", [cutoff])?;
@@ -398,7 +414,7 @@ mod tests {
         let db = Db::open(&dir, &key).unwrap();
         let (messages, _) = db.load().unwrap();
         assert_eq!(messages.len(), 2);
-        let second = messages.iter().find(|m| m.uid == Some(2)).unwrap();
+        let second = &messages.iter().find(|(m, _)| m.uid == Some(2)).unwrap().0;
         assert!(!second.unread && second.starred);
         assert_eq!(db.validity("me@ya.ru", Folder::Sent), Some(42));
         let _ = fs::remove_dir_all(&dir);
@@ -417,9 +433,11 @@ mod tests {
         db.clear_bodies(old.timestamp + 1).unwrap();
         let (messages, _) = db.load().unwrap();
         assert_eq!(messages.len(), 2, "заголовки остаются");
-        let html = |uid| messages.iter().find(|m| m.uid == Some(uid)).unwrap().html.clone();
-        assert_eq!(html(1), None);
-        assert_eq!(html(2).as_deref(), Some("новое"));
+        assert!(messages.iter().all(|(m, _)| m.html.is_none()), "тела в память не грузятся");
+        let on_disk = |uid| messages.iter().find(|(m, _)| m.uid == Some(uid)).unwrap().1;
+        assert!(!on_disk(1) && on_disk(2));
+        assert_eq!(db.body("me@ya.ru", Folder::Inbox, 1).unwrap(), None);
+        assert_eq!(db.body("me@ya.ru", Folder::Inbox, 2).unwrap().as_deref(), Some("новое"));
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -450,10 +468,10 @@ mod tests {
         let db = Db::open(&dir, &key).unwrap();
         let (messages, validity) = db.load().unwrap();
         assert_eq!(messages.len(), 1, "кэш не потерян");
-        assert_eq!(messages[0].folder, Folder::Sent);
+        assert_eq!(messages[0].0.folder, Folder::Sent);
         assert_eq!(validity, vec![("me@ya.ru".to_string(), Folder::Trash, 99)]);
         db.insert(&[&Message { folder: Folder::other("Работа"), ..message(8) }]).unwrap();
-        assert!(db.load().unwrap().0.iter().any(|m| m.folder == Folder::other("Работа")));
+        assert!(db.load().unwrap().0.iter().any(|(m, _)| m.folder == Folder::other("Работа")));
         let _ = fs::remove_dir_all(&dir);
     }
 
