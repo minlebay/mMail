@@ -21,6 +21,8 @@ PC
 fi
 
 [[ -f $HOME/.cargo/env ]] && . "$HOME/.cargo/env"
+# Старые пакеты в каталоге сборки иначе тоже скопировались бы в dist-deb/.
+rm -f src-tauri/target/release/bundle/deb/*.deb
 scripts/clean-env.sh npx tauri build --bundles deb
 mkdir -p dist-deb
 cp src-tauri/target/release/bundle/deb/*.deb dist-deb/
