@@ -3,23 +3,26 @@ use tauri::{Manager, State};
 
 use crate::config::ConfigStore;
 use crate::imap::Imap;
-use crate::store::{Auth, Scope, Store, Summary};
+use crate::folders;
+use crate::store::{Auth, Folder, Scope, Store, Summary};
 use crate::{links, remote, sanitize};
 
-const FOLDERS: [(&str, &str); 5] = [
-    ("inbox", "Входящие"),
-    ("starred", "Важные"),
-    ("sent", "Отправленные"),
-    ("drafts", "Черновики"),
-    ("trash", "Корзина"),
-];
+/// Папки, которые показываем всегда, даже пока ящик не подключился (и в «Все ящики»).
+const STANDARD: [Folder; 4] = [Folder::Inbox, Folder::Sent, Folder::Drafts, Folder::Trash];
+/// «Важные» — не папка на сервере, а все письма с флагом.
+const STARRED: (&str, &str) = ("starred", "Важные");
 
 const MAX_PAGE: usize = 500;
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FolderInfo {
-    id: &'static str,
-    name: &'static str,
+    /// `inbox`, `starred`, … или `f:<имя на сервере>`.
+    id: String,
+    /// Для стандартных — ключ каталога переводов, для своих — имя с сервера.
+    name: String,
+    /// Своя папка: имя не переводится.
+    custom: bool,
     unread: usize,
 }
 
@@ -63,8 +66,47 @@ pub struct MessageView {
 
 #[tauri::command]
 pub fn list_folders(store: State<'_, Store>, imap: State<'_, Imap>) -> Vec<FolderGroup> {
-    let folders = |scope: Scope| -> Vec<FolderInfo> {
-        FOLDERS.iter().map(|&(id, name)| FolderInfo { id, name, unread: store.unread(scope, id) }).collect()
+    let info = |scope: Scope, folder: Folder, display: Option<String>| {
+        let id = folder.key();
+        let unread = store.unread(scope, &id);
+        match folders::special_name(folder) {
+            Some(name) => FolderInfo { id, name: name.into(), custom: false, unread },
+            None => FolderInfo { name: display.unwrap_or_else(|| folders::decode_mutf7(&id[2..])), id, custom: true, unread },
+        }
+    };
+    let starred = |scope: Scope| FolderInfo {
+        id: STARRED.0.into(),
+        name: STARRED.1.into(),
+        custom: false,
+        unread: store.unread(scope, STARRED.0),
+    };
+    // Папки ящика: с сервера, а пока он не подключился — стандартные и те, что есть в кэше.
+    let folders = |scope: Scope, email: Option<&str>| -> Vec<FolderInfo> {
+        let mut list: Vec<(Folder, Option<String>)> = match email.and_then(|e| imap.folders(e)) {
+            Some(server) => server.into_iter().map(|f| (f.folder, Some(f.display))).collect(),
+            None => {
+                let mut known: Vec<Folder> = STANDARD.to_vec();
+                if let Some(email) = email {
+                    let extra: Vec<Folder> = store.folders_of(email).into_iter().filter(|f| !known.contains(f)).collect();
+                    known.extend(extra);
+                }
+                known.sort_by_key(|f| (folders::rank(*f), f.key().to_lowercase()));
+                known.into_iter().map(|f| (f, None)).collect()
+            }
+        };
+        if email.is_none() {
+            // «Все ящики»: только общие для всех ящиков роли.
+            list.retain(|(f, _)| !matches!(f, Folder::Other(_)));
+            for f in [Folder::Junk, Folder::Archive] {
+                if store.has_folder(f) && !list.iter().any(|(g, _)| *g == f) {
+                    list.push((f, None));
+                }
+            }
+            list.sort_by_key(|(f, _)| folders::rank(*f));
+        }
+        let mut out: Vec<FolderInfo> = list.into_iter().map(|(f, display)| info(scope, f, display)).collect();
+        out.insert(1.min(out.len()), starred(scope));
+        out
     };
     // Ящики из хранилища плюс те, что ещё подключаются и писем пока не прислали.
     let mut accounts = store.accounts();
@@ -77,14 +119,15 @@ pub fn list_folders(store: State<'_, Store>, imap: State<'_, Imap>) -> Vec<Folde
 
     let mut groups = Vec::new();
     if accounts.len() > 1 {
-        groups.push(FolderGroup { account: None, title: "Все ящики".into(), folders: folders(Scope::All) });
+        groups.push(FolderGroup { account: None, title: "Все ящики".into(), folders: folders(Scope::All, None) });
     }
     for account in accounts {
         let (key, title) = match account {
             Some(email) => (email.clone(), email),
             None => (String::new(), "Демо-ящик".into()),
         };
-        let folders = folders(Scope::parse(Some(&key)));
+        let email = (!key.is_empty()).then_some(key.as_str());
+        let folders = folders(Scope::parse(Some(&key)), email);
         groups.push(FolderGroup { account: Some(key), title, folders });
     }
     groups
@@ -437,4 +480,41 @@ pub fn message_translation_text(store: State<'_, Store>, id: u32) -> Result<Stri
     let html = message.html.ok_or("Сначала откройте письмо")?;
     let clean = sanitize::clean_html(&html, false);
     Ok(mail_parser::decoders::html::html_to_text(&clean.html))
+}
+
+/// «Отметить все прочитанными» для папки (в том числе «Важные» и «Все ящики»):
+/// на сервер — по папкам, локально — только то, что сервер подтвердил.
+#[tauri::command]
+pub async fn mark_folder_read(
+    app: tauri::AppHandle,
+    store: State<'_, Store>,
+    imap: State<'_, Imap>,
+    account: Option<String>,
+    folder: String,
+) -> Result<usize, String> {
+    let targets = store.unread_in(Scope::parse(account.as_deref()), &folder).ok_or("unknown folder")?;
+    let mut groups: std::collections::HashMap<(Option<String>, Folder), Vec<(u32, Option<u32>)>> = Default::default();
+    for (id, account, folder, uid) in targets {
+        groups.entry((account, folder)).or_default().push((id, uid));
+    }
+    let mut marked = 0;
+    let mut error = None;
+    for ((account, folder), items) in groups {
+        if let Some(account) = &account {
+            let uids: Vec<u32> = items.iter().filter_map(|(_, uid)| *uid).collect();
+            if let Err(e) = imap.mark_seen_many(account, folder, &uids).await {
+                error = Some(e.to_string());
+                continue;
+            }
+        }
+        for (id, _) in &items {
+            store.set_unread(*id, false);
+        }
+        marked += items.len();
+    }
+    let _ = tauri::Emitter::emit(&app, "mailbox-changed", ());
+    match error {
+        Some(e) if marked == 0 => Err(e),
+        _ => Ok(marked),
+    }
 }

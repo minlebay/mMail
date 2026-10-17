@@ -13,7 +13,7 @@ use zeroize::Zeroizing;
 use crate::imap::Result;
 use crate::store::{Auth, Folder, Message, Opened};
 
-const SCHEMA_VERSION: i32 = 1;
+const SCHEMA_VERSION: i32 = 2;
 
 pub struct Db(Mutex<Connection>);
 
@@ -53,7 +53,8 @@ impl Db {
         conn.execute_batch(&Zeroizing::new(format!("PRAGMA key = \"x'{}'\";", hex.as_str())))?;
         // Неверный ключ обнаруживается при первом чтении.
         conn.query_row("SELECT count(*) FROM sqlite_master", [], |_| Ok(()))?;
-        conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA secure_delete = ON;")?;
+        // journal_size_limit: после checkpoint журнал ужимается, а не остаётся размером с самую большую запись.
+        conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA secure_delete = ON; PRAGMA journal_size_limit = 67108864;")?;
         migrate(&conn)?;
         Ok(conn)
     }
@@ -232,10 +233,22 @@ fn migrate(conn: &Connection) -> Result<()> {
     if version >= SCHEMA_VERSION {
         return Ok(());
     }
+    if version == 1 {
+        // v2: папка — текстовый ключ (`inbox`, `f:<имя>`) вместо номера из четырёх стандартных.
+        let to_key = "CASE folder WHEN 0 THEN 'inbox' WHEN 1 THEN 'sent' WHEN 2 THEN 'drafts' ELSE 'trash' END";
+        conn.execute_batch(&format!(
+            "BEGIN;
+             UPDATE messages SET folder = {to_key} WHERE typeof(folder) = 'integer';
+             UPDATE folders SET folder = {to_key} WHERE typeof(folder) = 'integer';
+             PRAGMA user_version = 2;
+             COMMIT;"
+        ))?;
+        return Ok(());
+    }
     conn.execute_batch(
         "CREATE TABLE messages (
             account TEXT NOT NULL,
-            folder INTEGER NOT NULL,
+            folder TEXT NOT NULL,
             uid INTEGER NOT NULL,
             unread INTEGER NOT NULL,
             starred INTEGER NOT NULL,
@@ -253,31 +266,21 @@ fn migrate(conn: &Connection) -> Result<()> {
         ) WITHOUT ROWID;
         CREATE TABLE folders (
             account TEXT NOT NULL,
-            folder INTEGER NOT NULL,
+            folder TEXT NOT NULL,
             uidvalidity INTEGER NOT NULL,
             PRIMARY KEY (account, folder)
         ) WITHOUT ROWID;
-        PRAGMA user_version = 1;",
+        PRAGMA user_version = 2;",
     )?;
     Ok(())
 }
 
-fn folder_to(folder: Folder) -> i64 {
-    match folder {
-        Folder::Inbox => 0,
-        Folder::Sent => 1,
-        Folder::Drafts => 2,
-        Folder::Trash => 3,
-    }
+fn folder_to(folder: Folder) -> String {
+    folder.key()
 }
 
-fn folder_from(n: i64) -> Folder {
-    match n {
-        1 => Folder::Sent,
-        2 => Folder::Drafts,
-        3 => Folder::Trash,
-        _ => Folder::Inbox,
-    }
+fn folder_from(key: String) -> Folder {
+    Folder::from_key(&key).unwrap_or(Folder::Inbox)
 }
 
 fn auth_to(auth: Auth) -> &'static str {
@@ -375,6 +378,40 @@ mod tests {
         let html = |uid| messages.iter().find(|m| m.uid == Some(uid)).unwrap().html.clone();
         assert_eq!(html(1), None);
         assert_eq!(html(2).as_deref(), Some("новое"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn migrates_numbered_folders_to_keys() {
+        let dir = temp_dir("migrate");
+        let key = [5u8; 32];
+        fs::create_dir_all(&dir).unwrap();
+        {
+            // Кэш версии 1: папки — числа 0–3.
+            let conn = Connection::open(dir.join("mail.db")).unwrap();
+            let hex: String = key.iter().map(|b| format!("{b:02x}")).collect();
+            conn.execute_batch(&format!("PRAGMA key = \"x'{hex}'\";")).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE messages (account TEXT NOT NULL, folder INTEGER NOT NULL, uid INTEGER NOT NULL,
+                    unread INTEGER NOT NULL, starred INTEGER NOT NULL, from_name TEXT NOT NULL, from_addr TEXT NOT NULL,
+                    subject TEXT NOT NULL, timestamp INTEGER NOT NULL, auth TEXT NOT NULL, has_attachments INTEGER NOT NULL,
+                    html TEXT, message_id TEXT, refs TEXT NOT NULL, attachments TEXT NOT NULL,
+                    PRIMARY KEY (account, folder, uid)) WITHOUT ROWID;
+                 CREATE TABLE folders (account TEXT NOT NULL, folder INTEGER NOT NULL, uidvalidity INTEGER NOT NULL,
+                    PRIMARY KEY (account, folder)) WITHOUT ROWID;
+                 INSERT INTO messages VALUES ('me@ya.ru', 1, 7, 0, 0, 'a', 'a@b', 's', 1, 'unknown', 0, NULL, NULL, '[]', '[]');
+                 INSERT INTO folders VALUES ('me@ya.ru', 3, 99);
+                 PRAGMA user_version = 1;",
+            )
+            .unwrap();
+        }
+        let db = Db::open(&dir, &key).unwrap();
+        let (messages, validity) = db.load().unwrap();
+        assert_eq!(messages.len(), 1, "кэш не потерян");
+        assert_eq!(messages[0].folder, Folder::Sent);
+        assert_eq!(validity, vec![("me@ya.ru".to_string(), Folder::Trash, 99)]);
+        db.insert(&[&Message { folder: Folder::other("Работа"), ..message(8) }]).unwrap();
+        assert!(db.load().unwrap().0.iter().any(|m| m.folder == Folder::other("Работа")));
         let _ = fs::remove_dir_all(&dir);
     }
 

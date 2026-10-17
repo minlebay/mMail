@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use async_imap::types::{Fetch, Flag, NameAttribute};
+use async_imap::types::{Fetch, Flag};
 use futures::TryStreamExt;
 use mail_parser::{MessageParser, MimeHeaders};
 use serde::Serialize;
@@ -24,6 +24,7 @@ use crate::attachments;
 use crate::config::ConfigStore;
 use crate::db::Db;
 use crate::fake;
+use crate::folders::{self, ServerFolder};
 use crate::store::{Auth, Folder, Message, Opened, Store};
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
@@ -61,28 +62,32 @@ async fn connect(account: &Account, password: &str) -> Result<Session> {
     Ok(session)
 }
 
-/// Имена стандартных папок на сервере по атрибутам SPECIAL-USE (RFC 6154).
-async fn discover_folders(session: &mut Session) -> Result<HashMap<Folder, String>> {
+/// Все папки ящика, которые стоит синхронизировать (см. [`folders::classify`]), в порядке дерева.
+async fn discover_folders(session: &mut Session) -> Result<Vec<ServerFolder>> {
     let names: Vec<_> = session.list(Some(""), Some("*")).await?.try_collect().await?;
-    let mut folders = HashMap::from([(Folder::Inbox, "INBOX".to_string())]);
+    let mut found: Vec<ServerFolder> = Vec::new();
     for name in &names {
-        let folder = name.attributes().iter().find_map(|a| match a {
-            NameAttribute::Sent => Some(Folder::Sent),
-            NameAttribute::Drafts => Some(Folder::Drafts),
-            NameAttribute::Trash => Some(Folder::Trash),
-            _ => None,
-        });
-        if let Some(folder) = folder {
-            folders.insert(folder, name.name().to_string());
+        let Some(folder) = folders::classify(name) else { continue };
+        // Две папки с одной ролью (бывает у Gmail) — берём первую.
+        if found.iter().any(|f| f.folder == folder) {
+            continue;
         }
+        let display = folders::display_name(name.name(), name.delimiter());
+        found.push(ServerFolder { folder, server_name: name.name().to_string(), display });
     }
-    Ok(folders)
+    if !found.iter().any(|f| f.folder == Folder::Inbox) {
+        found.push(ServerFolder { folder: Folder::Inbox, server_name: "INBOX".into(), display: "INBOX".into() });
+    }
+    found.sort_by(|a, b| (folders::rank(a.folder), a.display.to_lowercase()).cmp(&(folders::rank(b.folder), b.display.to_lowercase())));
+    Ok(found)
 }
 
 /// Синхронизация папки: письма, которые есть на сервере, но ещё нет в кэше.
 struct Cursor {
     folder: Folder,
     name: String,
+    /// Имя для статуса синхронизации.
+    display: String,
     /// Писем в папке на сервере.
     total: usize,
     /// UID ещё не загруженных писем, от новых к старым; пусто — папка загружена целиком.
@@ -208,6 +213,8 @@ pub struct SyncStatus {
 struct Connection {
     account: Account,
     folders: HashMap<Folder, String>,
+    /// Папки в порядке дерева, с именами для людей.
+    list: Vec<ServerFolder>,
     reader: Mutex<Option<Session>>,
     /// Ящик удалён или добавлен заново — фоновая синхронизация должна остановиться.
     cancelled: AtomicBool,
@@ -256,6 +263,11 @@ impl Imap {
     /// Ящики, о которых ядро уже знает (в том числе ещё подключающиеся).
     pub fn known_accounts(&self) -> Vec<String> {
         self.statuses.lock().unwrap().keys().filter(|k| k.contains('@')).cloned().collect()
+    }
+
+    /// Папки подключённого ящика для дерева; `None`, пока ящик не подключился.
+    pub fn folders(&self, email: &str) -> Option<Vec<ServerFolder>> {
+        self.connection(email).map(|c| c.list.clone())
     }
 
     fn connection(&self, email: &str) -> Option<Arc<Connection>> {
@@ -342,11 +354,19 @@ async fn run_sync(app: &AppHandle, account: Account) -> Result<()> {
     drop(password);
 
     let store = app.state::<Store>();
-    let folders = discover_folders(&mut session).await?;
+    let list = discover_folders(&mut session).await?;
+    let folders: HashMap<Folder, String> = list.iter().map(|f| (f.folder, f.server_name.clone())).collect();
     let mut cursors = Vec::new();
-    for folder in [Folder::Inbox, Folder::Sent, Folder::Drafts, Folder::Trash] {
-        let Some(name) = folders.get(&folder) else { continue };
-        let mailbox = session.examine(name).await?;
+    for ServerFolder { folder, server_name: name, display } in &list {
+        let (folder, name) = (*folder, name);
+        let mailbox = match session.examine(name).await {
+            Ok(mailbox) => mailbox,
+            // Папка могла исчезнуть между LIST и EXAMINE или быть недоступной — остальные не ждут.
+            Err(e) => {
+                eprintln!("mMail: папка {display} недоступна: {e}");
+                continue;
+            }
+        };
         store.check_validity(&email, folder, mailbox.uid_validity.unwrap_or_default());
         // Список UID папки — дёшево даже для десятков тысяч писем; сверяем с кэшем.
         let on_server: HashSet<u32> = if mailbox.exists == 0 { HashSet::new() } else { session.uid_search("ALL").await? };
@@ -356,9 +376,9 @@ async fn run_sync(app: &AppHandle, account: Account) -> Result<()> {
         let known = store.uids(&email, folder);
         let mut missing: Vec<u32> = on_server.iter().copied().filter(|uid| !known.contains(uid)).collect();
         missing.sort_unstable_by(|a, b| b.cmp(a));
-        cursors.push(Cursor { folder, name: name.clone(), total: on_server.len(), missing });
+        cursors.push(Cursor { folder, name: name.clone(), display: display.clone(), total: on_server.len(), missing });
     }
-    let conn = Arc::new(Connection { account, folders, reader: Mutex::new(Some(reader)), cancelled: AtomicBool::new(false) });
+    let conn = Arc::new(Connection { account, folders, list, reader: Mutex::new(Some(reader)), cancelled: AtomicBool::new(false) });
     app.state::<Imap>().register(conn.clone());
 
     let step = |cursor: &Cursor, messages: Vec<Message>| {
@@ -367,11 +387,9 @@ async fn run_sync(app: &AppHandle, account: Account) -> Result<()> {
             let _ = app.emit("mailbox-changed", ());
         }
         let done = cursor.total - cursor.missing.len();
-        let label = match cursor.folder {
-            Folder::Inbox => "Входящие",
-            Folder::Sent => "Отправленные",
-            Folder::Drafts => "Черновики",
-            Folder::Trash => "Корзина",
+        let label = match folders::special_name(cursor.folder) {
+            Some(name) => crate::i18n::text(app, name),
+            None => cursor.display.clone(),
         };
         set_status(app, &email, "busy", format!("{label} {done} / {}", cursor.total));
     };
@@ -489,6 +507,11 @@ async fn refresh(app: &AppHandle, session: &mut Session, email: &str, cursors: &
     let store = app.state::<Store>();
     let mut changed = false;
     for cursor in cursors {
+        // Свои папки (не стандартные) проверяем реже — вместе с флагами, раз в минуту:
+        // их может быть много, а EXAMINE каждой — лишний запрос на каждом опросе.
+        if matches!(cursor.folder, Folder::Other(_)) && !with_flags {
+            continue;
+        }
         let mailbox = session.examine(&cursor.name).await?;
         if mailbox.exists == 0 {
             continue;
@@ -676,6 +699,14 @@ impl Imap {
 
     /// Помечает письмо прочитанным на сервере.
     pub async fn mark_seen(&self, email: &str, folder: Folder, uid: u32) -> Result<()> {
+        self.mark_seen_many(email, folder, &[uid]).await
+    }
+
+    /// Помечает прочитанными письма одной папки: одна команда STORE на порцию UID.
+    pub async fn mark_seen_many(&self, email: &str, folder: Folder, uids: &[u32]) -> Result<()> {
+        if uids.is_empty() {
+            return Ok(());
+        }
         let conn = self.connection(email).ok_or("ящик ещё подключается")?;
         let name = conn.folders.get(&folder).ok_or("папка не найдена на сервере")?;
         let mut reader = conn.reader.lock().await;
@@ -686,7 +717,9 @@ impl Imap {
         let session = reader.as_mut().unwrap();
         let result: Result<()> = async {
             session.select(name).await?;
-            let _: Vec<Fetch> = session.uid_store(uid.to_string(), "+FLAGS.SILENT (\\Seen)").await?.try_collect().await?;
+            for chunk in uids.chunks(500) {
+                let _: Vec<Fetch> = session.uid_store(uid_set(chunk), "+FLAGS.SILENT (\\Seen)").await?.try_collect().await?;
+            }
             Ok(())
         }
         .await;

@@ -7,6 +7,7 @@
     "allow-list-folders",
     "allow-write-clipboard",
     "allow-mark-message-read",
+    "allow-mark-folder-read",
     "allow-trash-message",
     "allow-message-translation-text",
     "allow-translate-text",

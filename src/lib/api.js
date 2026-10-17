@@ -52,6 +52,7 @@ export const saveAttachment = (id, index) => invoke('save_attachment', { id, ind
 export const writeClipboard = (text) => invoke('write_clipboard', { text });
 
 export const markMessageRead = (id) => invoke('mark_message_read', { id });
+export const markFolderRead = (account, folder) => invoke('mark_folder_read', { account, folder });
 export const trashMessage = (id) => invoke('trash_message', { id });
 export const messageTranslationText = (id) => invoke('message_translation_text', { id });
 export const translateText = (text) => invoke('translate_text', { text });

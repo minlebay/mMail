@@ -11,12 +11,60 @@ use serde::Serialize;
 use crate::attachments::AttachmentMeta;
 use crate::db::Db;
 
+/// Папка ящика: стандартные — по ролям SPECIAL-USE (RFC 6154), остальные — по имени на сервере.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Folder {
     Inbox,
     Sent,
     Drafts,
     Trash,
+    Junk,
+    Archive,
+    /// Имя на сервере (как в LIST, в modified UTF-7). Имена интернируются, поэтому тип остаётся Copy.
+    Other(&'static str),
+}
+
+impl Folder {
+    pub fn other(name: &str) -> Self {
+        static NAMES: Mutex<Option<HashSet<&'static str>>> = Mutex::new(None);
+        let mut names = NAMES.lock().unwrap();
+        let names = names.get_or_insert_with(HashSet::new);
+        let name = match names.get(name) {
+            Some(&known) => known,
+            None => {
+                // Папок у ящика немного, а живут они до конца работы программы.
+                let leaked: &'static str = Box::leak(name.to_string().into_boxed_str());
+                names.insert(leaked);
+                leaked
+            }
+        };
+        Folder::Other(name)
+    }
+
+    /// Ключ для UI и кэша: `inbox`, `sent`, … или `f:<имя на сервере>`.
+    pub fn key(self) -> String {
+        match self {
+            Folder::Inbox => "inbox".into(),
+            Folder::Sent => "sent".into(),
+            Folder::Drafts => "drafts".into(),
+            Folder::Trash => "trash".into(),
+            Folder::Junk => "junk".into(),
+            Folder::Archive => "archive".into(),
+            Folder::Other(name) => format!("f:{name}"),
+        }
+    }
+
+    pub fn from_key(key: &str) -> Option<Self> {
+        Some(match key {
+            "inbox" => Folder::Inbox,
+            "sent" => Folder::Sent,
+            "drafts" => Folder::Drafts,
+            "trash" => Folder::Trash,
+            "junk" => Folder::Junk,
+            "archive" => Folder::Archive,
+            _ => Folder::other(key.strip_prefix("f:").filter(|name| !name.is_empty())?),
+        })
+    }
 }
 
 /// Результат проверки отправителя (DMARC), насколько ему можно верить.
@@ -165,6 +213,31 @@ impl Store {
             .collect();
         self.persist(|db| db.insert(&messages.iter().collect::<Vec<_>>()));
         self.replace(|_| false, messages);
+    }
+
+    /// Непрочитанные письма папки (`folder` — ключ из UI): `(id, ящик, папка, UID)`.
+    pub fn unread_in(&self, scope: Scope, folder: &str) -> Option<Vec<(u32, Option<String>, Folder, Option<u32>)>> {
+        let in_folder = folder_filter(folder)?;
+        let entries = self.entries.read().unwrap();
+        Some(
+            entries
+                .iter()
+                .filter(|e| e.msg.unread && scope.contains(&e.msg) && in_folder(&e.msg))
+                .map(|e| (e.id, e.msg.account.clone(), e.msg.folder, e.msg.uid))
+                .collect(),
+        )
+    }
+
+    /// Папки ящика, письма которых есть в хранилище.
+    pub fn folders_of(&self, account: &str) -> Vec<Folder> {
+        let entries = self.entries.read().unwrap();
+        let set: HashSet<Folder> = entries.iter().filter(|e| e.msg.account.as_deref() == Some(account)).map(|e| e.msg.folder).collect();
+        set.into_iter().collect()
+    }
+
+    /// Есть ли письма в папке с этой ролью хоть у одного ящика.
+    pub fn has_folder(&self, folder: Folder) -> bool {
+        self.entries.read().unwrap().iter().any(|e| e.msg.folder == folder)
     }
 
     /// UID писем папки, которые уже есть в хранилище.
@@ -417,15 +490,12 @@ impl<'a> Scope<'a> {
     }
 }
 
-fn folder_filter(folder: &str) -> Option<fn(&Message) -> bool> {
-    Some(match folder {
-        "inbox" => |m| m.folder == Folder::Inbox,
-        "starred" => |m| m.starred && m.folder != Folder::Trash,
-        "sent" => |m| m.folder == Folder::Sent,
-        "drafts" => |m| m.folder == Folder::Drafts,
-        "trash" => |m| m.folder == Folder::Trash,
-        _ => return None,
-    })
+fn folder_filter(folder: &str) -> Option<Box<dyn Fn(&Message) -> bool>> {
+    if folder == "starred" {
+        return Some(Box::new(|m| m.starred && !matches!(m.folder, Folder::Trash | Folder::Junk)));
+    }
+    let folder = Folder::from_key(folder)?;
+    Some(Box::new(move |m| m.folder == folder))
 }
 
 /// Всегда дата и время в местном часовом поясе: «17.10.2026 13:28».

@@ -826,5 +826,21 @@
   "Копировать имя файла": {
     "en": "Copy file name",
     "sr": "Kopiraj naziv datoteke"
+  },
+  "Спам": {
+    "en": "Spam",
+    "sr": "Neželjena pošta"
+  },
+  "Архив": {
+    "en": "Archive",
+    "sr": "Arhiva"
+  },
+  "Отметить все прочитанными": {
+    "en": "Mark all as read",
+    "sr": "Označi sve kao pročitano"
+  },
+  "Отметить входящие прочитанными": {
+    "en": "Mark inbox as read",
+    "sr": "Označi prijemno sanduče kao pročitano"
   }
 }

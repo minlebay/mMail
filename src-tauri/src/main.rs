@@ -7,6 +7,7 @@ mod config;
 mod context_menu;
 mod db;
 mod fake;
+mod folders;
 mod imap;
 mod i18n;
 mod links;
@@ -47,6 +48,7 @@ fn main() {
             commands::open_settings,
             commands::write_clipboard,
             commands::mark_message_read,
+            commands::mark_folder_read,
             commands::trash_message,
             commands::message_translation_text,
             translation::translate_text,
