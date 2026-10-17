@@ -1,6 +1,6 @@
 <script>
   import Icon from './Icon.svelte';
-  import { getMessage, setSenderTrusted } from './api.js';
+  import { getMessage, setSenderTrusted, saveAttachment } from './api.js';
 
   let { id, onreply } = $props();
 
@@ -13,6 +13,7 @@
     const current = id;
     msg = null;
     error = '';
+    saved = {};
     if (current != null) load(current, false);
   });
 
@@ -30,6 +31,22 @@
     loadingRemote = true;
     await load(msg.id, true);
     loadingRemote = false;
+  }
+
+  let saved = $state({});
+
+  const size = (bytes) =>
+    bytes < 1024 ? `${bytes} Б` : bytes < 1048576 ? `${(bytes / 1024).toFixed(0)} КБ` : `${(bytes / 1048576).toFixed(1)} МБ`;
+
+  async function save(index) {
+    saved = { ...saved, [index]: 'saving' };
+    try {
+      const ok = await saveAttachment(msg.id, index);
+      saved = { ...saved, [index]: ok ? 'done' : undefined };
+    } catch (e) {
+      saved = { ...saved, [index]: undefined };
+      error = String(e);
+    }
   }
 
   async function trust(trusted) {
@@ -94,6 +111,21 @@
     <!-- Без скриптов, форм и доступа к origin приложения. allow-popups нужен только чтобы клик по ссылке
          дошёл до ядра как запрос нового окна: ядро его всегда отклоняет и спрашивает подтверждение. -->
     <iframe class="body" title="Содержимое письма" sandbox="allow-popups" referrerpolicy="no-referrer" srcdoc={msg.srcdoc}></iframe>
+
+    {#if msg.attachments.length}
+      <div class="attachments">
+        {#each msg.attachments as a (a.index)}
+          <div class="file" class:dangerous={a.dangerous} title={a.dangerous ? 'Исполняемый файл — запускайте, только если доверяете отправителю' : a.name}>
+            <Icon name={a.dangerous ? 'alert' : 'paperclip'} size={14} />
+            <span class="fname">{a.name}</span>
+            <span class="fsize">{size(a.size)}</span>
+            <button class="save" disabled={saved[a.index] === 'saving'} onclick={() => save(a.index)} title="Сохранить">
+              {#if saved[a.index] === 'done'}✓{:else}<Icon name="download" size={14} />{/if}
+            </button>
+          </div>
+        {/each}
+      </div>
+    {/if}
 
     <footer>
       <button class="action" onclick={() => onreply(msg, 'reply')}><Icon name="reply" />Ответить</button>
@@ -207,6 +239,49 @@
     margin-top: 16px;
     border: 0;
     background: transparent;
+  }
+
+  .attachments {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding-top: 12px;
+  }
+  .file {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 100%;
+    height: 32px;
+    padding: 0 4px 0 12px;
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.08);
+    font-size: 13px;
+  }
+  .file.dangerous {
+    background: rgba(255, 79, 120, 0.18);
+    color: #ffd0da;
+  }
+  .fname {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .fsize {
+    flex: none;
+    color: var(--muted);
+  }
+  .save {
+    flex: none;
+    width: 26px;
+    height: 26px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+  }
+  .save:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.16);
   }
 
   footer {

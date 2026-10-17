@@ -161,7 +161,10 @@
               {#if item.starred}<span class="star"><Icon name="star" size={12} /></span>{/if}
               <span class="date">{item.date}</span>
             </div>
-            <div class="subject">{item.subject}</div>
+            <div class="line">
+              <span class="subject">{item.subject}</span>
+              {#if item.hasAttachments}<span class="clip" title="Есть вложения"><Icon name="paperclip" size={13} /></span>{/if}
+            </div>
           {:else}
             <div class="skeleton"></div>
             <div class="skeleton short"></div>
@@ -258,6 +261,16 @@
   }
   .unread .subject {
     color: var(--text);
+  }
+
+  .subject {
+    flex: 1;
+    min-width: 0;
+  }
+  .clip {
+    flex: none;
+    display: flex;
+    color: var(--muted);
   }
 
   .star {

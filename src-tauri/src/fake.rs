@@ -23,6 +23,8 @@ pub fn generate(count: usize) -> Vec<Message> {
             html: Some(html),
             message_id: None,
             references: Vec::new(),
+            has_attachments: false,
+            attachments: Vec::new(),
         });
     };
 

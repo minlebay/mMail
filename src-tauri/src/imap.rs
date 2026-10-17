@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use async_imap::types::{Fetch, Flag, NameAttribute};
 use futures::TryStreamExt;
-use mail_parser::MessageParser;
+use mail_parser::{MessageParser, MimeHeaders};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::net::TcpStream;
@@ -20,6 +20,7 @@ use tokio_rustls::TlsConnector;
 use zeroize::Zeroizing;
 
 use crate::accounts::{self, Account};
+use crate::attachments;
 use crate::config::ConfigStore;
 use crate::fake;
 use crate::store::{Auth, Folder, Message, Opened, Store};
@@ -35,7 +36,7 @@ const TIMEOUT: Duration = Duration::from_secs(20);
 const FLAGS_EVERY: Duration = Duration::from_secs(60);
 /// У скольких последних писем папки сверять флаги.
 const FLAGS_WINDOW: u32 = 500;
-const HEADER_QUERY: &str = "(UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])";
+const HEADER_QUERY: &str = "(UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE CONTENT-TYPE)])";
 
 async fn connect(account: &Account, password: &str) -> Result<Session> {
     let mut roots = RootCertStore::empty();
@@ -127,6 +128,11 @@ fn to_message(fetch: &Fetch, account: &str, folder: Folder) -> Option<Message> {
         html: None,
         message_id: None,
         references: Vec::new(),
+        // multipart/mixed почти всегда означает вложения; точно узнаем при открытии.
+        has_attachments: parsed.content_type().is_some_and(|ct| {
+            ct.ctype().eq_ignore_ascii_case("multipart") && ct.subtype().is_some_and(|s| s.eq_ignore_ascii_case("mixed"))
+        }),
+        attachments: Vec::new(),
     })
 }
 
@@ -439,36 +445,18 @@ pub async fn remove_account(app: AppHandle, email: String) -> std::result::Resul
 }
 
 impl Imap {
-    /// Исходный HTML письма и проверка отправителя (BODY.PEEK — письмо не помечается прочитанным).
-    pub async fn open(&self, email: &str, folder: Folder, uid: u32) -> Result<Opened> {
+    /// Письмо целиком с сервера (BODY.PEEK — не помечается прочитанным); одна попытка переподключения.
+    pub async fn raw(&self, email: &str, folder: Folder, uid: u32) -> Result<Vec<u8>> {
         let conn = self.connection(email).ok_or("ящик ещё подключается")?;
         let name = conn.folders.get(&folder).ok_or("папка не найдена на сервере")?;
         let mut reader = conn.reader.lock().await;
-
-        // Одна попытка переподключения: соединение могло оборваться, пока приложение простаивало.
         for attempt in 0..2 {
             if reader.is_none() {
                 let password = accounts::password(email).await?;
                 *reader = Some(connect(&conn.account, &password).await?);
             }
             match fetch_raw(reader.as_mut().unwrap(), name, uid).await {
-                Ok(raw) => {
-                    let parsed = MessageParser::default().parse(&raw).ok_or("не удалось разобрать письмо")?;
-                    let auth_results = parsed
-                        .headers()
-                        .iter()
-                        .filter(|h| h.name().eq_ignore_ascii_case("Authentication-Results"))
-                        .map(|h| String::from_utf8_lossy(&raw[h.offset_start as usize..h.offset_end as usize]).into_owned());
-                    let auth = auth_verdict(auth_results, conn.account.provider.trusted_authserv);
-                    let html = parsed.body_html(0).map(|h| h.into_owned()).unwrap_or_default();
-                    let references = match parsed.references() {
-                        mail_parser::HeaderValue::Text(id) => vec![id.to_string()],
-                        mail_parser::HeaderValue::TextList(ids) => ids.iter().map(|id| id.to_string()).collect(),
-                        _ => Vec::new(),
-                    };
-                    let message_id = parsed.message_id().map(str::to_string);
-                    return Ok(Opened { html, auth, message_id, references });
-                }
+                Ok(raw) => return Ok(raw),
                 Err(e) if attempt == 0 => {
                     eprintln!("mMail: IMAP-сессия {email} сброшена ({e}), переподключаюсь");
                     *reader = None;
@@ -477,6 +465,32 @@ impl Imap {
             }
         }
         unreachable!()
+    }
+
+    /// Тело письма, проверка отправителя, идентификаторы цепочки и список вложений.
+    pub async fn open(&self, email: &str, folder: Folder, uid: u32) -> Result<Opened> {
+        let raw = self.raw(email, folder, uid).await?;
+        let provider = self.connection(email).ok_or("ящик отключён")?.account.provider;
+        let parsed = MessageParser::default().parse(&raw).ok_or("не удалось разобрать письмо")?;
+        let auth_results = parsed
+            .headers()
+            .iter()
+            .filter(|h| h.name().eq_ignore_ascii_case("Authentication-Results"))
+            .map(|h| String::from_utf8_lossy(&raw[h.offset_start as usize..h.offset_end as usize]).into_owned());
+        let auth = auth_verdict(auth_results, provider.trusted_authserv);
+        let html = parsed.body_html(0).map(|h| attachments::inline_cid_images(&h, &parsed)).unwrap_or_default();
+        let references = match parsed.references() {
+            mail_parser::HeaderValue::Text(id) => vec![id.to_string()],
+            mail_parser::HeaderValue::TextList(ids) => ids.iter().map(|id| id.to_string()).collect(),
+            _ => Vec::new(),
+        };
+        Ok(Opened {
+            html,
+            auth,
+            message_id: parsed.message_id().map(str::to_string),
+            references,
+            attachments: attachments::describe(&parsed),
+        })
     }
 }
 

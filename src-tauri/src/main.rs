@@ -1,4 +1,5 @@
 mod accounts;
+mod attachments;
 mod blur;
 mod commands;
 mod compose;
@@ -33,6 +34,7 @@ fn main() {
             commands::get_appearance,
             commands::set_appearance,
             commands::set_zoom,
+            commands::save_attachment,
             links::open_link,
             imap::sync_status,
             imap::list_accounts,

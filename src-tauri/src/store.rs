@@ -7,6 +7,8 @@ use std::sync::RwLock;
 use chrono::{Local, TimeZone};
 use serde::Serialize;
 
+use crate::attachments::AttachmentMeta;
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Folder {
     Inbox,
@@ -43,6 +45,10 @@ pub struct Message {
     /// Message-ID и References — для цепочки при ответе; известны после открытия.
     pub message_id: Option<String>,
     pub references: Vec<String>,
+    /// По Content-Type при синхронизации; после открытия — точно.
+    pub has_attachments: bool,
+    /// Известны после открытия письма.
+    pub attachments: Vec<AttachmentMeta>,
 }
 
 struct Entry {
@@ -60,6 +66,7 @@ pub struct Summary {
     date: String,
     unread: bool,
     starred: bool,
+    has_attachments: bool,
 }
 
 /// Всё, что нужно, чтобы открыть письмо.
@@ -79,6 +86,7 @@ pub struct Details {
     pub timestamp: i64,
     pub message_id: Option<String>,
     pub references: Vec<String>,
+    pub attachments: Vec<AttachmentMeta>,
 }
 
 /// Письмо, загруженное с сервера целиком.
@@ -87,6 +95,7 @@ pub struct Opened {
     pub auth: Auth,
     pub message_id: Option<String>,
     pub references: Vec<String>,
+    pub attachments: Vec<AttachmentMeta>,
 }
 
 #[derive(Default)]
@@ -139,6 +148,7 @@ impl Store {
                     date: date_label(e.msg.timestamp),
                     unread: e.msg.unread,
                     starred: e.msg.starred,
+                    has_attachments: e.msg.has_attachments,
                 });
             }
             total += 1;
@@ -177,6 +187,7 @@ impl Store {
             timestamp: e.msg.timestamp,
             message_id: e.msg.message_id.clone(),
             references: e.msg.references.clone(),
+            attachments: e.msg.attachments.clone(),
         })
     }
 
@@ -223,6 +234,8 @@ impl Store {
             e.msg.auth = opened.auth;
             e.msg.message_id = opened.message_id;
             e.msg.references = opened.references;
+            e.msg.has_attachments = !opened.attachments.is_empty();
+            e.msg.attachments = opened.attachments;
         }
     }
 }

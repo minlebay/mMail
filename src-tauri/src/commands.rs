@@ -56,6 +56,7 @@ pub struct MessageView {
     trusted: bool,
     /// Можно ли доверять: не для провалившихся проверку и не для доменов с омоглифами.
     can_trust: bool,
+    attachments: Vec<crate::attachments::AttachmentMeta>,
     srcdoc: String,
 }
 
@@ -118,6 +119,7 @@ pub async fn get_message(
             let opened = imap.open(account, m.folder, uid).await.map_err(|e| e.to_string())?;
             let html = opened.html.clone();
             m.auth = opened.auth;
+            m.attachments = opened.attachments.clone();
             store.set_opened(id, opened);
             html
         }
@@ -170,6 +172,7 @@ pub async fn get_message(
         remote_shown,
         trusted,
         can_trust,
+        attachments: m.attachments,
         srcdoc: sanitize::wrap(&clean.html),
     })
 }
@@ -272,4 +275,26 @@ fn deceptive_warnings(found: Vec<links::Deceptive>) -> Vec<String> {
             n => format!("Ссылки {} и ещё {} на самом деле ведут на {host}", texts[..3].join(", "), n - 3),
         })
         .collect()
+}
+
+/// Сохраняет вложение: письмо заново берётся с сервера, путь выбирают в системном диалоге.
+/// Возвращает false, если диалог закрыли без выбора.
+#[tauri::command]
+pub async fn save_attachment(app: tauri::AppHandle, store: State<'_, Store>, imap: State<'_, Imap>, id: u32, index: usize) -> Result<bool, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let m = store.details(id).ok_or("no such message")?;
+    let (Some(account), Some(uid)) = (m.account.as_deref(), m.uid) else { return Err("у демо-писем нет вложений".into()) };
+    let raw = imap.raw(account, m.folder, uid).await.map_err(|e| e.to_string())?;
+    let parsed = mail_parser::MessageParser::default().parse(&raw).ok_or("не удалось разобрать письмо")?;
+    let parts = crate::attachments::visible(&parsed);
+    let part = parts.get(index).ok_or("вложение не найдено")?;
+    let name = crate::attachments::safe_name(mail_parser::MimeHeaders::attachment_name(*part).unwrap_or("вложение"));
+
+    let Some(target) = app.dialog().file().set_title("Сохранить вложение").set_file_name(&name).blocking_save_file() else {
+        return Ok(false);
+    };
+    let path = target.into_path().map_err(|e| e.to_string())?;
+    std::fs::write(&path, part.contents()).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(true)
 }
