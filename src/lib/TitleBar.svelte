@@ -1,13 +1,23 @@
 <script>
   import { getCurrentWindow } from '@tauri-apps/api/window';
 
-  let { sync } = $props();
+  import Icon from './Icon.svelte';
+
+  let { sync, middleClickMinimize, onsettings } = $props();
 
   const win = getCurrentWindow();
+
+  // Средний клик по свободному месту шапки сворачивает окно (настраивается).
+  function onmousedown(e) {
+    if (e.button !== 1 || !middleClickMinimize || e.target.closest('button')) return;
+    e.preventDefault();
+    win.minimize();
+  }
 </script>
 
 <!-- Своя шапка вместо рамки KDE: тянется за пустое место, двойной клик разворачивает. -->
-<header class="titlebar" data-tauri-drag-region>
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<header class="titlebar" data-tauri-drag-region {onmousedown}>
   <div class="title" data-tauri-drag-region>
     <span data-tauri-drag-region>mMail</span>
     {#if sync.message}
@@ -15,6 +25,9 @@
     {/if}
   </div>
   <div class="controls">
+    <button class="ctl" aria-label="Настройки" title="Настройки" onclick={onsettings}>
+      <Icon name="settings" size={14} />
+    </button>
     <button class="ctl" aria-label="Свернуть" onclick={() => win.minimize()}>
       <svg viewBox="0 0 12 12"><path d="M2.5 6h7" /></svg>
     </button>

@@ -5,8 +5,9 @@ export const listFolders = () => invoke('list_folders');
 
 export const syncStatus = () => invoke('sync_status');
 
-export const listMessages = (folder, query, offset, limit) =>
-  invoke('list_messages', { folder, query, offset, limit });
+// account: null — все ящики, '' — демо, иначе адрес ящика.
+export const listMessages = (account, folder, query, offset, limit) =>
+  invoke('list_messages', { account, folder, query, offset, limit });
 
 export const getMessage = (id, showRemote = false) => invoke('get_message', { id, showRemote });
 
@@ -14,3 +15,14 @@ export const setSenderTrusted = (address, trusted) => invoke('set_sender_trusted
 
 // Передаём только id запроса: сам адрес хранится в ядре.
 export const openLink = (id) => invoke('open_link', { id });
+
+export const getAppearance = () => invoke('get_appearance');
+
+export const setAppearance = (theme, opacity, middleClickMinimize) =>
+  invoke('set_appearance', { theme, opacity, middleClickMinimize });
+
+export const listAccounts = () => invoke('list_accounts');
+
+export const addAccount = (email, password) => invoke('add_account', { email, password });
+
+export const removeAccount = (email) => invoke('remove_account', { email });

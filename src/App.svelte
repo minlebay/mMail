@@ -4,9 +4,12 @@
   import MessageList from './lib/MessageList.svelte';
   import Reader from './lib/Reader.svelte';
   import LinkDialog from './lib/LinkDialog.svelte';
+  import Settings from './lib/Settings.svelte';
+  import Splitter from './lib/Splitter.svelte';
+  import { applyTheme, DEFAULT_THEME, DEFAULT_OPACITY } from './lib/themes.js';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { listen } from '@tauri-apps/api/event';
-  import { listFolders, syncStatus } from './lib/api.js';
+  import { listFolders, syncStatus, getAppearance } from './lib/api.js';
 
   const win = getCurrentWindow();
   let maximized = $state(false);
@@ -17,14 +20,46 @@
     return () => window.removeEventListener('resize', syncMaximized);
   });
 
-  let folders = $state([]);
-  let folder = $state('inbox');
+  let appearance = $state({ theme: DEFAULT_THEME, opacity: DEFAULT_OPACITY, middleClickMinimize: true });
+  let settingsOpen = $state(false);
+  getAppearance().then((a) => {
+    appearance = { theme: a.theme || DEFAULT_THEME, opacity: a.opacity ?? DEFAULT_OPACITY, middleClickMinimize: a.middleClickMinimize };
+    applyTheme(appearance.theme, appearance.opacity);
+  });
+
+  // Ширины панелей: удобство этого компьютера, поэтому localStorage.
+  const SIZES = { sidebar: 210, list: 300 };
+  let sizes = $state(readSizes());
+
+  function readSizes() {
+    try {
+      return { ...SIZES, ...JSON.parse(localStorage.getItem('mmail.sizes') ?? '{}') };
+    } catch {
+      return { ...SIZES };
+    }
+  }
+
+  function resize(key, px) {
+    sizes[key] = px;
+    try {
+      localStorage.setItem('mmail.sizes', JSON.stringify(sizes));
+    } catch {}
+  }
+
+  let groups = $state([]);
+  // account: null — все ящики, '' — демо, иначе адрес ящика.
+  let active = $state({ account: null, folder: 'inbox' });
   let selectedId = $state(null);
   // Растёт, когда ядро сообщает о новых данных: список и счётчики перечитываются.
   let version = $state(0);
   let sync = $state({ state: 'busy', message: 'Подключение…' });
 
-  const refreshFolders = () => listFolders().then((f) => (folders = f));
+  const refreshFolders = () =>
+    listFolders().then((g) => {
+      groups = g;
+      // Выбранный узел пропал (например, «Все ящики» при одном ящике) — встаём на первый.
+      if (g.length && !g.some((x) => x.account === active.account)) active = { account: g[0].account, folder: active.folder };
+    });
   refreshFolders();
 
   $effect(() => {
@@ -44,22 +79,27 @@
     return () => stops.forEach((p) => p.then((stop) => stop()));
   });
 
-  function pickFolder(id) {
-    folder = id;
+  function pickFolder(account, folder) {
+    active = { account, folder };
     selectedId = null;
   }
 </script>
 
 <div class="window" class:maximized>
-  <TitleBar {sync} />
+  <TitleBar {sync} middleClickMinimize={appearance.middleClickMinimize} onsettings={() => (settingsOpen = true)} />
 
-  <main class="layout">
-    <Sidebar {folders} active={folder} onpick={pickFolder} />
-    <MessageList {folder} {version} {selectedId} onselect={(id) => (selectedId = id)} />
+  <main class="layout" style:grid-template-columns="{sizes.sidebar}px 12px {sizes.list}px 12px minmax(320px, 1fr)">
+    <Sidebar {groups} {active} onpick={pickFolder} oncompose={() => {}} />
+    <Splitter value={sizes.sidebar} min={150} max={380} initial={SIZES.sidebar} onchange={(px) => resize('sidebar', px)} />
+    <MessageList account={active.account} folder={active.folder} {version} {selectedId} onselect={(id) => (selectedId = id)} />
+    <Splitter value={sizes.list} min={220} max={640} initial={SIZES.list} onchange={(px) => resize('list', px)} />
     <Reader id={selectedId} />
   </main>
 
   <LinkDialog />
+  {#if settingsOpen}
+    <Settings {appearance} onclose={() => (settingsOpen = false)} />
+  {/if}
 </div>
 
 <style>
@@ -85,8 +125,6 @@
     flex: 1;
     min-height: 0;
     display: grid;
-    grid-template-columns: 190px minmax(260px, 320px) 1fr;
-    gap: 12px;
     padding: 4px 16px 16px;
   }
 </style>

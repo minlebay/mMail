@@ -10,6 +10,7 @@ pub fn generate(count: usize) -> Vec<Message> {
     let mut messages = Vec::with_capacity(count);
     let mut push = |folder, from: (&str, &str), subject: &str, minutes_ago: i64, auth, html: String| {
         messages.push(Message {
+            account: None,
             folder,
             uid: None,
             starred: false,

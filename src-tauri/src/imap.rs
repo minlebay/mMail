@@ -1,16 +1,16 @@
-//! IMAP: аккаунт из KWallet, TLS-подключение, синхронизация заголовков и загрузка писем.
+//! IMAP: TLS-подключение, фоновая синхронизация каждого ящика и загрузка писем по требованию.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_imap::types::{Fetch, Flag, NameAttribute};
 use futures::TryStreamExt;
 use mail_parser::MessageParser;
-use secret_service::{EncryptionType, SecretService};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio_rustls::client::TlsStream;
@@ -19,54 +19,16 @@ use tokio_rustls::rustls::{self, ClientConfig, RootCertStore};
 use tokio_rustls::TlsConnector;
 use zeroize::Zeroizing;
 
+use crate::accounts::{self, Account};
 use crate::fake;
 use crate::store::{Auth, Folder, Message, Store};
 
-type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
+pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 type Session = async_imap::Session<TlsStream<TcpStream>>;
 
 /// Писем за один FETCH: каждая порция сразу появляется в списке.
 const BATCH: u32 = 200;
 const TIMEOUT: Duration = Duration::from_secs(20);
-
-struct Provider {
-    imap_host: &'static str,
-    /// Authserv-id серверов провайдера: верим только их Authentication-Results.
-    trusted_authserv: &'static [&'static str],
-}
-
-const YANDEX: Provider = Provider { imap_host: "imap.yandex.com", trusted_authserv: &[".yandex.net", ".yandex.ru"] };
-const GMAIL: Provider = Provider { imap_host: "imap.gmail.com", trusted_authserv: &["mx.google.com"] };
-
-fn provider_for(email: &str) -> Option<&'static Provider> {
-    let domain = email.rsplit_once('@')?.1.to_ascii_lowercase();
-    match domain.as_str() {
-        "gmail.com" | "googlemail.com" => Some(&GMAIL),
-        "yandex.ru" | "yandex.com" | "ya.ru" | "yandex.by" | "yandex.kz" | "narod.ru" => Some(&YANDEX),
-        _ => None,
-    }
-}
-
-pub struct Account {
-    email: String,
-    provider: &'static Provider,
-}
-
-/// Аккаунт и пароль приложения из KWallet (Secret Service): запись с атрибутами
-/// `service=mmail`, `account=<адрес>`. Пароль не хранится дольше входа на сервер.
-async fn load_account() -> Result<Option<(Account, Zeroizing<String>)>> {
-    let ss = SecretService::connect(EncryptionType::Dh).await?;
-    let found = ss.search_items(HashMap::from([("service", "mmail")])).await?;
-    let Some(item) = found.unlocked.into_iter().next().or(found.locked.into_iter().next()) else {
-        return Ok(None);
-    };
-    item.unlock().await?;
-    let email = item.get_attributes().await?.remove("account").ok_or("в записи KWallet нет атрибута account")?;
-    let provider = provider_for(&email).ok_or_else(|| format!("неизвестный провайдер для {email}"))?;
-    let secret = Zeroizing::new(item.get_secret().await?);
-    let password = Zeroizing::new(String::from_utf8(secret.to_vec())?);
-    Ok(Some((Account { email, provider }, password)))
-}
 
 async fn connect(account: &Account, password: &str) -> Result<Session> {
     let mut roots = RootCertStore::empty();
@@ -113,7 +75,7 @@ struct Cursor {
     next: u32,
 }
 
-async fn fetch_batch(session: &mut Session, cursor: &mut Cursor) -> Result<Vec<Message>> {
+async fn fetch_batch(session: &mut Session, account: &str, cursor: &mut Cursor) -> Result<Vec<Message>> {
     if cursor.next == 0 {
         return Ok(Vec::new());
     }
@@ -128,10 +90,10 @@ async fn fetch_batch(session: &mut Session, cursor: &mut Cursor) -> Result<Vec<M
         .await?;
     eprintln!("mMail: {} {first}:{} за {:?}", cursor.name, cursor.next, started.elapsed());
     cursor.next = first - 1;
-    Ok(fetches.iter().filter_map(|f| to_message(f, cursor.folder)).collect())
+    Ok(fetches.iter().filter_map(|f| to_message(f, account, cursor.folder)).collect())
 }
 
-fn to_message(fetch: &Fetch, folder: Folder) -> Option<Message> {
+fn to_message(fetch: &Fetch, account: &str, folder: Folder) -> Option<Message> {
     let parsed = MessageParser::default().parse_headers(fetch.header()?)?;
     let from = parsed.from().and_then(|a| a.first());
     let from_addr = from.and_then(|a| a.address()).unwrap_or_default().to_string();
@@ -144,6 +106,7 @@ fn to_message(fetch: &Fetch, folder: Folder) -> Option<Message> {
     let flags: Vec<_> = fetch.flags().collect();
 
     Some(Message {
+        account: Some(account.to_string()),
         folder,
         uid: fetch.uid,
         starred: flags.contains(&Flag::Flagged),
@@ -185,57 +148,119 @@ pub struct SyncStatus {
     message: String,
 }
 
-/// Живое подключение для загрузки писем по требованию и последний статус синхронизации.
-pub struct Imap {
-    inner: Mutex<Option<Connected>>,
-    status: std::sync::Mutex<SyncStatus>,
-}
-
-struct Connected {
+/// Подключённый ящик: папки на сервере и отдельная сессия для открытия писем.
+struct Connection {
     account: Account,
     folders: HashMap<Folder, String>,
-    session: Option<Session>,
+    reader: Mutex<Option<Session>>,
+    /// Ящик удалён или добавлен заново — фоновая синхронизация должна остановиться.
+    cancelled: AtomicBool,
 }
 
-impl Default for Imap {
-    fn default() -> Self {
-        Self {
-            inner: Mutex::new(None),
-            status: std::sync::Mutex::new(SyncStatus { state: "busy", message: "Подключение…".into() }),
+#[derive(Default)]
+pub struct Imap {
+    connections: std::sync::Mutex<HashMap<String, Arc<Connection>>>,
+    /// Статус по каждому ящику; в шапку уходит сводка.
+    statuses: std::sync::Mutex<BTreeMap<String, SyncStatus>>,
+    demo: AtomicBool,
+}
+
+fn set_status(app: &AppHandle, email: &str, state: &'static str, message: impl Into<String>) {
+    let message = message.into();
+    eprintln!("mMail: [{state}] {email}: {message}");
+    let imap = app.state::<Imap>();
+    imap.statuses.lock().unwrap().insert(email.to_string(), SyncStatus { state, message });
+    let _ = app.emit("sync-status", imap.summary());
+}
+
+impl Imap {
+    fn summary(&self) -> SyncStatus {
+        if self.demo.load(Ordering::Relaxed) {
+            return SyncStatus { state: "demo", message: "Демо-данные: добавьте почтовый ящик в настройках".into() };
+        }
+        let statuses = self.statuses.lock().unwrap();
+        if statuses.is_empty() {
+            return SyncStatus { state: "ok", message: "Нет почтовых ящиков — добавьте в настройках".into() };
+        }
+        let pick = |state: &str| -> Vec<String> {
+            statuses.iter().filter(|(_, s)| s.state == state).map(|(email, s)| format!("{email}: {}", s.message)).collect()
+        };
+        let (errors, busy) = (pick("error"), pick("busy"));
+        match (errors.is_empty(), busy.is_empty()) {
+            (false, _) => SyncStatus { state: "error", message: errors.join(" · ") },
+            (true, false) => SyncStatus { state: "busy", message: busy.join(" · ") },
+            (true, true) => SyncStatus { state: "ok", message: String::new() },
         }
     }
-}
 
-fn status(app: &AppHandle, state: &'static str, message: impl Into<String>) {
-    let status = SyncStatus { state, message: message.into() };
-    eprintln!("mMail: [{state}] {}", status.message);
-    *app.state::<Imap>().status.lock().unwrap() = status.clone();
-    let _ = app.emit("sync-status", status);
+    /// Ящики, о которых ядро уже знает (в том числе ещё подключающиеся).
+    pub fn known_accounts(&self) -> Vec<String> {
+        self.statuses.lock().unwrap().keys().filter(|k| k.contains('@')).cloned().collect()
+    }
+
+    fn connection(&self, email: &str) -> Option<Arc<Connection>> {
+        self.connections.lock().unwrap().get(email).cloned()
+    }
+
+    /// Регистрирует подключение; прежнее для того же ящика останавливается.
+    fn register(&self, conn: Arc<Connection>) {
+        if let Some(old) = self.connections.lock().unwrap().insert(conn.account.email.clone(), conn) {
+            old.cancelled.store(true, Ordering::Relaxed);
+        }
+    }
+
+    fn unregister(&self, email: &str) {
+        if let Some(old) = self.connections.lock().unwrap().remove(email) {
+            old.cancelled.store(true, Ordering::Relaxed);
+        }
+        self.statuses.lock().unwrap().remove(email);
+    }
 }
 
 /// Для UI, который подписался на события позже, чем ядро начало синхронизацию.
 #[tauri::command]
-pub fn sync_status(imap: tauri::State<'_, Imap>) -> SyncStatus {
-    imap.status.lock().unwrap().clone()
+pub fn sync_status(imap: State<'_, Imap>) -> SyncStatus {
+    imap.summary()
 }
 
-/// Запуск: есть аккаунт в KWallet — синхронизируем его, нет — показываем демо-данные.
+/// Запуск: синхронизируем все ящики из KWallet, а если их нет — показываем демо-данные.
 pub async fn start(app: AppHandle) {
-    status(&app, "busy", "Подключение…");
-    match sync(&app).await {
-        Ok(true) => status(&app, "ok", ""),
-        Ok(false) => {
-            app.state::<Store>().replace_all(fake::generate(10_000));
-            let _ = app.emit("mailbox-changed", ());
-            status(&app, "demo", "Демо-данные: аккаунт в KWallet не найден");
+    let emails = match accounts::list().await {
+        Ok(emails) => emails,
+        Err(e) => {
+            set_status(&app, "KWallet", "error", format!("нет доступа: {e}"));
+            return;
         }
-        Err(e) => status(&app, "error", format!("Ошибка синхронизации: {e}")),
+    };
+    if emails.is_empty() {
+        app.state::<Imap>().demo.store(true, Ordering::Relaxed);
+        app.state::<Store>().replace_all(fake::generate(10_000));
+        let _ = app.emit("mailbox-changed", ());
+        let _ = app.emit("sync-status", app.state::<Imap>().summary());
+        return;
+    }
+    for email in emails {
+        match Account::new(&email) {
+            Ok(account) => {
+                tauri::async_runtime::spawn(sync_account(app.clone(), account));
+            }
+            Err(e) => set_status(&app, &email, "error", e.to_string()),
+        }
     }
 }
 
-async fn sync(app: &AppHandle) -> Result<bool> {
-    let Some((account, password)) = load_account().await? else { return Ok(false) };
-    status(app, "busy", format!("Вход в {}…", account.email));
+async fn sync_account(app: AppHandle, account: Account) {
+    let email = account.email.clone();
+    match run_sync(&app, account).await {
+        Ok(()) => set_status(&app, &email, "ok", ""),
+        Err(e) => set_status(&app, &email, "error", format!("ошибка синхронизации: {e}")),
+    }
+}
+
+async fn run_sync(app: &AppHandle, account: Account) -> Result<()> {
+    let email = account.email.clone();
+    set_status(app, &email, "busy", "вход…");
+    let password = accounts::password(&email).await?;
     // Два подключения: фоновая синхронизация не задерживает открытие писем.
     let mut session = connect(&account, &password).await?;
     let reader = connect(&account, &password).await?;
@@ -248,7 +273,8 @@ async fn sync(app: &AppHandle) -> Result<bool> {
         let total = session.examine(name).await?.exists;
         cursors.push(Cursor { folder, name: name.clone(), total, next: total });
     }
-    *app.state::<Imap>().inner.lock().await = Some(Connected { account, folders, session: Some(reader) });
+    let conn = Arc::new(Connection { account, folders, reader: Mutex::new(Some(reader)), cancelled: AtomicBool::new(false) });
+    app.state::<Imap>().register(conn.clone());
 
     let store = app.state::<Store>();
     let step = |cursor: &Cursor, messages: Vec<Message>| {
@@ -261,39 +287,86 @@ async fn sync(app: &AppHandle) -> Result<bool> {
             Folder::Drafts => "Черновики",
             Folder::Trash => "Корзина",
         };
-        status(app, "busy", format!("Синхронизация: {label} {done} / {}", cursor.total));
+        set_status(app, &email, "busy", format!("{label} {done} / {}", cursor.total));
     };
     // Сначала свежие письма всех папок, потом в фоне — всё остальное, входящие первыми.
     for cursor in &mut cursors {
-        let messages = fetch_batch(&mut session, cursor).await?;
+        let messages = fetch_batch(&mut session, &email, cursor).await?;
         step(cursor, messages);
     }
     for cursor in &mut cursors {
         while cursor.next > 0 {
-            let messages = fetch_batch(&mut session, cursor).await?;
+            if conn.cancelled.load(Ordering::Relaxed) {
+                let _ = session.logout().await;
+                return Ok(());
+            }
+            let messages = fetch_batch(&mut session, &email, cursor).await?;
             step(cursor, messages);
         }
     }
     let _ = session.logout().await;
-    Ok(true)
+    Ok(())
+}
+
+/// Проверка ящика перед сохранением: вход на сервер и сразу выход.
+async fn verify(account: &Account, password: &str) -> Result<()> {
+    let mut session = connect(account, password).await?;
+    let _ = session.logout().await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn list_accounts() -> std::result::Result<Vec<String>, String> {
+    accounts::list().await.map_err(|e| e.to_string())
+}
+
+/// Добавляет ящик: проверяет вход, кладёт пароль в KWallet и запускает синхронизацию.
+#[tauri::command]
+pub async fn add_account(app: AppHandle, email: String, password: String) -> std::result::Result<String, String> {
+    let password = Zeroizing::new(password);
+    let account = Account::new(&email).map_err(|e| e.to_string())?;
+    verify(&account, &password).await.map_err(|e| format!("не удалось войти: {e}"))?;
+    accounts::save(&account, &password).await.map_err(|e| format!("не удалось сохранить в KWallet: {e}"))?;
+    drop(password);
+
+    let imap = app.state::<Imap>();
+    if imap.demo.swap(false, Ordering::Relaxed) {
+        app.state::<Store>().replace_all(Vec::new());
+        let _ = app.emit("mailbox-changed", ());
+    }
+    let email = account.email.clone();
+    app.state::<Store>().remove_account(&email);
+    tauri::async_runtime::spawn(sync_account(app.clone(), account));
+    Ok(email)
+}
+
+/// Удаляет ящик: останавливает синхронизацию, убирает письма и пароль из KWallet.
+#[tauri::command]
+pub async fn remove_account(app: AppHandle, email: String) -> std::result::Result<(), String> {
+    let email = email.trim().to_lowercase();
+    accounts::remove(&email).await.map_err(|e| e.to_string())?;
+    let imap = app.state::<Imap>();
+    imap.unregister(&email);
+    app.state::<Store>().remove_account(&email);
+    let _ = app.emit("mailbox-changed", ());
+    let _ = app.emit("sync-status", imap.summary());
+    Ok(())
 }
 
 impl Imap {
     /// Исходный HTML письма и проверка отправителя (BODY.PEEK — письмо не помечается прочитанным).
-    pub async fn open(&self, folder: Folder, uid: u32) -> Result<(String, Auth)> {
-        let mut guard = self.inner.lock().await;
-        let conn = guard.as_mut().ok_or("нет подключения к серверу")?;
-        let name = conn.folders.get(&folder).ok_or("папка не найдена на сервере")?.clone();
+    pub async fn open(&self, email: &str, folder: Folder, uid: u32) -> Result<(String, Auth)> {
+        let conn = self.connection(email).ok_or("ящик ещё подключается")?;
+        let name = conn.folders.get(&folder).ok_or("папка не найдена на сервере")?;
+        let mut reader = conn.reader.lock().await;
 
         // Одна попытка переподключения: соединение могло оборваться, пока приложение простаивало.
         for attempt in 0..2 {
-            if conn.session.is_none() {
-                let (account, password) = load_account().await?.ok_or("аккаунт пропал из KWallet")?;
-                conn.session = Some(connect(&account, &password).await?);
-                conn.account = account;
+            if reader.is_none() {
+                let password = accounts::password(email).await?;
+                *reader = Some(connect(&conn.account, &password).await?);
             }
-            let session = conn.session.as_mut().unwrap();
-            match fetch_raw(session, &name, uid).await {
+            match fetch_raw(reader.as_mut().unwrap(), name, uid).await {
                 Ok(raw) => {
                     let parsed = MessageParser::default().parse(&raw).ok_or("не удалось разобрать письмо")?;
                     let auth_results = parsed
@@ -306,8 +379,8 @@ impl Imap {
                     return Ok((html, auth));
                 }
                 Err(e) if attempt == 0 => {
-                    eprintln!("mMail: IMAP-сессия сброшена ({e}), переподключаюсь");
-                    conn.session = None;
+                    eprintln!("mMail: IMAP-сессия {email} сброшена ({e}), переподключаюсь");
+                    *reader = None;
                 }
                 Err(e) => return Err(e),
             }
@@ -328,7 +401,7 @@ mod tests {
     use super::*;
 
     fn verdict(headers: &[&str]) -> Auth {
-        auth_verdict(headers.iter().map(|h| h.to_string()), YANDEX.trusted_authserv)
+        auth_verdict(headers.iter().map(|h| h.to_string()), crate::accounts::YANDEX.trusted_authserv)
     }
 
     #[test]

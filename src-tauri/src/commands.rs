@@ -3,7 +3,7 @@ use tauri::State;
 
 use crate::config::ConfigStore;
 use crate::imap::Imap;
-use crate::store::{Auth, Store, Summary};
+use crate::store::{Auth, Scope, Store, Summary};
 use crate::{links, remote, sanitize};
 
 const FOLDERS: [(&str, &str); 5] = [
@@ -21,6 +21,14 @@ pub struct FolderInfo {
     id: &'static str,
     name: &'static str,
     unread: usize,
+}
+
+/// Узел дерева папок: ящик (или «Все ящики», `account: None`) и его папки.
+#[derive(Serialize)]
+pub struct FolderGroup {
+    account: Option<String>,
+    title: String,
+    folders: Vec<FolderInfo>,
 }
 
 #[derive(Serialize)]
@@ -50,20 +58,45 @@ pub struct MessageView {
 }
 
 #[tauri::command]
-pub fn list_folders(store: State<'_, Store>) -> Vec<FolderInfo> {
-    FOLDERS.iter().map(|&(id, name)| FolderInfo { id, name, unread: store.unread(id) }).collect()
+pub fn list_folders(store: State<'_, Store>, imap: State<'_, Imap>) -> Vec<FolderGroup> {
+    let folders = |scope: Scope| -> Vec<FolderInfo> {
+        FOLDERS.iter().map(|&(id, name)| FolderInfo { id, name, unread: store.unread(scope, id) }).collect()
+    };
+    // Ящики из хранилища плюс те, что ещё подключаются и писем пока не прислали.
+    let mut accounts = store.accounts();
+    for email in imap.known_accounts() {
+        if !accounts.contains(&Some(email.clone())) {
+            accounts.push(Some(email));
+        }
+    }
+    accounts.sort();
+
+    let mut groups = Vec::new();
+    if accounts.len() > 1 {
+        groups.push(FolderGroup { account: None, title: "Все ящики".into(), folders: folders(Scope::All) });
+    }
+    for account in accounts {
+        let (key, title) = match account {
+            Some(email) => (email.clone(), email),
+            None => (String::new(), "Демо-ящик".into()),
+        };
+        let folders = folders(Scope::parse(Some(&key)));
+        groups.push(FolderGroup { account: Some(key), title, folders });
+    }
+    groups
 }
 
 #[tauri::command]
 pub fn list_messages(
     store: State<'_, Store>,
+    account: Option<String>,
     folder: String,
     query: String,
     offset: usize,
     limit: usize,
 ) -> Result<Page, String> {
     let query = query.trim().to_lowercase();
-    let (total, items) = store.page(&folder, &query, offset, limit.min(MAX_PAGE)).ok_or("unknown folder")?;
+    let (total, items) = store.page(Scope::parse(account.as_deref()), &folder, &query, offset, limit.min(MAX_PAGE)).ok_or("unknown folder")?;
     Ok(Page { total, items })
 }
 
@@ -76,15 +109,15 @@ pub async fn get_message(
     show_remote: bool,
 ) -> Result<MessageView, String> {
     let mut m = store.details(id).ok_or("no such message")?;
-    let html = match (m.html.take(), m.uid) {
-        (Some(html), _) => html,
-        (None, Some(uid)) => {
-            let (html, auth) = imap.open(m.folder, uid).await.map_err(|e| e.to_string())?;
+    let html = match (m.html.take(), m.account.as_deref(), m.uid) {
+        (Some(html), _, _) => html,
+        (None, Some(account), Some(uid)) => {
+            let (html, auth) = imap.open(account, m.folder, uid).await.map_err(|e| e.to_string())?;
             store.set_opened(id, html.clone(), auth);
             m.auth = auth;
             html
         }
-        (None, None) => String::new(),
+        _ => String::new(),
     };
     let sender = m.from_addr.to_lowercase();
     let lookalike = sender.rsplit_once('@').is_some_and(|(_, domain)| !domain.is_ascii());
@@ -141,5 +174,36 @@ pub fn set_sender_trusted(config: State<'_, ConfigStore>, address: String, trust
         } else {
             c.trusted_senders.remove(&address);
         }
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Appearance {
+    theme: String,
+    opacity: Option<f32>,
+    middle_click_minimize: bool,
+}
+
+#[tauri::command]
+pub fn get_appearance(config: State<'_, ConfigStore>) -> Appearance {
+    let c = config.get();
+    Appearance { theme: c.theme, opacity: c.opacity, middle_click_minimize: c.middle_click_minimize.unwrap_or(true) }
+}
+
+#[tauri::command]
+pub fn set_appearance(
+    config: State<'_, ConfigStore>,
+    theme: String,
+    opacity: f32,
+    middle_click_minimize: bool,
+) -> Result<(), String> {
+    if theme.len() > 32 || !theme.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err("некорректная тема".into());
+    }
+    config.update(|c| {
+        c.theme = theme;
+        c.opacity = Some(opacity.clamp(0.15, 0.85));
+        c.middle_click_minimize = Some(middle_click_minimize);
     })
 }

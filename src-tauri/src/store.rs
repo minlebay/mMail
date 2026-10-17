@@ -25,6 +25,8 @@ pub enum Auth {
 }
 
 pub struct Message {
+    /// Адрес ящика; `None` у демо-писем.
+    pub account: Option<String>,
     pub folder: Folder,
     /// UID на сервере; `None` у демо-писем.
     pub uid: Option<u32>,
@@ -61,6 +63,7 @@ pub struct Summary {
 #[derive(Clone)]
 pub struct Details {
     pub id: u32,
+    pub account: Option<String>,
     pub folder: Folder,
     pub uid: Option<u32>,
     pub from_name: String,
@@ -83,6 +86,11 @@ impl Store {
         self.replace(|_| true, messages);
     }
 
+    /// Убирает письма удалённого (или заново добавленного) ящика.
+    pub fn remove_account(&self, email: &str) {
+        self.entries.write().unwrap().retain(|e| e.msg.account.as_deref() != Some(email));
+    }
+
     /// Добавляет порцию писем, пришедшую при синхронизации.
     pub fn append(&self, messages: Vec<Message>) {
         self.replace(|_| false, messages);
@@ -101,12 +109,13 @@ impl Store {
     }
 
     /// Страница писем папки (`query` уже в нижнем регистре) и общее число совпадений.
-    pub fn page(&self, folder: &str, query: &str, offset: usize, limit: usize) -> Option<(usize, Vec<Summary>)> {
+    pub fn page(&self, scope: Scope, folder: &str, query: &str, offset: usize, limit: usize) -> Option<(usize, Vec<Summary>)> {
         let in_folder = folder_filter(folder)?;
         let entries = self.entries.read().unwrap();
         let mut total = 0;
         let mut items = Vec::with_capacity(limit);
-        for e in entries.iter().filter(|e| in_folder(&e.msg) && (query.is_empty() || e.haystack.contains(query))) {
+        let matches = |e: &&Entry| scope.contains(&e.msg) && in_folder(&e.msg) && (query.is_empty() || e.haystack.contains(query));
+        for e in entries.iter().filter(matches) {
             if total >= offset && items.len() < limit {
                 items.push(Summary {
                     id: e.id,
@@ -122,9 +131,17 @@ impl Store {
         Some((total, items))
     }
 
-    pub fn unread(&self, folder: &str) -> usize {
+    pub fn unread(&self, scope: Scope, folder: &str) -> usize {
         let Some(in_folder) = folder_filter(folder) else { return 0 };
-        self.entries.read().unwrap().iter().filter(|e| in_folder(&e.msg) && e.msg.unread).count()
+        self.entries.read().unwrap().iter().filter(|e| scope.contains(&e.msg) && in_folder(&e.msg) && e.msg.unread).count()
+    }
+
+    /// Ящики, письма которых есть в хранилище; `None` — демо-письма.
+    pub fn accounts(&self) -> Vec<Option<String>> {
+        let mut accounts: Vec<_> = self.entries.read().unwrap().iter().map(|e| e.msg.account.clone()).collect();
+        accounts.sort();
+        accounts.dedup();
+        accounts
     }
 
     pub fn details(&self, id: u32) -> Option<Details> {
@@ -132,6 +149,7 @@ impl Store {
         let e = entries.iter().find(|e| e.id == id)?;
         Some(Details {
             id,
+            account: e.msg.account.clone(),
             folder: e.msg.folder,
             uid: e.msg.uid,
             from_name: e.msg.from_name.clone(),
@@ -148,6 +166,33 @@ impl Store {
         if let Some(e) = self.entries.write().unwrap().iter_mut().find(|e| e.id == id) {
             e.msg.html = Some(html);
             e.msg.auth = auth;
+        }
+    }
+}
+
+/// Какие ящики показывать: все сразу, только демо-письма или один ящик.
+#[derive(Clone, Copy)]
+pub enum Scope<'a> {
+    All,
+    Demo,
+    Account(&'a str),
+}
+
+impl<'a> Scope<'a> {
+    /// `None` — все ящики, `""` — демо, иначе адрес ящика.
+    pub fn parse(account: Option<&'a str>) -> Self {
+        match account {
+            None => Scope::All,
+            Some("") => Scope::Demo,
+            Some(email) => Scope::Account(email),
+        }
+    }
+
+    fn contains(&self, m: &Message) -> bool {
+        match self {
+            Scope::All => true,
+            Scope::Demo => m.account.is_none(),
+            Scope::Account(email) => m.account.as_deref() == Some(email),
         }
     }
 }

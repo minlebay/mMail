@@ -4,7 +4,7 @@
   import Icon from './Icon.svelte';
   import { listMessages } from './api.js';
 
-  let { folder, version, selectedId, onselect } = $props();
+  let { account, folder, version, selectedId, onselect } = $props();
 
   // Виртуальный список: в DOM только видимые строки, данные подгружаются страницами из ядра.
   const ROW = 64;
@@ -33,9 +33,9 @@
   });
 
   $effect(() => {
-    const f = folder;
+    const scope = { account, folder };
     const q = debounced;
-    untrack(() => reset(f, q));
+    untrack(() => reset(scope, q));
   });
 
   // Новая порция писем от синхронизации: перечитываем видимое, прокрутку и выделение не трогаем.
@@ -65,7 +65,7 @@
     return pages.get(Math.floor(i / PAGE))?.[i % PAGE];
   }
 
-  function reset(f, q) {
+  function reset(scope, q) {
     generation++;
     pages.clear();
     pending.clear();
@@ -75,7 +75,7 @@
     selIndex = -1;
     scrollTop = 0;
     if (viewport) viewport.scrollTop = 0;
-    load(0, f, q);
+    load(0, scope, q);
   }
 
   function refresh() {
@@ -87,12 +87,12 @@
     for (let p = from; p <= to; p++) load(p);
   }
 
-  async function load(p, f = folder, q = debounced) {
+  async function load(p, scope = { account, folder }, q = debounced) {
     if ((pages.has(p) && !stale.has(p)) || pending.has(p)) return;
     const gen = generation;
     pending.add(p);
     try {
-      const res = await listMessages(f, q, p * PAGE, PAGE);
+      const res = await listMessages(scope.account, scope.folder, q, p * PAGE, PAGE);
       if (gen !== generation) return;
       total = res.total;
       loaded = true;
@@ -231,7 +231,7 @@
     background: rgba(255, 255, 255, 0.05);
   }
   .row.selected {
-    background: var(--glass-strong);
+    background: var(--accent-soft);
   }
 
   .line {

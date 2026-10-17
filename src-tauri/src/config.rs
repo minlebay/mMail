@@ -15,6 +15,10 @@ use serde::{Deserialize, Serialize};
 pub struct Config {
     /// Цветовая тема UI (id из src/lib/themes.js).
     pub theme: String,
+    /// Непрозрачность фона окна, 0.15–0.85; `None` — по умолчанию темы.
+    pub opacity: Option<f32>,
+    /// Средний клик по заголовку сворачивает окно; `None` — включено.
+    pub middle_click_minimize: Option<bool>,
     /// Отправители, у которых внешнее содержимое показывается сразу (адреса в нижнем регистре).
     pub trusted_senders: BTreeSet<String>,
 }

@@ -1,3 +1,4 @@
+mod accounts;
 mod blur;
 mod commands;
 mod config;
@@ -25,8 +26,13 @@ fn main() {
             commands::list_messages,
             commands::get_message,
             commands::set_sender_trusted,
+            commands::get_appearance,
+            commands::set_appearance,
             links::open_link,
             imap::sync_status,
+            imap::list_accounts,
+            imap::add_account,
+            imap::remove_account,
         ])
         .setup(|app| {
             app.manage(config::ConfigStore::load(app.path().app_config_dir()?));
