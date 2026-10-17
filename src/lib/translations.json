@@ -878,5 +878,29 @@
   "Сервер сейчас не отдаёт это письмо; mMail попробует ещё раз позже": {
     "en": "The server is not returning this message right now; mMail will try again later",
     "sr": "Server trenutno ne vraća ovu poruku; mMail će pokušati ponovo kasnije"
+  },
+  "Показать оригинал": {
+    "en": "Show original",
+    "sr": "Prikaži original"
+  },
+  "Перевожу…": {
+    "en": "Translating…",
+    "sr": "Prevodim…"
+  },
+  "Переведено Google с языка: {language}": {
+    "en": "Translated by Google from: {language}",
+    "sr": "Google prevod sa jezika: {language}"
+  },
+  "Перевод письма": {
+    "en": "Message translation",
+    "sr": "Prevod poruke"
+  },
+  "Перевести выделенное": {
+    "en": "Translate selection",
+    "sr": "Prevedi izabrano"
+  },
+  "Перевод": {
+    "en": "Translation",
+    "sr": "Prevod"
   }
 }

@@ -11,7 +11,7 @@
     "allow-mark-folder-read",
     "allow-set-message-flags",
     "allow-trash-message",
-    "allow-message-translation-text",
+    "allow-translate-message",
     "allow-translate-text",
     "allow-list-messages",
     "allow-get-message",

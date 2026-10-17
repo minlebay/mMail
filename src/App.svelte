@@ -5,6 +5,7 @@
   import MessageList from './lib/MessageList.svelte';
   import Reader from './lib/Reader.svelte';
   import LinkDialog from './lib/LinkDialog.svelte';
+  import TranslationDialog from './lib/TranslationDialog.svelte';
   import Splitter from './lib/Splitter.svelte';
   import { applyTheme, DEFAULT_THEME, DEFAULT_OPACITY } from './lib/themes.js';
   import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -101,6 +102,7 @@
         applyTheme(appearance.theme, appearance.opacity);
       }),
       listen('message-sent', () => showToast('Письмо отправлено')),
+      listen('operation-error', (e) => showToast(String(e.payload))),
       // Удалённое письмо больше не показываем в просмотре.
       listen('message-trashed', (e) => {
         if (selectedId === e.payload) selectedId = null;
@@ -163,6 +165,7 @@
   </main>
 
   <LinkDialog />
+  <TranslationDialog />
   {#if toast}<div class="toast">{$t(toast)}</div>{/if}
 </div>
 

@@ -4,7 +4,8 @@
   import { SvelteMap } from 'svelte/reactivity';
   import Icon from './Icon.svelte';
   import { showContextMenu } from './contextMenu.js';
-  import { listMessages, writeClipboard, setMessageFlags, trashMessage, messageTranslationText, translateText } from './api.js';
+  import { listMessages, writeClipboard, setMessageFlags, trashMessage } from './api.js';
+  import { requestTranslation } from './translate.js';
 
   let { account, folder, version, selectedId, onselect, onreply, onerror } = $props();
 
@@ -126,7 +127,7 @@
       item.starred
         ? { label: 'Снять отметку «Важное»', run: () => setMessageFlags(item.id, { starred: false }) }
         : { label: 'Отметить важным', run: () => setMessageFlags(item.id, { starred: true }) },
-      { label: 'Перевести письмо', run: () => messageTranslationText(item.id).then(translateText) },
+      { label: 'Перевести письмо', run: () => { onselect(item.id); requestTranslation(item.id); } },
       { separator: true },
       { label: 'Копировать адрес отправителя', run: () => writeClipboard(item.fromAddr) },
       { label: 'Копировать тему', run: () => writeClipboard(item.subject) },

@@ -2,7 +2,8 @@
   import { t } from './i18n.js';
   import Icon from './Icon.svelte';
   import { showContextMenu } from './contextMenu.js';
-  import { getMessage, writeClipboard, setSenderTrusted, saveAttachment } from './api.js';
+  import { getMessage, writeClipboard, setSenderTrusted, saveAttachment, translateMessage } from './api.js';
+  import { translateRequest } from './translate.js';
 
   let { id, onreply } = $props();
 
@@ -16,7 +17,36 @@
     msg = null;
     error = '';
     saved = {};
+    translation = null;
     if (current != null) load(current, false);
+  });
+
+  // Перевод: null — оригинал; { loading } — ждём переводчик; { srcdoc, sourceLanguage } — готово.
+  let translation = $state(null);
+  let translationError = $state('');
+
+  async function translate() {
+    const current = id;
+    translationError = '';
+    translation = { loading: true };
+    try {
+      const result = await translateMessage(current);
+      if (current === id) translation = result;
+    } catch (e) {
+      if (current === id) {
+        translation = null;
+        translationError = String(e);
+      }
+    }
+  }
+
+  // «Перевести письмо» из меню списка писем.
+  $effect(() => {
+    const request = $translateRequest;
+    if (request && request.id === id) {
+      translateRequest.set(null);
+      translate();
+    }
   });
 
   async function load(current, showRemote) {
@@ -64,6 +94,10 @@
     showContextMenu(event, [
       { label: 'Ответить', run: () => onreply(msg, 'reply') },
       { label: 'Переслать', run: () => onreply(msg, 'forward') },
+      { separator: true },
+      translation?.srcdoc
+        ? { label: 'Показать оригинал', run: () => (translation = null) }
+        : { label: 'Перевести письмо', disabled: !!translation?.loading, run: translate },
       { separator: true },
       { label: 'Копировать адрес отправителя', run: () => writeClipboard(msg.fromAddr) },
       { label: 'Копировать тему', run: () => writeClipboard(msg.subject) },
@@ -127,11 +161,28 @@
           {/if}
         </div>
       {/if}
+      {#if translation}
+        <div class="banner">
+          <Icon name="globe" size={15} />
+          <span class="text">
+            {#if translation.loading}{$t("Перевожу…")}{:else}{$t("Переведено Google с языка: {language}", { language: translation.sourceLanguage ?? '?' })}{/if}
+          </span>
+          {#if !translation.loading}<button class="chip" onclick={() => (translation = null)}>{$t("Показать оригинал")}</button>{/if}
+        </div>
+      {/if}
+      {#if translationError}
+        <div class="banner danger"><Icon name="alert" size={15} /><span class="text">{translationError}</span></div>
+      {/if}
     </header>
 
+    {#if translation?.srcdoc}
+      <!-- Перевод — тоже внешнее содержимое: экранирован и очищен ядром, CSP та же, ссылок нет — sandbox пустой. -->
+      <iframe class="body" title={$t("Перевод письма")} sandbox="" referrerpolicy="no-referrer" srcdoc={translation.srcdoc}></iframe>
+    {:else}
     <!-- Без скриптов, форм и доступа к origin приложения. allow-popups нужен только чтобы клик по ссылке
          дошёл до ядра как запрос нового окна: ядро его всегда отклоняет и спрашивает подтверждение. -->
     <iframe class="body" title={$t("Содержимое письма")} sandbox="allow-popups" referrerpolicy="no-referrer" srcdoc={msg.srcdoc}></iframe>
+    {/if}
 
     {#if msg.attachments.length}
       <div class="attachments">

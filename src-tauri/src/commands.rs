@@ -484,14 +484,6 @@ pub async fn trash_message(app: tauri::AppHandle, store: State<'_, Store>, imap:
     Ok(())
 }
 
-#[tauri::command]
-pub fn message_translation_text(store: State<'_, Store>, id: u32) -> Result<String, String> {
-    let message = store.details(id).ok_or("письмо пропало")?;
-    let html = message.html.ok_or("Сначала откройте письмо")?;
-    let clean = sanitize::clean_html(&html, false);
-    Ok(mail_parser::decoders::html::html_to_text(&clean.html))
-}
-
 /// «Отметить все прочитанными» для папки (в том числе «Важные» и «Все ящики»):
 /// на сервер — по папкам, локально — только то, что сервер подтвердил.
 #[tauri::command]

@@ -59,6 +59,8 @@ struct Click {
     event: gdk::Event,
     /// Разрешённые действия правки WebKit для этого места.
     edit: Vec<(String, gio::Action)>,
+    /// Есть выделенный текст (WebKit предлагает «Копировать») — можно перевести.
+    has_selection: bool,
     view: webkit2gtk::WebView,
     at: Instant,
 }
@@ -93,12 +95,13 @@ fn label(action: ContextMenuAction) -> Option<&'static str> {
 
 pub fn install(view: &webkit2gtk::WebView, app: AppHandle, window_label: String) {
     view.connect_context_menu(move |view, menu, event, _| {
-        let edit: Vec<(String, gio::Action)> = menu
-            .items()
+        let items = menu.items();
+        let has_selection = items.iter().any(|item| item.stock_action() == ContextMenuAction::Copy);
+        let edit: Vec<(String, gio::Action)> = items
             .into_iter()
             .filter_map(|item| Some((crate::i18n::text(&app, label(item.stock_action())?), item.gaction()?)))
             .collect();
-        let click = Click { event: event.clone(), edit, view: view.clone(), at: Instant::now() };
+        let click = Click { event: event.clone(), edit, has_selection, view: view.clone(), at: Instant::now() };
         PENDING.with(|p| p.borrow_mut().entry(window_label.clone()).or_default().click = Some(click));
         let (app, label) = (app.clone(), window_label.clone());
         if !try_show(&app, &label) {
@@ -191,6 +194,14 @@ fn popup(app: &AppHandle, window_label: &str, click: Click, page: Option<PageMen
                 entry.set_sensitive(action.is_enabled());
                 let action = action.clone();
                 entry.connect_activate(move |_| action.activate(None));
+                menu.append(&entry);
+            }
+            // Окно перевода выделенного есть только в главном окне (письма читают там).
+            if click.has_selection && window_label == "main" {
+                menu.append(&gtk::SeparatorMenuItem::new());
+                let entry = gtk::MenuItem::with_label(&crate::i18n::text(app, "Перевести выделенное"));
+                let (app, label) = (app.clone(), window_label.to_string());
+                entry.connect_activate(move |_| crate::translation::selected_text(app.clone(), label.clone()));
                 menu.append(&entry);
             }
         }

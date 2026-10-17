@@ -54,7 +54,7 @@ fn main() {
             commands::mark_folder_read,
             commands::set_message_flags,
             commands::trash_message,
-            commands::message_translation_text,
+            translation::translate_message,
             translation::translate_text,
             links::open_link,
             imap::sync_status,
