@@ -19,8 +19,8 @@ export const openLink = (id) => invoke('open_link', { id });
 
 export const getAppearance = () => invoke('get_appearance');
 
-export const setAppearance = (theme, opacity, middleClickMinimize, zoom, pollSeconds) =>
-  invoke('set_appearance', { theme, opacity, middleClickMinimize, zoom, pollSeconds });
+// a: { theme, opacity, middleClickMinimize, zoom, pollSeconds, trayMode, closeToTray }
+export const setAppearance = (a) => invoke('set_appearance', a);
 
 export const setZoom = (scale) => invoke('set_zoom', { scale });
 

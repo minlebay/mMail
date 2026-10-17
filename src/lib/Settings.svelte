@@ -15,6 +15,13 @@
   let middleClickMinimize = $state(initial.middleClickMinimize);
   let zoom = $state(initial.zoom);
   let pollSeconds = $state(initial.pollSeconds);
+  let trayMode = $state(initial.trayMode);
+  let closeToTray = $state(initial.closeToTray);
+  const TRAY = [
+    ['panelTray', 'В панели задач и в трее'],
+    ['tray', 'Только в трее'],
+    ['panel', 'Только в панели задач'],
+  ];
   const POLL = [
     [5, 'каждые 5 секунд'],
     [10, 'каждые 10 секунд'],
@@ -31,7 +38,12 @@
     appearance.middleClickMinimize = middleClickMinimize;
     appearance.zoom = zoom;
     appearance.pollSeconds = pollSeconds;
-    const t = setTimeout(() => setAppearance(theme, opacity, middleClickMinimize, zoom, pollSeconds), 300);
+    appearance.trayMode = trayMode;
+    appearance.closeToTray = closeToTray;
+    const t = setTimeout(
+      () => setAppearance({ theme, opacity, middleClickMinimize, zoom, pollSeconds, trayMode, closeToTray }),
+      300,
+    );
     return () => clearTimeout(t);
   });
 
@@ -131,6 +143,15 @@
         <label class="toggle">
           <input type="checkbox" bind:checked={middleClickMinimize} />
           Сворачивать окно средним кликом по заголовку
+        </label>
+
+        <h3>Значок приложения</h3>
+        <div class="poll">
+          <Select bind:value={trayMode} label="Где показывать значок" options={TRAY.map(([value, label]) => ({ value, label }))} />
+        </div>
+        <label class="toggle" class:disabled={trayMode === 'panel'}>
+          <input type="checkbox" bind:checked={closeToTray} disabled={trayMode === 'panel'} />
+          Крестик прячет окно в трей (выход — из меню значка)
         </label>
       </section>
     {:else}
@@ -317,6 +338,10 @@
     gap: 10px;
     cursor: pointer;
   }
+  .toggle.disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
   .toggle input {
     width: 16px;
     height: 16px;
@@ -325,7 +350,7 @@
 
   .poll {
     display: flex;
-    width: 240px;
+    width: 280px;
   }
 
   .accounts {

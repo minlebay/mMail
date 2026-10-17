@@ -23,6 +23,11 @@ pub struct Config {
     pub poll_seconds: Option<u64>,
     /// Средний клик по заголовку сворачивает окно; `None` — включено.
     pub middle_click_minimize: Option<bool>,
+    /// Где виден значок: `panelTray` (панель и трей), `tray` (только трей), `panel` (только панель);
+    /// `None` — панель и трей.
+    pub tray_mode: Option<String>,
+    /// Крестик прячет окно в трей, а не закрывает приложение; `None` — прячет.
+    pub close_to_tray: Option<bool>,
     /// Отправители, у которых внешнее содержимое показывается сразу (адреса в нижнем регистре).
     pub trusted_senders: BTreeSet<String>,
 }
@@ -34,7 +39,41 @@ pub struct ConfigStore {
 
 pub const POLL_CHOICES: [u64; 5] = [5, 10, 30, 60, 300];
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum TrayMode {
+    PanelTray,
+    Tray,
+    Panel,
+}
+
+impl TrayMode {
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "panelTray" => Self::PanelTray,
+            "tray" => Self::Tray,
+            "panel" => Self::Panel,
+            _ => return None,
+        })
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::PanelTray => "panelTray",
+            Self::Tray => "tray",
+            Self::Panel => "panel",
+        }
+    }
+
+    pub fn tray(self) -> bool {
+        self != Self::Panel
+    }
+}
+
 impl Config {
+    pub fn tray_mode(&self) -> TrayMode {
+        self.tray_mode.as_deref().and_then(TrayMode::parse).unwrap_or(TrayMode::PanelTray)
+    }
+
     pub fn poll_seconds(&self) -> u64 {
         self.poll_seconds.filter(|s| POLL_CHOICES.contains(s)).unwrap_or(10)
     }

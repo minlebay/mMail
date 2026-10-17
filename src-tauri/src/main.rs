@@ -12,6 +12,7 @@ mod remote;
 mod sanitize;
 mod smtp;
 mod store;
+mod tray;
 
 use tauri::webview::NewWindowResponse;
 use tauri::window::Color;
@@ -26,6 +27,7 @@ fn main() {
         .manage(imap::Imap::default())
         .manage(links::PendingLink::default())
         .manage(compose::ComposeState::default())
+        .manage(tray::TrayState::default())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             commands::list_folders,
@@ -65,6 +67,21 @@ fn main() {
                 })
                 .build()?;
             finish_window(app.handle(), &window)?;
+            // Крестик в режиме трея прячет окно; само приложение закрывается пунктом «Выйти».
+            let handle = app.handle().clone();
+            window.on_window_event(move |event| {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    if tray::hides_on_close(&handle) {
+                        api.prevent_close();
+                        if let Some(main) = handle.get_webview_window("main") {
+                            let _ = main.hide();
+                        }
+                    }
+                }
+            });
+            if let Err(e) = tray::init(app.handle()) {
+                eprintln!("mMail: трей недоступен: {e}");
+            }
             tauri::async_runtime::spawn(imap::start(app.handle().clone()));
             Ok(())
         })

@@ -201,6 +201,8 @@ pub struct Appearance {
     middle_click_minimize: bool,
     zoom: f64,
     poll_seconds: u64,
+    tray_mode: &'static str,
+    close_to_tray: bool,
 }
 
 pub const ZOOM_MIN: f64 = 0.5;
@@ -210,12 +212,15 @@ pub const ZOOM_MAX: f64 = 2.0;
 pub fn get_appearance(config: State<'_, ConfigStore>) -> Appearance {
     let c = config.get();
     let poll_seconds = c.poll_seconds();
+    let tray_mode = c.tray_mode().as_str();
     Appearance {
         theme: c.theme,
         opacity: c.opacity,
         middle_click_minimize: c.middle_click_minimize.unwrap_or(true),
         zoom: c.zoom.unwrap_or(1.0),
         poll_seconds,
+        tray_mode,
+        close_to_tray: c.close_to_tray.unwrap_or(true),
     }
 }
 
@@ -228,10 +233,13 @@ pub fn set_appearance(
     middle_click_minimize: bool,
     zoom: f64,
     poll_seconds: u64,
+    tray_mode: String,
+    close_to_tray: bool,
 ) -> Result<(), String> {
     if !crate::config::POLL_CHOICES.contains(&poll_seconds) {
         return Err("недопустимый интервал проверки".into());
     }
+    let tray_mode = crate::config::TrayMode::parse(&tray_mode).ok_or("неизвестный режим значка")?;
     if theme.len() > 32 || !theme.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
         return Err("некорректная тема".into());
     }
@@ -241,7 +249,15 @@ pub fn set_appearance(
         c.middle_click_minimize = Some(middle_click_minimize);
         c.zoom = Some(zoom.clamp(ZOOM_MIN, ZOOM_MAX));
         c.poll_seconds = Some(poll_seconds);
+        c.tray_mode = Some(tray_mode.as_str().into());
+        c.close_to_tray = Some(close_to_tray);
     })?;
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Err(e) = crate::tray::apply(&handle) {
+            eprintln!("mMail: трей: {e}");
+        }
+    });
     // Окна писем подхватывают тему сразу, без переоткрытия.
     let _ = tauri::Emitter::emit(&app, "appearance-changed", get_appearance(config));
     Ok(())
