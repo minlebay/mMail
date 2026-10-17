@@ -94,10 +94,11 @@
     padding: 6px;
     border: 1px solid var(--glass-border);
     border-radius: 12px;
-    /* Матовое стекло, как у окна: размываем то, что под меню внутри окна. */
-    background: var(--glass-menu);
-    -webkit-backdrop-filter: blur(22px) saturate(1.5);
-    backdrop-filter: blur(22px) saturate(1.5);
+    /* WebKitGTK (2.52) не рисует backdrop-filter, поэтому «матовость» — плотным фоном
+       с мягким бликом: содержимое под меню не просвечивает. */
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02)),
+      var(--glass-menu);
     box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.08);
   }
   button {

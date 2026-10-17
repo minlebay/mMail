@@ -147,9 +147,9 @@
     padding: 4px;
     list-style: none;
     border-radius: 10px;
-    background: var(--glass-menu);
-    -webkit-backdrop-filter: blur(22px) saturate(1.5);
-    backdrop-filter: blur(22px) saturate(1.5);
+    background:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.02)),
+      var(--glass-menu);
     border: 1px solid var(--glass-border);
     box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.08);
   }
