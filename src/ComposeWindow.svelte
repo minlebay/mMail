@@ -44,6 +44,7 @@
     const syncMaximized = () => win.isMaximized().then((m) => (maximized = m));
     syncMaximized();
     window.addEventListener('resize', syncMaximized);
+    document.addEventListener('selectionchange', rememberSelection);
 
     composeInit()
       .then((data) => {
@@ -62,6 +63,7 @@
     return () => {
       stop.then((f) => f());
       window.removeEventListener('resize', syncMaximized);
+      document.removeEventListener('selectionchange', rememberSelection);
     };
   });
 
@@ -142,9 +144,17 @@
     document.execCommand(command, false, value);
   }
 
-  function openLink() {
+  // Последнее положение курсора/выделения в теле письма: поле адреса ссылки забирает фокус,
+  // а сам редактор при focus() ставит курсор в начало.
+  function rememberSelection() {
     const sel = window.getSelection();
-    savedRange = sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
+    if (sel.rangeCount && editor?.contains(sel.getRangeAt(0).commonAncestorContainer)) {
+      savedRange = sel.getRangeAt(0).cloneRange();
+    }
+  }
+
+  function openLink() {
+    rememberSelection();
     linkUrl = 'https://';
     linkOpen = true;
   }
@@ -153,11 +163,26 @@
     e.preventDefault();
     const url = linkUrl.trim();
     linkOpen = false;
-    if (!/^(https?:\/\/|mailto:)\S+$/i.test(url) || !savedRange) return;
+    if (!/^(https?:\/\/|mailto:)\S+$/i.test(url)) return;
+    editor.focus();
     const sel = window.getSelection();
     sel.removeAllRanges();
-    sel.addRange(savedRange);
-    format('createLink', url);
+    if (savedRange && editor.contains(savedRange.commonAncestorContainer)) {
+      sel.addRange(savedRange);
+    } else {
+      // Курсор в тело ещё не ставили — ссылка в конец письма.
+      const end = document.createRange();
+      end.selectNodeContents(editor);
+      end.collapse(false);
+      sel.addRange(end);
+    }
+    if (sel.isCollapsed) {
+      // Без выделения — вставляем сам адрес ссылкой там, где курсор.
+      document.execCommand('insertHTML', false, `<a href="${escapeHtml(url)}">${escapeHtml(url)}</a>`);
+    } else {
+      document.execCommand('createLink', false, url);
+    }
+    touched = true;
   }
 
   async function attach() {
