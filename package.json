@@ -1,0 +1,21 @@
+{
+  "name": "mmail",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "tauri": "tauri",
+    "app": "scripts/clean-env.sh tauri dev"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.12.4"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "5.1.1",
+    "@tauri-apps/cli": "2.12.3",
+    "svelte": "5.57.2",
+    "vite": "6.4.4"
+  }
+}
