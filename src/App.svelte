@@ -1,4 +1,6 @@
 <script>
+  import ContextMenu from './lib/ContextMenu.svelte';
+  import { t } from './lib/i18n.js';
   import TitleBar from './lib/TitleBar.svelte';
   import Sidebar from './lib/Sidebar.svelte';
   import MessageList from './lib/MessageList.svelte';
@@ -114,13 +116,13 @@
 
   function openCompose(prefill = {}) {
     const current = active.account || null;
-    openComposeWindow({ kind: 'new', from: current, ...prefill });
+    return openComposeWindow({ kind: 'new', from: current, ...prefill });
   }
 
   function replyTo(msg, kind) {
     const prefix = kind === 'reply' ? 'Re: ' : 'Fwd: ';
     const subject = /^(re|fwd?):/i.test(msg.subject) ? msg.subject : prefix + msg.subject;
-    openCompose({ kind, from: msg.account, to: kind === 'reply' ? msg.fromAddr : '', subject, source: msg.id });
+    return openCompose({ kind, from: msg.account, to: kind === 'reply' ? msg.fromAddr : '', subject, source: msg.id });
   }
 
   function showToast(text) {
@@ -146,15 +148,16 @@
   />
 
   <main class="layout" style:grid-template-columns="minmax(150px, {sizes.sidebar}px) 12px minmax(220px, {sizes.list}px) 12px minmax(280px, 1fr)">
-    <Sidebar {groups} {active} onpick={pickFolder} oncompose={() => openCompose()} />
+    <Sidebar {groups} {active} onpick={pickFolder} oncompose={(from) => openCompose(from ? { from } : {})} onrefresh={() => { version++; refreshFolders(); }} />
     <Splitter value={sizes.sidebar} min={150} max={380} initial={SIZES.sidebar} onchange={(px) => resize('sidebar', px)} />
-    <MessageList account={active.account} folder={active.folder} {version} {selectedId} onselect={(id) => (selectedId = id)} />
+    <MessageList onreply={replyTo} account={active.account} folder={active.folder} {version} {selectedId} onselect={(id) => (selectedId = id)} />
     <Splitter value={sizes.list} min={220} max={640} initial={SIZES.list} onchange={(px) => resize('list', px)} />
     <Reader id={selectedId} onreply={replyTo} />
   </main>
 
+  <ContextMenu onerror={showToast} />
   <LinkDialog />
-  {#if toast}<div class="toast">{toast}</div>{/if}
+  {#if toast}<div class="toast">{$t(toast)}</div>{/if}
 </div>
 
 <style>

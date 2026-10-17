@@ -72,7 +72,7 @@ impl ComposeState {
 #[tauri::command]
 pub fn open_compose(app: AppHandle, state: State<'_, ComposeState>, prefill: Prefill) -> Result<(), String> {
     let label = format!("compose-{}", state.next_window.fetch_add(1, Ordering::Relaxed));
-    let title = if prefill.subject.is_empty() { "Новое письмо".to_string() } else { prefill.subject.clone() };
+    let title = if prefill.subject.is_empty() { crate::i18n::text(&app, "Новое письмо") } else { prefill.subject.clone() };
     state.prefills.lock().unwrap().insert(label.clone(), prefill);
 
     let window = crate::glass_window(&app, &label, &title)
@@ -142,7 +142,7 @@ pub async fn compose_init(
 /// Системный диалог выбора файлов открывает ядро; в UI уходят только id, имя и размер.
 #[tauri::command]
 pub async fn pick_attachments(app: AppHandle, state: State<'_, ComposeState>) -> Result<Vec<AttachmentInfo>, String> {
-    let Some(picked) = app.dialog().file().set_title("Прикрепить файлы").blocking_pick_files() else {
+    let Some(picked) = app.dialog().file().set_title(crate::i18n::text(&app, "Прикрепить файлы")).blocking_pick_files() else {
         return Ok(Vec::new());
     };
     let mut infos = Vec::new();

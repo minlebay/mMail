@@ -23,6 +23,7 @@ const MONO_DARK: (&[u8], &[u8]) =
 #[derive(Default)]
 pub struct TrayState {
     unread_item: Mutex<Option<MenuItem<Wry>>>,
+    localized_items: Mutex<Vec<(MenuItem<Wry>, &'static str)>>,
     /// Что сейчас показано: число непрочитанных и картинка; `None` — ещё ничего.
     shown: Mutex<Option<(usize, usize)>>,
 }
@@ -49,6 +50,11 @@ pub fn apply(app: &AppHandle) -> tauri::Result<()> {
         // Без трея скрытое окно было бы не вернуть.
         show_main(app);
     }
+    let state = app.state::<TrayState>();
+    for (item, key) in state.localized_items.lock().unwrap().iter() {
+        item.set_text(crate::i18n::text(app, key))?;
+    }
+    *state.shown.lock().unwrap() = None;
     update_unread(app);
     if let Some(window) = app.get_webview_window("main") {
         crate::blur::set_skip_taskbar(&window, mode == TrayMode::Tray);
@@ -63,17 +69,19 @@ pub fn hides_on_close(app: &AppHandle) -> bool {
 }
 
 fn create(app: &AppHandle) -> tauri::Result<()> {
-    let unread = MenuItem::with_id(app, "unread", "Нет непрочитанных", false, None::<&str>)?;
+    let unread = MenuItem::with_id(app, "unread", crate::i18n::text(app, "Нет непрочитанных"), false, None::<&str>)?;
+    let labels = [("show", "Открыть mMail"), ("compose", "Написать письмо"), ("settings", "Настройки"), ("quit", "Выйти")];
+    let items = labels.iter().map(|(id, key)| MenuItem::with_id(app, *id, crate::i18n::text(app, key), true, None::<&str>)).collect::<tauri::Result<Vec<_>>>()?;
     let menu = Menu::with_items(
         app,
         &[
             &unread,
             &PredefinedMenuItem::separator(app)?,
-            &MenuItem::with_id(app, "show", "Открыть mMail", true, None::<&str>)?,
-            &MenuItem::with_id(app, "compose", "Написать письмо", true, None::<&str>)?,
-            &MenuItem::with_id(app, "settings", "Настройки", true, None::<&str>)?,
+            &items[0],
+            &items[1],
+            &items[2],
             &PredefinedMenuItem::separator(app)?,
-            &MenuItem::with_id(app, "quit", "Выйти", true, None::<&str>)?,
+            &items[3],
         ],
     )?;
     TrayIconBuilder::with_id(TRAY_ID)
@@ -98,6 +106,7 @@ fn create(app: &AppHandle) -> tauri::Result<()> {
         })
         .build(app)?;
     *app.state::<TrayState>().unread_item.lock().unwrap() = Some(unread);
+    *app.state::<TrayState>().localized_items.lock().unwrap() = items.into_iter().zip(labels.iter().map(|(_, key)| *key)).collect();
     Ok(())
 }
 
@@ -131,7 +140,7 @@ fn update_unread(app: &AppHandle) {
     }
     let item = state.unread_item.lock().unwrap().clone();
     if let Some(item) = item {
-        let _ = item.set_text(if count > 0 { format!("Непрочитанных: {count}") } else { "Нет непрочитанных".into() });
+        let _ = item.set_text(if count > 0 { format!("{} {count}", crate::i18n::text(app, "Непрочитанных:")) } else { crate::i18n::text(app, "Нет непрочитанных") });
     }
 }
 

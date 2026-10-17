@@ -1,4 +1,5 @@
 <script>
+  import { t } from './lib/i18n.js';
   import { onMount } from 'svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { listen } from '@tauri-apps/api/event';
@@ -60,7 +61,7 @@
   });
 
   $effect(() => {
-    win.setTitle(subject.trim() || 'Новое письмо');
+    win.setTitle(subject.trim() || $t("Новое письмо"));
   });
 
   const escapeHtml = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
@@ -158,7 +159,7 @@
   }
 
   const size = (bytes) =>
-    bytes < 1024 ? `${bytes} Б` : bytes < 1048576 ? `${(bytes / 1024).toFixed(0)} КБ` : `${(bytes / 1048576).toFixed(1)} МБ`;
+    bytes < 1024 ? `${bytes} ${$t("Б")}` : bytes < 1048576 ? `${(bytes / 1024).toFixed(0)} ${$t("КБ")}` : `${(bytes / 1048576).toFixed(1)} ${$t("МБ")}`;
   const totalSize = $derived(attachments.reduce((sum, a) => sum + a.size, 0));
 
   async function send() {
@@ -205,27 +206,27 @@
 <svelte:window {onkeydown} />
 
 <div class="window" class:maximized>
-  <TitleBar title={subject.trim() || 'Новое письмо'} {middleClickMinimize} onclose={close} />
+  <TitleBar title={subject.trim() || $t("Новое письмо")} {middleClickMinimize} onclose={close} />
 
   <main class="panel compose">
     <div class="fields">
       <div class="row">
-        <span>От</span>
-        <Select bind:value={from} label="Отправитель" options={(init?.accounts ?? []).map((a) => ({ value: a, label: a }))} />
+        <span>{$t("От")}</span>
+        <Select bind:value={from} label={$t("Отправитель")} options={(init?.accounts ?? []).map((a) => ({ value: a, label: a }))} />
       </div>
       <label>
-        <span>Кому</span>
-        <input bind:value={to} placeholder="адрес@пример.ру, ещё@пример.ру" spellcheck="false" />
-        {#if !showCc}<button class="link" onclick={() => (showCc = true)}>Копия</button>{/if}
+        <span>{$t("Кому")}</span>
+        <input bind:value={to} placeholder={$t("адрес@пример.ру, ещё@пример.ру")} spellcheck="false" />
+        {#if !showCc}<button class="link" onclick={() => (showCc = true)}>{$t("Копия")}</button>{/if}
       </label>
       {#if showCc}
         <label>
-          <span>Копия</span>
+          <span>{$t("Копия")}</span>
           <input bind:value={cc} spellcheck="false" />
         </label>
       {/if}
       <label>
-        <span>Тема</span>
+        <span>{$t("Тема")}</span>
         <input bind:value={subject} oninput={() => (touched = true)} />
       </label>
     </div>
@@ -233,16 +234,16 @@
     <div class="toolbar">
       {#if mode === 'html'}
         <!-- mousedown preventDefault: кнопки не забирают выделение у редактора -->
-        <button title="Жирный (Ctrl+B)" onmousedown={(e) => e.preventDefault()} onclick={() => format('bold')}><b>Ж</b></button>
-        <button title="Курсив (Ctrl+I)" onmousedown={(e) => e.preventDefault()} onclick={() => format('italic')}><i>К</i></button>
-        <button title="Подчёркнутый (Ctrl+U)" onmousedown={(e) => e.preventDefault()} onclick={() => format('underline')}><u>Ч</u></button>
-        <button title="Зачёркнутый" onmousedown={(e) => e.preventDefault()} onclick={() => format('strikeThrough')}><s>З</s></button>
+        <button title={$t("Жирный (Ctrl+B)")} onmousedown={(e) => e.preventDefault()} onclick={() => format('bold')}><b>{$t("Ж")}</b></button>
+        <button title={$t("Курсив (Ctrl+I)")} onmousedown={(e) => e.preventDefault()} onclick={() => format('italic')}><i>{$t("К")}</i></button>
+        <button title={$t("Подчёркнутый (Ctrl+U)")} onmousedown={(e) => e.preventDefault()} onclick={() => format('underline')}><u>{$t("Ч")}</u></button>
+        <button title={$t("Зачёркнутый")} onmousedown={(e) => e.preventDefault()} onclick={() => format('strikeThrough')}><s>{$t("З")}</s></button>
         <span class="sep"></span>
-        <button title="Маркированный список" onmousedown={(e) => e.preventDefault()} onclick={() => format('insertUnorderedList')}>•≡</button>
-        <button title="Нумерованный список" onmousedown={(e) => e.preventDefault()} onclick={() => format('insertOrderedList')}>1≡</button>
-        <button title="Цитата" onmousedown={(e) => e.preventDefault()} onclick={() => format('formatBlock', 'blockquote')}>❝</button>
-        <button title="Ссылка" onmousedown={(e) => e.preventDefault()} onclick={openLink}>🔗</button>
-        <button title="Убрать форматирование" onmousedown={(e) => e.preventDefault()} onclick={() => format('removeFormat')}>⌫</button>
+        <button title={$t("Маркированный список")} onmousedown={(e) => e.preventDefault()} onclick={() => format('insertUnorderedList')}>•≡</button>
+        <button title={$t("Нумерованный список")} onmousedown={(e) => e.preventDefault()} onclick={() => format('insertOrderedList')}>1≡</button>
+        <button title={$t("Цитата")} onmousedown={(e) => e.preventDefault()} onclick={() => format('formatBlock', 'blockquote')}>❝</button>
+        <button title={$t("Ссылка")} onmousedown={(e) => e.preventDefault()} onclick={openLink}>🔗</button>
+        <button title={$t("Убрать форматирование")} onmousedown={(e) => e.preventDefault()} onclick={() => format('removeFormat')}>⌫</button>
         {#if linkOpen}
           <form class="linkform" onsubmit={applyLink}>
             <!-- svelte-ignore a11y_autofocus -->
@@ -253,7 +254,7 @@
       {/if}
       <div class="modes">
         <button class:active={mode === 'html'} onclick={() => switchMode('html')}>HTML</button>
-        <button class:active={mode === 'text'} onclick={() => switchMode('text')}>Текст</button>
+        <button class:active={mode === 'text'} onclick={() => switchMode('text')}>{$t("Текст")}</button>
       </div>
     </div>
 
@@ -269,7 +270,7 @@
       oninput={() => (touched = true)}
     ></div>
     {#if mode === 'text'}
-      <textarea class="editor" bind:value={text} oninput={() => (touched = true)} placeholder="Текст письма"></textarea>
+      <textarea class="editor" bind:value={text} oninput={() => (touched = true)} placeholder={$t("Текст письма")}></textarea>
     {/if}
 
     {#if attachments.length}
@@ -279,26 +280,26 @@
             <Icon name="file" size={14} />
             <span class="fname">{a.name}</span>
             <span class="fsize">{size(a.size)}</span>
-            <button aria-label="Убрать" onclick={() => (attachments = attachments.filter((x) => x.id !== a.id))}>×</button>
+            <button aria-label={$t("Убрать")} onclick={() => (attachments = attachments.filter((x) => x.id !== a.id))}>×</button>
           </span>
         {/each}
       </div>
     {/if}
 
-    {#if error}<div class="error">{error}</div>{/if}
+    {#if error}<div class="error">{$t(error)}</div>{/if}
 
     <footer>
       {#if confirmDiscard}
-        <span class="muted">Удалить черновик?</span>
-        <button class="secondary" onclick={() => win.close()}>Удалить</button>
-        <button class="secondary" onclick={() => (confirmDiscard = false)}>Продолжить писать</button>
+        <span class="muted">{$t("Удалить черновик?")}</span>
+        <button class="secondary" onclick={() => win.close()}>{$t("Удалить")}</button>
+        <button class="secondary" onclick={() => (confirmDiscard = false)}>{$t("Продолжить писать")}</button>
       {:else}
-        <button class="secondary" onclick={attach}>📎 Прикрепить</button>
+        <button class="secondary" onclick={attach}>{$t("📎 Прикрепить")}</button>
         <span class="muted">
-          {#if attachments.length}{size(totalSize)} из 25 МБ ·{/if} Ctrl+Enter — отправить
+          {#if attachments.length}{size(totalSize)} {$t("из 25 МБ ·")}{/if} {$t("Ctrl+Enter — отправить")}
         </span>
         <button class="primary" disabled={sending || !init?.accounts.length} onclick={send}>
-          {sending ? 'Отправка…' : 'Отправить'}
+          {sending ? $t("Отправка…") : $t("Отправить")}
         </button>
       {/if}
     </footer>

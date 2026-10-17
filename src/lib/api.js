@@ -19,7 +19,7 @@ export const openLink = (id) => invoke('open_link', { id });
 
 export const getAppearance = () => invoke('get_appearance');
 
-// a: { theme, opacity, middleClickMinimize, zoom, pollSeconds, trayMode, trayIcon, closeToTray }
+// a: { language, theme, opacity, middleClickMinimize, zoom, pollSeconds, trayMode, trayIcon, closeToTray }
 export const setAppearance = (a) => invoke('set_appearance', a);
 
 // Шифрованный кэш писем: { bytes, bodyDays } (bodyDays null — хранить всё).
@@ -48,3 +48,10 @@ export const pickAttachments = () => invoke('pick_attachments');
 
 // Путь выбирается в системном диалоге ядра; возвращает false, если сохранение отменили.
 export const saveAttachment = (id, index) => invoke('save_attachment', { id, index });
+
+export const writeClipboard = (text) => invoke('write_clipboard', { text });
+
+export const markMessageRead = (id) => invoke('mark_message_read', { id });
+export const trashMessage = (id) => invoke('trash_message', { id });
+export const messageTranslationText = (id) => invoke('message_translation_text', { id });
+export const translateText = (text) => invoke('translate_text', { text });

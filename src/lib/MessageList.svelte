@@ -1,10 +1,12 @@
 <script>
+  import { t } from './i18n.js';
   import { untrack } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import Icon from './Icon.svelte';
-  import { listMessages } from './api.js';
+  import { showContextMenu } from './contextMenu.js';
+  import { listMessages, writeClipboard } from './api.js';
 
-  let { account, folder, version, selectedId, onselect } = $props();
+  let { account, folder, version, selectedId, onselect, onreply } = $props();
 
   // Виртуальный список: в DOM только видимые строки, данные подгружаются страницами из ядра.
   const ROW = 64;
@@ -111,7 +113,24 @@
     onselect(item.id);
   }
 
+  function menu(event, item) {
+    if (!item) return;
+    showContextMenu(event, [
+      { label: 'Открыть письмо', run: () => onselect(item.id) },
+      { label: 'Ответить', run: () => onreply(item, 'reply') },
+      { label: 'Переслать', run: () => onreply(item, 'forward') },
+      { separator: true },
+      { label: 'Копировать адрес отправителя', run: () => writeClipboard(item.fromAddr) },
+      { label: 'Копировать тему', run: () => writeClipboard(item.subject) },
+    ]);
+  }
+
   function onkey(e) {
+    if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
+      const item = itemAt(selIndex);
+      if (item) menu(e, item);
+      return;
+    }
     const step = e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0;
     if (!step) return;
     e.preventDefault();
@@ -128,13 +147,13 @@
 <section class="panel list">
   <label class="search">
     <Icon name="search" size={15} />
-    <input placeholder="Поиск" bind:value={query} spellcheck="false" />
+    <input placeholder={$t("Поиск")} bind:value={query} spellcheck="false" />
   </label>
 
   <div
     class="viewport scroll-gutter"
     role="listbox"
-    aria-label="Письма"
+    aria-label={$t("Письма")}
     tabindex="0"
     bind:this={viewport}
     bind:clientHeight={height}
@@ -154,6 +173,7 @@
           class:unread={item?.unread}
           style:transform="translateY({i * ROW}px)"
           onclick={() => item && pick(i, item)}
+          oncontextmenu={(event) => menu(event, item)}
         >
           {#if item}
             <div class="line">
@@ -163,7 +183,7 @@
             </div>
             <div class="line">
               <span class="subject">{item.subject}</span>
-              {#if item.hasAttachments}<span class="clip" title="Есть вложения"><Icon name="paperclip" size={13} /></span>{/if}
+              {#if item.hasAttachments}<span class="clip" title={$t("Есть вложения")}><Icon name="paperclip" size={13} /></span>{/if}
             </div>
           {:else}
             <div class="skeleton"></div>
@@ -172,7 +192,7 @@
         </div>
       {/each}
     </div>
-    {#if loaded && total === 0}<p class="empty">Писем нет</p>{/if}
+    {#if loaded && total === 0}<p class="empty">{$t("Писем нет")}</p>{/if}
   </div>
 </section>
 
@@ -180,7 +200,7 @@
   .list {
     display: flex;
     flex-direction: column;
-    padding: 10px;
+    padding: var(--panel-inset);
     gap: 10px;
   }
 
@@ -206,7 +226,6 @@
   }
 
   .viewport {
-    --gutter: 10px;
     flex: 1;
     min-height: 0;
     outline: none;

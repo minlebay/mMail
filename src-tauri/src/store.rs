@@ -63,6 +63,9 @@ struct Entry {
 #[serde(rename_all = "camelCase")]
 pub struct Summary {
     id: u32,
+    in_trash: bool,
+    account: Option<String>,
+    from_addr: String,
     from_name: String,
     subject: String,
     date: String,
@@ -181,6 +184,20 @@ impl Store {
         self.persist(|db| db.reset_folder(account, folder, validity));
     }
 
+    /// Apply only after the server confirmed MOVE. Demo messages move locally.
+    pub fn trashed(&self, id: u32) {
+        let mut entries = self.entries.write().unwrap();
+        let Some(index) = entries.iter().position(|e| e.id == id) else { return };
+        if entries[index].msg.account.is_none() {
+            entries[index].msg.folder = Folder::Trash;
+            return;
+        }
+        let entry = entries.remove(index);
+        if let (Some(account), Some(uid)) = (entry.msg.account.as_deref(), entry.msg.uid) {
+            self.persist(|db| db.delete(account, entry.msg.folder, &[uid]));
+        }
+    }
+
     /// Убирает письма папки, которых больше нет на сервере. Возвращает, было ли что убирать.
     pub fn retain_on_server(&self, account: &str, folder: Folder, on_server: &HashSet<u32>) -> bool {
         let mut gone = Vec::new();
@@ -220,6 +237,9 @@ impl Store {
             if total >= offset && items.len() < limit {
                 items.push(Summary {
                     id: e.id,
+                    in_trash: e.msg.folder == Folder::Trash,
+                    account: e.msg.account.clone(),
+                    from_addr: e.msg.from_addr.clone(),
                     from_name: e.msg.from_name.clone(),
                     subject: e.msg.subject.clone(),
                     date: date_label(e.msg.timestamp),

@@ -1,0 +1,830 @@
+{
+  "Настройки": {
+    "en": "Settings",
+    "sr": "Podešavanja"
+  },
+  "Язык интерфейса": {
+    "en": "Interface language",
+    "sr": "Jezik interfejsa"
+  },
+  "Оформление": {
+    "en": "Appearance",
+    "sr": "Izgled"
+  },
+  "Почтовые ящики": {
+    "en": "Mail accounts",
+    "sr": "Nalozi e-pošte"
+  },
+  "Цветовая гамма": {
+    "en": "Color theme",
+    "sr": "Tema boja"
+  },
+  "Прозрачность окна": {
+    "en": "Window transparency",
+    "sr": "Prozirnost prozora"
+  },
+  "Больше стекла": {
+    "en": "More transparent",
+    "sr": "Prozirnije"
+  },
+  "Плотнее": {
+    "en": "More opaque",
+    "sr": "Neprozirnije"
+  },
+  "Масштаб по умолчанию": {
+    "en": "Default zoom",
+    "sr": "Podrazumevano uvećanje"
+  },
+  "Окно": {
+    "en": "Window",
+    "sr": "Prozor"
+  },
+  "Сворачивать окно средним кликом по заголовку": {
+    "en": "Minimize with a middle click on the title bar",
+    "sr": "Smanji prozor srednjim klikom na naslovnu traku"
+  },
+  "Значок приложения": {
+    "en": "Application icon",
+    "sr": "Ikona aplikacije"
+  },
+  "Где показывать": {
+    "en": "Show icon in",
+    "sr": "Prikaži ikonu u"
+  },
+  "Где показывать значок": {
+    "en": "Icon location",
+    "sr": "Mesto prikaza ikone"
+  },
+  "Вид в трее": {
+    "en": "Tray appearance",
+    "sr": "Izgled u sistemskoj traci"
+  },
+  "Вид значка в трее": {
+    "en": "Tray icon style",
+    "sr": "Stil ikone u sistemskoj traci"
+  },
+  "Крестик прячет окно в трей (выход — из меню значка)": {
+    "en": "Close hides the window in the tray (quit from the tray menu)",
+    "sr": "Zatvaranje skriva prozor u sistemsku traku (izlaz iz menija ikone)"
+  },
+  "Цветной": {
+    "en": "Color",
+    "sr": "U boji"
+  },
+  "Монохромный, по теме KDE": {
+    "en": "Monochrome, follow KDE theme",
+    "sr": "Jednobojna, prema KDE temi"
+  },
+  "Монохромный светлый (тёмная панель)": {
+    "en": "Light monochrome (dark panel)",
+    "sr": "Svetla jednobojna (tamni panel)"
+  },
+  "Монохромный тёмный (светлая панель)": {
+    "en": "Dark monochrome (light panel)",
+    "sr": "Tamna jednobojna (svetli panel)"
+  },
+  "В панели задач и в трее": {
+    "en": "Taskbar and system tray",
+    "sr": "Traka zadataka i sistemska traka"
+  },
+  "Только в трее": {
+    "en": "System tray only",
+    "sr": "Samo sistemska traka"
+  },
+  "Только в панели задач": {
+    "en": "Taskbar only",
+    "sr": "Samo traka zadataka"
+  },
+  "каждые 5 секунд": {
+    "en": "every 5 seconds",
+    "sr": "svakih 5 sekundi"
+  },
+  "каждые 10 секунд": {
+    "en": "every 10 seconds",
+    "sr": "svakih 10 sekundi"
+  },
+  "каждые 30 секунд": {
+    "en": "every 30 seconds",
+    "sr": "svakih 30 sekundi"
+  },
+  "каждую минуту": {
+    "en": "every minute",
+    "sr": "svakog minuta"
+  },
+  "каждые 5 минут": {
+    "en": "every 5 minutes",
+    "sr": "svakih 5 minuta"
+  },
+  "всех писем": {
+    "en": "all messages",
+    "sr": "svih poruka"
+  },
+  "писем за последний год": {
+    "en": "messages from the last year",
+    "sr": "poruka iz poslednje godine"
+  },
+  "писем за полгода": {
+    "en": "messages from the last 6 months",
+    "sr": "poruka iz poslednjih 6 meseci"
+  },
+  "писем за 3 месяца": {
+    "en": "messages from the last 3 months",
+    "sr": "poruka iz poslednja 3 meseca"
+  },
+  "писем за месяц": {
+    "en": "messages from the last month",
+    "sr": "poruka iz poslednjeg meseca"
+  },
+  "только открытых, до перезапуска": {
+    "en": "opened messages only, until restart",
+    "sr": "samo otvorenih poruka, do ponovnog pokretanja"
+  },
+  "Подключённые ящики": {
+    "en": "Connected accounts",
+    "sr": "Povezani nalozi"
+  },
+  "Пока нет ни одного ящика — показываются демо-данные.": {
+    "en": "No accounts yet — showing demo data.",
+    "sr": "Još nema naloga — prikazani su probni podaci."
+  },
+  "Удалить ящик и пароль из KWallet?": {
+    "en": "Remove the account and its password from KWallet?",
+    "sr": "Ukloniti nalog i lozinku iz KWallet-a?"
+  },
+  "Удалить": {
+    "en": "Remove",
+    "sr": "Ukloni"
+  },
+  "Отмена": {
+    "en": "Cancel",
+    "sr": "Otkaži"
+  },
+  "Хранилище на диске": {
+    "en": "Disk storage",
+    "sr": "Skladište na disku"
+  },
+  "Хранить содержимое": {
+    "en": "Keep message content",
+    "sr": "Čuvaj sadržaj poruka"
+  },
+  "Срок хранения содержимого писем": {
+    "en": "Message content retention",
+    "sr": "Period čuvanja sadržaja poruka"
+  },
+  "Очистка…": {
+    "en": "Cleaning…",
+    "sr": "Čišćenje…"
+  },
+  "Занято:": {
+    "en": "Used:",
+    "sr": "Zauzeto:"
+  },
+  ", зашифровано": {
+    "en": ", encrypted",
+    "sr": ", šifrovano"
+  },
+  "Очистить сейчас": {
+    "en": "Clear now",
+    "sr": "Očisti sada"
+  },
+  "Список писем хранится всегда. Содержимое более старых писем стирается с диска и снова скачивается с сервера, когда вы их открываете.": {
+    "en": "The message list is always kept. Older message content is removed from disk and downloaded again when you open it.",
+    "sr": "Lista poruka se uvek čuva. Sadržaj starijih poruka se briše sa diska i ponovo preuzima kada ih otvorite."
+  },
+  "Проверка новых писем": {
+    "en": "Check for new mail",
+    "sr": "Provera novih poruka"
+  },
+  "Интервал проверки": {
+    "en": "Check interval",
+    "sr": "Interval provere"
+  },
+  "Добавить ящик": {
+    "en": "Add account",
+    "sr": "Dodaj nalog"
+  },
+  "адрес@yandex.ru или @gmail.com": {
+    "en": "address@yandex.ru or @gmail.com",
+    "sr": "adresa@yandex.ru ili @gmail.com"
+  },
+  "Пароль приложения": {
+    "en": "App password",
+    "sr": "Lozinka aplikacije"
+  },
+  "Проверка входа…": {
+    "en": "Checking login…",
+    "sr": "Provera prijave…"
+  },
+  "Добавить": {
+    "en": "Add",
+    "sr": "Dodaj"
+  },
+  "Нужен пароль приложения, а не основной пароль. Яндекс: Яндекс ID → Безопасность → Пароли приложений (и включите IMAP в настройках почты). Gmail: аккаунт Google → Безопасность → Пароли приложений (нужна двухэтапная аутентификация). Пароль проверяется входом на сервер и хранится только в KWallet.": {
+    "en": "Use an app password, not your main password. Yandex: Yandex ID → Security → App passwords (also enable IMAP in mail settings). Gmail: Google Account → Security → App passwords (requires 2-Step Verification). The password is verified by signing in to the server and stored only in KWallet.",
+    "sr": "Koristite lozinku aplikacije, a ne glavnu lozinku. Yandex: Yandex ID → Bezbednost → Lozinke aplikacija (uključite i IMAP u podešavanjima pošte). Gmail: Google nalog → Bezbednost → Lozinke aplikacija (potrebna je verifikacija u dva koraka). Lozinka se proverava prijavom na server i čuva samo u KWallet-u."
+  },
+  "Аметист": {
+    "en": "Amethyst",
+    "sr": "Ametist"
+  },
+  "Океан": {
+    "en": "Ocean",
+    "sr": "Okean"
+  },
+  "Изумруд": {
+    "en": "Emerald",
+    "sr": "Smaragd"
+  },
+  "Закат": {
+    "en": "Sunset",
+    "sr": "Zalazak sunca"
+  },
+  "Роза": {
+    "en": "Rose",
+    "sr": "Ruža"
+  },
+  "Графит": {
+    "en": "Graphite",
+    "sr": "Grafit"
+  },
+  "Снова запросить ключ у KWallet": {
+    "en": "Request the key from KWallet again",
+    "sr": "Ponovo zatraži ključ od KWallet-a"
+  },
+  "Открыть хранилище": {
+    "en": "Unlock storage",
+    "sr": "Otključaj skladište"
+  },
+  "Масштаб (Ctrl +/−/0)": {
+    "en": "Zoom (Ctrl +/−/0)",
+    "sr": "Uvećanje (Ctrl +/−/0)"
+  },
+  "Уменьшить": {
+    "en": "Zoom out",
+    "sr": "Umanji"
+  },
+  "Увеличить": {
+    "en": "Zoom in",
+    "sr": "Uvećaj"
+  },
+  "Масштаб": {
+    "en": "Zoom",
+    "sr": "Uvećanje"
+  },
+  "Свернуть": {
+    "en": "Minimize",
+    "sr": "Smanji"
+  },
+  "Развернуть": {
+    "en": "Maximize",
+    "sr": "Uvećaj prozor"
+  },
+  "Закрыть": {
+    "en": "Close",
+    "sr": "Zatvori"
+  },
+  "Написать": {
+    "en": "Compose",
+    "sr": "Nova poruka"
+  },
+  "Все ящики": {
+    "en": "All accounts",
+    "sr": "Svi nalozi"
+  },
+  "Демо-ящик": {
+    "en": "Demo account",
+    "sr": "Probni nalog"
+  },
+  "Входящие": {
+    "en": "Inbox",
+    "sr": "Prijemno sanduče"
+  },
+  "Важные": {
+    "en": "Starred",
+    "sr": "Sa zvezdicom"
+  },
+  "Отправленные": {
+    "en": "Sent",
+    "sr": "Poslato"
+  },
+  "Черновики": {
+    "en": "Drafts",
+    "sr": "Nacrti"
+  },
+  "Корзина": {
+    "en": "Trash",
+    "sr": "Otpad"
+  },
+  "Поиск": {
+    "en": "Search",
+    "sr": "Pretraga"
+  },
+  "Письма": {
+    "en": "Messages",
+    "sr": "Poruke"
+  },
+  "Есть вложения": {
+    "en": "Has attachments",
+    "sr": "Ima priloge"
+  },
+  "Писем нет": {
+    "en": "No messages",
+    "sr": "Nema poruka"
+  },
+  "Письмо отправлено": {
+    "en": "Message sent",
+    "sr": "Poruka je poslata"
+  },
+  "Подключение…": {
+    "en": "Connecting…",
+    "sr": "Povezivanje…"
+  },
+  "Новое письмо": {
+    "en": "New message",
+    "sr": "Nova poruka"
+  },
+  "От": {
+    "en": "From",
+    "sr": "Od"
+  },
+  "Кому": {
+    "en": "To",
+    "sr": "Za"
+  },
+  "Отправитель": {
+    "en": "Sender",
+    "sr": "Pošiljalac"
+  },
+  "адрес@пример.ру, ещё@пример.ру": {
+    "en": "address@example.com, another@example.com",
+    "sr": "adresa@primer.rs, druga@primer.rs"
+  },
+  "Копия": {
+    "en": "Cc",
+    "sr": "Kopija"
+  },
+  "Тема": {
+    "en": "Subject",
+    "sr": "Naslov"
+  },
+  "Жирный (Ctrl+B)": {
+    "en": "Bold (Ctrl+B)",
+    "sr": "Podebljano (Ctrl+B)"
+  },
+  "Курсив (Ctrl+I)": {
+    "en": "Italic (Ctrl+I)",
+    "sr": "Kurziv (Ctrl+I)"
+  },
+  "Подчёркнутый (Ctrl+U)": {
+    "en": "Underline (Ctrl+U)",
+    "sr": "Podvučeno (Ctrl+U)"
+  },
+  "Зачёркнутый": {
+    "en": "Strikethrough",
+    "sr": "Precrtano"
+  },
+  "Ж": {
+    "en": "B",
+    "sr": "B"
+  },
+  "К": {
+    "en": "I",
+    "sr": "I"
+  },
+  "Ч": {
+    "en": "U",
+    "sr": "U"
+  },
+  "З": {
+    "en": "S",
+    "sr": "S"
+  },
+  "Маркированный список": {
+    "en": "Bulleted list",
+    "sr": "Lista sa oznakama"
+  },
+  "Нумерованный список": {
+    "en": "Numbered list",
+    "sr": "Numerisana lista"
+  },
+  "Цитата": {
+    "en": "Quote",
+    "sr": "Citat"
+  },
+  "Ссылка": {
+    "en": "Link",
+    "sr": "Veza"
+  },
+  "Убрать форматирование": {
+    "en": "Clear formatting",
+    "sr": "Ukloni formatiranje"
+  },
+  "Текст": {
+    "en": "Text",
+    "sr": "Tekst"
+  },
+  "Текст письма": {
+    "en": "Message text",
+    "sr": "Tekst poruke"
+  },
+  "Убрать": {
+    "en": "Remove",
+    "sr": "Ukloni"
+  },
+  "Удалить черновик?": {
+    "en": "Discard this draft?",
+    "sr": "Odbaciti ovaj nacrt?"
+  },
+  "Продолжить писать": {
+    "en": "Keep writing",
+    "sr": "Nastavi pisanje"
+  },
+  "📎 Прикрепить": {
+    "en": "📎 Attach",
+    "sr": "📎 Priloži"
+  },
+  "Отправка…": {
+    "en": "Sending…",
+    "sr": "Slanje…"
+  },
+  "Отправить": {
+    "en": "Send",
+    "sr": "Pošalji"
+  },
+  "из 25 МБ ·": {
+    "en": "of 25 MB ·",
+    "sr": "od 25 MB ·"
+  },
+  "Ctrl+Enter — отправить": {
+    "en": "Ctrl+Enter — send",
+    "sr": "Ctrl+Enter — pošalji"
+  },
+  "Б": {
+    "en": "B",
+    "sr": "B"
+  },
+  "КБ": {
+    "en": "KB",
+    "sr": "KB"
+  },
+  "МБ": {
+    "en": "MB",
+    "sr": "MB"
+  },
+  "Открыть ссылку?": {
+    "en": "Open this link?",
+    "sr": "Otvoriti ovu vezu?"
+  },
+  "В адресе закодированы не-латинские символы — домен может выдавать себя за другой": {
+    "en": "The address contains encoded non-Latin characters — the domain may be impersonating another",
+    "sr": "Adresa sadrži kodirane nelatinične znakove — domen se možda predstavlja kao drugi"
+  },
+  "Соединение без шифрования (http)": {
+    "en": "Unencrypted connection (HTTP)",
+    "sr": "Nešifrovana veza (HTTP)"
+  },
+  "Открыть в браузере": {
+    "en": "Open in browser",
+    "sr": "Otvori u pregledaču"
+  },
+  "SPF, DKIM и DMARC пройдены": {
+    "en": "SPF, DKIM and DMARC passed",
+    "sr": "SPF, DKIM i DMARC provere su uspešne"
+  },
+  "Внешние картинки скрыты:": {
+    "en": "External images blocked:",
+    "sr": "Spoljne slike su blokirane:"
+  },
+  "Загрузка…": {
+    "en": "Loading…",
+    "sr": "Učitavanje…"
+  },
+  "Показать": {
+    "en": "Show",
+    "sr": "Prikaži"
+  },
+  "Всегда показывать от {address}": {
+    "en": "Always show from {address}",
+    "sr": "Uvek prikaži od {address}"
+  },
+  "Всегда для {address}": {
+    "en": "Always for {address}",
+    "sr": "Uvek za {address}"
+  },
+  "Внешнее содержимое показывается: {address} в доверенных": {
+    "en": "External content shown: {address} is trusted",
+    "sr": "Spoljni sadržaj je prikazan: {address} je pouzdan"
+  },
+  "Внешнее содержимое показано": {
+    "en": "External content shown",
+    "sr": "Spoljni sadržaj je prikazan"
+  },
+  "Больше не доверять": {
+    "en": "Stop trusting",
+    "sr": "Ukini poverenje"
+  },
+  "Содержимое письма": {
+    "en": "Message content",
+    "sr": "Sadržaj poruke"
+  },
+  "Исполняемый файл — запускайте, только если доверяете отправителю": {
+    "en": "Executable file — run only if you trust the sender",
+    "sr": "Izvršna datoteka — pokrenite samo ako verujete pošiljaocu"
+  },
+  "Сохранить": {
+    "en": "Save",
+    "sr": "Sačuvaj"
+  },
+  "Ответить": {
+    "en": "Reply",
+    "sr": "Odgovori"
+  },
+  "Переслать": {
+    "en": "Forward",
+    "sr": "Prosledi"
+  },
+  "Не удалось открыть письмо:": {
+    "en": "Could not open message:",
+    "sr": "Nije moguće otvoriti poruku:"
+  },
+  "Выберите письмо": {
+    "en": "Select a message",
+    "sr": "Izaberite poruku"
+  },
+  "Демо-данные: добавьте почтовый ящик в настройках": {
+    "en": "Demo data: add an account in settings",
+    "sr": "Probni podaci: dodajte nalog u podešavanjima"
+  },
+  "Нет почтовых ящиков — добавьте в настройках": {
+    "en": "No mail accounts — add one in settings",
+    "sr": "Nema naloga e-pošte — dodajte nalog u podešavanjima"
+  },
+  "Нет непрочитанных": {
+    "en": "No unread messages",
+    "sr": "Nema nepročitanih poruka"
+  },
+  "Непрочитанных:": {
+    "en": "Unread:",
+    "sr": "Nepročitano:"
+  },
+  "Открыть mMail": {
+    "en": "Open mMail",
+    "sr": "Otvori mMail"
+  },
+  "Написать письмо": {
+    "en": "Compose message",
+    "sr": "Napiši poruku"
+  },
+  "Выйти": {
+    "en": "Quit",
+    "sr": "Izađi"
+  },
+  "Прикрепить файлы": {
+    "en": "Attach files",
+    "sr": "Priloži datoteke"
+  },
+  "Сохранить вложение": {
+    "en": "Save attachment",
+    "sr": "Sačuvaj prilog"
+  },
+  "Настройки mMail": {
+    "en": "mMail Settings",
+    "sr": "Podešavanja mMail-a"
+  },
+  "Проверка отправителя (SPF/DKIM/DMARC) не пройдена — письмо может быть подделкой": {
+    "en": "Sender verification (SPF/DKIM/DMARC) failed — this message may be forged",
+    "sr": "Provera pošiljaoca (SPF/DKIM/DMARC) nije uspela — poruka može biti lažna"
+  },
+  "Домен «{domain}» содержит не-латинские символы — возможна подмена адреса": {
+    "en": "The domain “{domain}” contains non-Latin characters — possible address spoofing",
+    "sr": "Domen „{domain}” sadrži nelatinične znakove — moguća lažna adresa"
+  },
+  "Ссылка {text} на самом деле ведёт на {host}": {
+    "en": "The link {text} actually leads to {host}",
+    "sr": "Veza {text} zapravo vodi na {host}"
+  },
+  "Ссылки {text} на самом деле ведут на {host}": {
+    "en": "The links {text} actually lead to {host}",
+    "sr": "Veze {text} zapravo vode na {host}"
+  },
+  "Ссылки {text} и ещё {count} на самом деле ведут на {host}": {
+    "en": "The links {text} and {count} more actually lead to {host}",
+    "sr": "Veze {text} i još {count} zapravo vode na {host}"
+  },
+  "Хранилище": {
+    "en": "Storage",
+    "sr": "Skladište"
+  },
+  "открываю…": {
+    "en": "opening…",
+    "sr": "otvaranje…"
+  },
+  "вход…": {
+    "en": "signing in…",
+    "sr": "prijavljivanje…"
+  },
+  "сохраняю письма: осталось {count}": {
+    "en": "saving messages: {count} remaining",
+    "sr": "čuvanje poruka: preostalo {count}"
+  },
+  "нет доступа: {error}": {
+    "en": "access denied: {error}",
+    "sr": "pristup je odbijen: {error}"
+  },
+  "закрыто: {error}": {
+    "en": "locked: {error}",
+    "sr": "zaključano: {error}"
+  },
+  "ошибка синхронизации: {error}": {
+    "en": "sync error: {error}",
+    "sr": "greška sinhronizacije: {error}"
+  },
+  "не открылось, письма не сохраняются: {error}": {
+    "en": "could not open storage, messages are not being saved: {error}",
+    "sr": "skladište nije otvoreno, poruke se ne čuvaju: {error}"
+  },
+  "не удалось войти: {error}": {
+    "en": "could not sign in: {error}",
+    "sr": "prijava nije uspela: {error}"
+  },
+  "не удалось сохранить в KWallet: {error}": {
+    "en": "could not save to KWallet: {error}",
+    "sr": "čuvanje u KWallet-u nije uspelo: {error}"
+  },
+  "не удалось отправить: {error}": {
+    "en": "could not send: {error}",
+    "sr": "slanje nije uspelo: {error}"
+  },
+  "не удалось сохранить настройки: {error}": {
+    "en": "could not save settings: {error}",
+    "sr": "čuvanje podešavanja nije uspelo: {error}"
+  },
+  "ящик ещё подключается": {
+    "en": "account is still connecting",
+    "sr": "nalog se još povezuje"
+  },
+  "ящик отключён": {
+    "en": "account is disconnected",
+    "sr": "nalog nije povezan"
+  },
+  "папка не найдена на сервере": {
+    "en": "folder not found on server",
+    "sr": "fascikla nije pronađena na serveru"
+  },
+  "вложение не найдено": {
+    "en": "attachment not found",
+    "sr": "prilog nije pronađen"
+  },
+  "вложение не найдено — прикрепите файл заново": {
+    "en": "attachment not found — attach the file again",
+    "sr": "prilog nije pronađen — ponovo priložite datoteku"
+  },
+  "вложения больше 25 МБ": {
+    "en": "attachments exceed 25 MB",
+    "sr": "prilozi su veći od 25 MB"
+  },
+  "не удалось разобрать письмо": {
+    "en": "could not parse message",
+    "sr": "poruka nije mogla biti obrađena"
+  },
+  "сервер не вернул письмо": {
+    "en": "server did not return the message",
+    "sr": "server nije vratio poruku"
+  },
+  "у демо-писем нет вложений": {
+    "en": "demo messages have no attachments",
+    "sr": "probne poruke nemaju priloge"
+  },
+  "некорректный адрес": {
+    "en": "invalid address",
+    "sr": "neispravna adresa"
+  },
+  "письмо пропало": {
+    "en": "message no longer exists",
+    "sr": "poruka više ne postoji"
+  },
+  "укажите получателя": {
+    "en": "Enter a recipient",
+    "sr": "Unesite primaoca"
+  },
+  "не больше {count} получателей": {
+    "en": "No more than {count} recipients",
+    "sr": "Najviše {count} primalaca"
+  },
+  "письмо слишком большое": {
+    "en": "Message is too large",
+    "sr": "Poruka je prevelika"
+  },
+  "некорректный адрес отправителя": {
+    "en": "Invalid sender address",
+    "sr": "Neispravna adresa pošiljaoca"
+  },
+  "некорректный адрес: {address}": {
+    "en": "Invalid address: {address}",
+    "sr": "Neispravna adresa: {address}"
+  },
+  "поддерживаются только ящики Яндекса и Gmail": {
+    "en": "Only Yandex and Gmail accounts are supported",
+    "sr": "Podržani su samo Yandex i Gmail nalozi"
+  },
+  "пароль ящика не найден в KWallet": {
+    "en": "Account password not found in KWallet",
+    "sr": "Lozinka naloga nije pronađena u KWallet-u"
+  },
+  "ключ хранилища в KWallet повреждён": {
+    "en": "Storage key in KWallet is damaged",
+    "sr": "Ključ skladišta u KWallet-u je oštećen"
+  },
+  "Не удалось сохранить настройки": {
+    "en": "Could not save settings",
+    "sr": "Čuvanje podešavanja nije uspelo"
+  },
+  "Входящие {done} / {total}": {
+    "en": "Inbox {done} / {total}",
+    "sr": "Prijemno sanduče {done} / {total}"
+  },
+  "Отправленные {done} / {total}": {
+    "en": "Sent {done} / {total}",
+    "sr": "Poslato {done} / {total}"
+  },
+  "Черновики {done} / {total}": {
+    "en": "Drafts {done} / {total}",
+    "sr": "Nacrti {done} / {total}"
+  },
+  "Корзина {done} / {total}": {
+    "en": "Trash {done} / {total}",
+    "sr": "Otpad {done} / {total}"
+  },
+  "Действия": {
+    "en": "Actions",
+    "sr": "Radnje"
+  },
+  "Открыть письмо": {
+    "en": "Open message",
+    "sr": "Otvori poruku"
+  },
+  "Открыть папку": {
+    "en": "Open folder",
+    "sr": "Otvori fasciklu"
+  },
+  "Обновить список": {
+    "en": "Refresh list",
+    "sr": "Osveži listu"
+  },
+  "Развернуть папки": {
+    "en": "Expand folders",
+    "sr": "Proširi fascikle"
+  },
+  "Свернуть папки": {
+    "en": "Collapse folders",
+    "sr": "Skupi fascikle"
+  },
+  "Копировать адрес": {
+    "en": "Copy address",
+    "sr": "Kopiraj adresu"
+  },
+  "Копировать адрес отправителя": {
+    "en": "Copy sender address",
+    "sr": "Kopiraj adresu pošiljaoca"
+  },
+  "Копировать тему": {
+    "en": "Copy subject",
+    "sr": "Kopiraj naslov"
+  },
+  "Копировать": {
+    "en": "Copy",
+    "sr": "Kopiraj"
+  },
+  "Вырезать": {
+    "en": "Cut",
+    "sr": "Iseci"
+  },
+  "Вставить": {
+    "en": "Paste",
+    "sr": "Nalepi"
+  },
+  "Вставить без форматирования": {
+    "en": "Paste as plain text",
+    "sr": "Nalepi bez formatiranja"
+  },
+  "Выделить всё": {
+    "en": "Select all",
+    "sr": "Izaberi sve"
+  },
+  "Копировать адрес ссылки": {
+    "en": "Copy link address",
+    "sr": "Kopiraj adresu veze"
+  },
+  "Копировать изображение": {
+    "en": "Copy image",
+    "sr": "Kopiraj sliku"
+  },
+  "Копировать адрес изображения": {
+    "en": "Copy image address",
+    "sr": "Kopiraj adresu slike"
+  },
+  "Копировать имя файла": {
+    "en": "Copy file name",
+    "sr": "Kopiraj naziv datoteke"
+  }
+}

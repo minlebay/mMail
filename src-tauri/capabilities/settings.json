@@ -2,7 +2,9 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "settings",
   "description": "Окно настроек: оформление, ящики, хранилище и своё окно. Читать почту не может.",
-  "windows": ["settings"],
+  "windows": [
+    "settings"
+  ],
   "permissions": [
     "allow-get-appearance",
     "allow-set-appearance",
@@ -22,6 +24,8 @@
     "core:window:allow-close",
     "core:window:allow-set-size",
     "core:window:allow-inner-size",
-    "core:window:allow-scale-factor"
+    "core:window:allow-scale-factor",
+    "core:window:allow-current-monitor",
+    "core:window:allow-set-size-constraints"
   ]
 }

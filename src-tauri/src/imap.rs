@@ -649,6 +649,31 @@ impl Imap {
         Ok(result?)
     }
 
+    /// Atomic move of one UID; never expunge unrelated messages.
+    pub async fn move_to_trash(&self, email: &str, folder: Folder, uid: u32) -> Result<()> {
+        if folder == Folder::Trash { return Ok(()); }
+        let conn = self.connection(email).ok_or("ящик ещё подключается")?;
+        let source = conn.folders.get(&folder).ok_or("папка не найдена на сервере")?;
+        let target = conn.folders.get(&Folder::Trash).ok_or("Корзина не найдена на сервере")?;
+        if source == target { return Err("Письмо уже в корзине".into()); }
+        let mut reader = conn.reader.lock().await;
+        if reader.is_none() {
+            let password = accounts::password(email).await?;
+            *reader = Some(connect(&conn.account, &password).await?);
+        }
+        let session = reader.as_mut().unwrap();
+        let result: Result<()> = async {
+            if !session.capabilities().await?.has_str("MOVE") {
+                return Err("Сервер не поддерживает безопасный перенос письма".into());
+            }
+            session.select(source).await?;
+            session.uid_mv(uid.to_string(), target).await?;
+            Ok(())
+        }.await;
+        if result.is_err() { *reader = None; }
+        result
+    }
+
     /// Помечает письмо прочитанным на сервере.
     pub async fn mark_seen(&self, email: &str, folder: Folder, uid: u32) -> Result<()> {
         let conn = self.connection(email).ok_or("ящик ещё подключается")?;

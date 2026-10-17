@@ -5,6 +5,11 @@
   "windows": ["main"],
   "permissions": [
     "allow-list-folders",
+    "allow-write-clipboard",
+    "allow-mark-message-read",
+    "allow-trash-message",
+    "allow-message-translation-text",
+    "allow-translate-text",
     "allow-list-messages",
     "allow-get-message",
     "allow-set-sender-trusted",

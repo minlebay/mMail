@@ -1,4 +1,5 @@
 <script>
+  import { t } from './i18n.js';
   import { listen } from '@tauri-apps/api/event';
   import { openLink } from './api.js';
 
@@ -29,20 +30,20 @@
 {#if request}
   <div class="overlay" role="presentation" onclick={(e) => e.target === e.currentTarget && (request = null)}>
     <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="link-title">
-      <h2 id="link-title">Открыть ссылку?</h2>
+      <h2 id="link-title">{$t("Открыть ссылку?")}</h2>
       <div class="host">{request.host || request.url}</div>
       <div class="url">{request.url}</div>
 
       {#if request.punycode}
-        <div class="warn">В адресе закодированы не-латинские символы — домен может выдавать себя за другой</div>
+        <div class="warn">{$t("В адресе закодированы не-латинские символы — домен может выдавать себя за другой")}</div>
       {/if}
       {#if request.insecure}
-        <div class="warn">Соединение без шифрования (http)</div>
+        <div class="warn">{$t("Соединение без шифрования (http)")}</div>
       {/if}
 
       <div class="buttons">
-        <button class="secondary" bind:this={cancelButton} onclick={() => (request = null)}>Отмена</button>
-        <button class="primary" onclick={open}>Открыть в браузере</button>
+        <button class="secondary" bind:this={cancelButton} onclick={() => (request = null)}>{$t("Отмена")}</button>
+        <button class="primary" onclick={open}>{$t("Открыть в браузере")}</button>
       </div>
     </div>
   </div>

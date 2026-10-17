@@ -1,3 +1,5 @@
+@import './scrollbars.css';
+
 :root {
   --window-tint: rgba(22, 17, 34, 0.42);
   --text: #f1eef8;
@@ -11,6 +13,7 @@
   --ok: #3ddc97;
   --danger: #ff6b8b;
   --radius: 14px;
+  --panel-inset: 12px;
   --font: 'Inter', 'Noto Sans', system-ui, sans-serif;
 
   color-scheme: dark;
@@ -53,27 +56,10 @@ input {
   border-radius: var(--radius);
 }
 
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
-}
-::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
-  background-clip: padding-box;
-  border: 2px solid transparent;
-  border-radius: 5px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(255, 255, 255, 0.25);
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
 /* Прокручиваемая область панели: полоса прокрутки занимает отступ панели справа,
    а содержимое заканчивается там же, где поиск и кнопки над ним. */
 .scroll-gutter {
   /* scroll, а не auto: место под полосу резервируется всегда (scrollbar-gutter WebKitGTK не знает). */
   overflow-y: scroll;
-  margin-right: calc(-1 * var(--gutter));
+  margin-right: calc(-1 * var(--scrollbar-size));
 }

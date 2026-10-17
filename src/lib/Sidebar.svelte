@@ -1,8 +1,11 @@
 <script>
+  import { t } from './i18n.js';
+  import { showContextMenu } from './contextMenu.js';
+  import { writeClipboard, openSettings } from './api.js';
   import Icon from './Icon.svelte';
 
   // groups: [{ account: null | '' | email, title, folders: [{ id, name, unread }] }]
-  let { groups, active, onpick, oncompose } = $props();
+  let { groups, active, onpick, oncompose, onrefresh } = $props();
 
   const ICONS = { inbox: 'inbox', starred: 'star', sent: 'send', drafts: 'file', trash: 'trash' };
   const keyOf = (account) => account ?? '*';
@@ -28,19 +31,31 @@
     } catch {}
   }
 
+  function menu(event, group, folder = null) {
+    const items = [
+      { label: folder ? 'Открыть папку' : 'Входящие', run: () => onpick(group.account, folder?.id ?? 'inbox') },
+      { label: 'Написать письмо', run: () => oncompose(group.account) },
+      { label: 'Обновить список', run: onrefresh },
+    ];
+    if (!folder) items.push({ label: collapsed.has(keyOf(group.account)) ? 'Развернуть папки' : 'Свернуть папки', run: () => toggle(group.account) });
+    if (group.account) items.push({ separator: true }, { label: 'Копировать адрес', run: () => writeClipboard(group.account) });
+    items.push({ separator: true }, { label: 'Настройки', run: openSettings });
+    showContextMenu(event, items);
+  }
+
   const inboxUnread = (group) => group.folders.find((f) => f.id === 'inbox')?.unread ?? 0;
 </script>
 
 <nav class="panel sidebar">
-  <button class="compose" onclick={oncompose}><Icon name="pencil" />Написать</button>
+  <button class="compose" onclick={() => oncompose()}><Icon name="pencil" />{$t("Написать")}</button>
 
   <div class="tree scroll-gutter">
     {#each groups as group (keyOf(group.account))}
       {@const open = !collapsed.has(keyOf(group.account))}
       <section>
-        <button class="account" class:open onclick={() => toggle(group.account)} title={group.title}>
+        <button class="account" class:open onclick={() => toggle(group.account)} oncontextmenu={(event) => menu(event, group)} title={$t(group.title)}>
           <svg class="chevron" viewBox="0 0 12 12"><path d="M4.5 3l3 3-3 3" /></svg>
-          <span class="title">{group.title}</span>
+          <span class="title">{$t(group.title)}</span>
           {#if !open && inboxUnread(group)}<span class="count">{inboxUnread(group)}</span>{/if}
         </button>
         {#if open}
@@ -48,9 +63,9 @@
             {#each group.folders as f (f.id)}
               {@const isActive = active.account === group.account && active.folder === f.id}
               <li>
-                <button class="folder" class:active={isActive} onclick={() => onpick(group.account, f.id)}>
+                <button class="folder" class:active={isActive} onclick={() => onpick(group.account, f.id)} oncontextmenu={(event) => menu(event, group, f)}>
                   <Icon name={ICONS[f.id]} />
-                  <span class="name">{f.name}</span>
+                  <span class="name">{$t(f.name)}</span>
                   {#if f.id === 'inbox' && f.unread}<span class="count">{f.unread}</span>{/if}
                 </button>
               </li>
@@ -64,7 +79,7 @@
 
 <style>
   .sidebar {
-    padding: 12px;
+    padding: var(--panel-inset);
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -86,7 +101,6 @@
   }
 
   .tree {
-    --gutter: 10px;
     flex: 1;
     min-height: 0;
     display: flex;

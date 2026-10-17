@@ -4,15 +4,18 @@ mod blur;
 mod commands;
 mod compose;
 mod config;
+mod context_menu;
 mod db;
 mod fake;
 mod imap;
+mod i18n;
 mod links;
 mod remote;
 mod sanitize;
 mod smtp;
 mod store;
 mod tray;
+mod translation;
 
 use tauri::webview::NewWindowResponse;
 use tauri::window::Color;
@@ -42,6 +45,11 @@ fn main() {
             commands::set_body_days,
             commands::clear_cache,
             commands::open_settings,
+            commands::write_clipboard,
+            commands::mark_message_read,
+            commands::trash_message,
+            commands::message_translation_text,
+            translation::translate_text,
             links::open_link,
             imap::sync_status,
             imap::list_accounts,
@@ -104,15 +112,15 @@ pub(crate) fn glass_window<'a>(app: &'a AppHandle, label: &str, title: &str) -> 
         .on_navigation(is_app_url)
 }
 
-/// Общее для всех окон: масштаб из настроек, без контекстного меню WebKit, размытие KWin.
+/// Общее для всех окон: масштаб из настроек, меню редактирования, размытие KWin.
 pub(crate) fn finish_window(app: &AppHandle, window: &WebviewWindow) -> tauri::Result<()> {
     let zoom = app.state::<config::ConfigStore>().get().zoom.unwrap_or(1.0);
     let _ = window.set_zoom(zoom.clamp(commands::ZOOM_MIN, commands::ZOOM_MAX));
 
-    // Никакого контекстного меню WebKit (Назад/Обновить/Inspect) — ни в UI, ни в письмах.
-    window.with_webview(|webview| {
-        use webkit2gtk::WebViewExt;
-        webview.inner().connect_context_menu(|_, _, _, _| true);
+    // Редактирование и копирование доступны, навигация WebKit остаётся запрещена.
+    let handle = app.clone();
+    window.with_webview(move |webview| {
+        crate::context_menu::install(&webview.inner(), handle);
     })?;
 
     if let Err(e) = blur::enable(window, CORNER_RADIUS) {

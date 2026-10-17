@@ -1,7 +1,8 @@
 <script>
+  import { t, setLanguage, LANGUAGES } from './i18n.js';
   // Настройки — отдельное окно (метка "settings"); размер подстраивается под содержимое.
   import { untrack, onMount } from 'svelte';
-  import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
+  import { getCurrentWindow, currentMonitor, LogicalSize } from '@tauri-apps/api/window';
   import Icon from './Icon.svelte';
   import Select from './Select.svelte';
   import TitleBar from './TitleBar.svelte';
@@ -11,34 +12,96 @@
   let { appearance } = $props();
 
   const win = getCurrentWindow();
-  const onclose = () => win.close();
-  let maximized = $state(false);
-  let titlebar = $state();
-  let content = $state();
-
-  // Высота окна = шапка + содержимое, но не больше 90% экрана (дальше — прокрутка).
-  // Переводим CSS-пиксели в логические через текущее соотношение: у окна может быть свой масштаб.
-  async function fitToContent() {
-    if (!content || !titlebar || maximized) return;
-    const scale = await win.scaleFactor();
-    const inner = await win.innerSize();
-    const ratio = inner.height / scale / window.innerHeight;
-    const style = getComputedStyle(content);
-    const margins = parseFloat(style.marginTop) + parseFloat(style.marginBottom);
-    // + рамка окна (по 1px сверху и снизу).
-    const css = titlebar.offsetHeight + content.offsetHeight + margins + 2;
-    const height = Math.min(css * ratio, window.screen.availHeight * 0.9);
-    await win.setSize(new LogicalSize(inner.width / scale, Math.round(height)));
+  async function onclose() {
+    try {
+      await saveAppearance();
+      await win.close();
+    } catch (error) {
+      saveError = String(error);
+    }
   }
+  let maximized = $state(false);
+  let panel;
+  let fields;
+  let canScroll = $state(false);
 
   onMount(() => {
-    const observer = new ResizeObserver(() => fitToContent());
-    observer.observe(content);
-    const syncMaximized = () => win.isMaximized().then((m) => (maximized = m));
-    window.addEventListener('resize', syncMaximized);
+    let stopped = false;
+    let running = false;
+    let pending = false;
+    let frame;
+    let lastConstraints = '';
+
+    async function fitToContent() {
+      const monitor = await currentMonitor();
+      const scale = await win.scaleFactor();
+      const size = await win.innerSize();
+      if (stopped) return;
+      const area = monitor?.workArea.size;
+      const maxWidth = Math.floor(area ? area.width / monitor.scaleFactor : window.screen.availWidth);
+      const maxHeight = Math.floor(area ? area.height / monitor.scaleFactor : window.screen.availHeight);
+      const constraints = { minWidth: Math.min(520, maxWidth), minHeight: Math.min(360, maxHeight), maxWidth, maxHeight };
+      const key = JSON.stringify(constraints);
+      if (key !== lastConstraints) {
+        await win.setSizeConstraints(constraints);
+        lastConstraints = key;
+      }
+      if (stopped) return;
+
+      // Измеряем внутренний блок естественной высоты, а не растянутую панель.
+      // Соотношение учитывает и масштаб интерфейса, и масштаб экрана.
+      const ratio = size.width / scale / window.innerWidth;
+      const style = getComputedStyle(panel);
+      const paddingY = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+      const paddingX = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+      const chromeHeight = window.innerHeight - panel.clientHeight + paddingY;
+      const chromeWidth = window.innerWidth - panel.clientWidth + paddingX;
+      const neededHeight = Math.ceil((fields.getBoundingClientRect().height + chromeHeight) * ratio);
+      const neededWidth = Math.ceil((fields.scrollWidth + chromeWidth) * ratio);
+      const width = Math.min(maxWidth, Math.max(constraints.minWidth, size.width / scale, neededWidth));
+      // Если высоты экрана мало, сначала даём тексту всю доступную ширину.
+      // Следующий resize пересчитает высоту после переноса строк.
+      const targetWidth = neededHeight > maxHeight ? maxWidth : width;
+      const targetHeight = neededWidth > maxWidth
+        ? maxHeight
+        : Math.min(maxHeight, Math.max(constraints.minHeight, neededHeight));
+      canScroll = size.width / scale >= maxWidth - 1 && size.height / scale >= maxHeight - 1;
+      if (Math.abs(targetWidth - size.width / scale) > 1 || Math.abs(targetHeight - size.height / scale) > 1) {
+        await win.setSize(new LogicalSize(targetWidth, targetHeight));
+      }
+    }
+
+    function scheduleFit() {
+      if (stopped) return;
+      pending = true;
+      if (running || frame) return;
+      frame = requestAnimationFrame(async () => {
+        frame = null;
+        pending = false;
+        running = true;
+        try {
+          await fitToContent();
+        } catch (error) {
+          console.error('Размер окна настроек:', error);
+          // При недоступности API сохраняем доступ ко всем настройкам.
+          canScroll = true;
+        } finally {
+          running = false;
+          if (pending) scheduleFit();
+        }
+      });
+    }
+
+    const observer = new ResizeObserver(scheduleFit);
+    observer.observe(fields);
+    window.addEventListener('resize', scheduleFit);
+    document.fonts.ready.then(scheduleFit);
+    scheduleFit();
     return () => {
+      stopped = true;
+      cancelAnimationFrame(frame);
       observer.disconnect();
-      window.removeEventListener('resize', syncMaximized);
+      window.removeEventListener('resize', scheduleFit);
     };
   });
 
@@ -46,6 +109,8 @@
   // Начальные значения формы; дальше форма сама пишет в appearance.
   const initial = untrack(() => $state.snapshot(appearance));
   let theme = $state(initial.theme);
+  let selectedLanguage = $state(initial.language || 'ru');
+  let saveError = $state('');
   let opacity = $state(initial.opacity);
   let middleClickMinimize = $state(initial.middleClickMinimize);
   let zoom = $state(initial.zoom);
@@ -53,28 +118,30 @@
   let trayMode = $state(initial.trayMode);
   let closeToTray = $state(initial.closeToTray);
   let trayIcon = $state(initial.trayIcon);
-  const TRAY_ICONS = [
-    ['color', 'Цветной'],
-    ['auto', 'Монохромный, по теме KDE'],
-    ['light', 'Монохромный светлый (тёмная панель)'],
-    ['dark', 'Монохромный тёмный (светлая панель)'],
-  ];
-  const TRAY = [
-    ['panelTray', 'В панели задач и в трее'],
-    ['tray', 'Только в трее'],
-    ['panel', 'Только в панели задач'],
-  ];
-  const POLL = [
-    [5, 'каждые 5 секунд'],
-    [10, 'каждые 10 секунд'],
-    [30, 'каждые 30 секунд'],
-    [60, 'каждую минуту'],
-    [300, 'каждые 5 минут'],
-  ];
+  const TRAY_ICONS = $derived([
+    ['color', $t("Цветной")],
+    ['auto', $t("Монохромный, по теме KDE")],
+    ['light', $t("Монохромный светлый (тёмная панель)")],
+    ['dark', $t("Монохромный тёмный (светлая панель)")],
+  ]);
+  const TRAY = $derived([
+    ['panelTray', $t("В панели задач и в трее")],
+    ['tray', $t("Только в трее")],
+    ['panel', $t("Только в панели задач")],
+  ]);
+  const POLL = $derived([
+    [5, $t("каждые 5 секунд")],
+    [10, $t("каждые 10 секунд")],
+    [30, $t("каждые 30 секунд")],
+    [60, $t("каждую минуту")],
+    [300, $t("каждые 5 минут")],
+  ]);
 
   // Тема применяется сразу, в конфиг пишется с небольшой задержкой (ползунок дёргается часто).
   $effect(() => {
     applyTheme(theme, opacity);
+    setLanguage(selectedLanguage);
+    appearance.language = selectedLanguage;
     appearance.theme = theme;
     appearance.opacity = opacity;
     appearance.middleClickMinimize = middleClickMinimize;
@@ -83,22 +150,26 @@
     appearance.trayMode = trayMode;
     appearance.closeToTray = closeToTray;
     appearance.trayIcon = trayIcon;
-    const t = setTimeout(
-      () => setAppearance({ theme, opacity, middleClickMinimize, zoom, pollSeconds, trayMode, trayIcon, closeToTray }),
-      300,
-    );
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => {
+      saveAppearance().catch((error) => { saveError = String(error); });
+    }, 300);
+    return () => clearTimeout(timer);
   });
 
+  async function saveAppearance() {
+    await setAppearance({ language: selectedLanguage, theme, opacity, middleClickMinimize, zoom, pollSeconds, trayMode, trayIcon, closeToTray });
+    saveError = '';
+  }
+
   // Select не различает null и «нет значения», поэтому «хранить всё» — строка 'all'.
-  const BODY_DAYS = [
-    ['all', 'всех писем'],
-    [365, 'писем за последний год'],
-    [180, 'писем за полгода'],
-    [90, 'писем за 3 месяца'],
-    [30, 'писем за месяц'],
-    [0, 'только открытых, до перезапуска'],
-  ];
+  const BODY_DAYS = $derived([
+    ['all', $t("всех писем")],
+    [365, $t("писем за последний год")],
+    [180, $t("писем за полгода")],
+    [90, $t("писем за 3 месяца")],
+    [30, $t("писем за месяц")],
+    [0, $t("только открытых, до перезапуска")],
+  ]);
   let bodyDays = $state(null);
   let cacheBytes = $state(null);
   let cleaning = $state(false);
@@ -107,7 +178,7 @@
     bodyDays = info.bodyDays ?? 'all';
   };
   storageInfo().then(showStorage);
-  const megabytes = (bytes) => `${(bytes / 1024 / 1024).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} МБ`;
+  const megabytes = (bytes) => `${(bytes / 1024 / 1024).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} ${$t("МБ")}`;
 
   async function cleanup(change) {
     cleaning = true;
@@ -164,43 +235,47 @@
 <svelte:window {onkeydown} />
 
 <div class="window" class:maximized>
-  <div bind:this={titlebar}>
-    <TitleBar title="Настройки" middleClickMinimize={appearance.middleClickMinimize} {onclose} />
+  <div class="titlebar-wrap">
+    <TitleBar title={$t("Настройки")} middleClickMinimize={appearance.middleClickMinimize} maximizable={false} {onclose} />
   </div>
   <div class="scroll">
-  <div class="content" bind:this={content}>
+  <div class="content panel" class:can-scroll={canScroll} bind:this={panel}>
+  <div class="fields" bind:this={fields}>
+    {#if saveError}<p class="error">{$t("Не удалось сохранить настройки")}: {$t(saveError)}</p>{/if}
     <header>
       <nav>
-        <button class:active={tab === 'appearance'} onclick={() => (tab = 'appearance')}>Оформление</button>
-        <button class:active={tab === 'accounts'} onclick={() => (tab = 'accounts')}>Почтовые ящики</button>
+        <button class:active={tab === 'appearance'} onclick={() => (tab = 'appearance')}>{$t("Оформление")}</button>
+        <button class:active={tab === 'accounts'} onclick={() => (tab = 'accounts')}>{$t("Почтовые ящики")}</button>
       </nav>
     </header>
 
     {#if tab === 'appearance'}
       <section>
-        <h3>Цветовая гамма</h3>
+        <h3>{$t('Язык интерфейса')}</h3>
+        <Select bind:value={selectedLanguage} label={$t('Язык интерфейса')} options={LANGUAGES} />
+        <h3>{$t("Цветовая гамма")}</h3>
         <div class="themes">
-          {#each THEMES as t (t.id)}
-            <button class="theme" class:active={t.id === theme} onclick={() => (theme = t.id)}>
+          {#each THEMES as themeOption (themeOption.id)}
+            <button class="theme" class:active={themeOption.id === theme} onclick={() => (theme = themeOption.id)}>
               <span
                 class="swatch"
-                style:background="linear-gradient(135deg, rgb({t.tint.join(',')}) 0%, {t.accent} 140%)"
+                style:background="linear-gradient(135deg, rgb({themeOption.tint.join(',')}) 0%, {themeOption.accent} 140%)"
               >
-                <span class="dot" style:background={t.accent}></span>
+                <span class="dot" style:background={themeOption.accent}></span>
               </span>
-              {t.name}
+              {$t(themeOption.name)}
             </button>
           {/each}
         </div>
 
-        <h3>Прозрачность окна</h3>
+        <h3>{$t("Прозрачность окна")}</h3>
         <div class="slider">
-          <span>Больше стекла</span>
+          <span>{$t("Больше стекла")}</span>
           <input type="range" min="0.15" max="0.85" step="0.01" bind:value={opacity} />
-          <span>Плотнее</span>
+          <span>{$t("Плотнее")}</span>
         </div>
 
-        <h3>Масштаб по умолчанию</h3>
+        <h3>{$t("Масштаб по умолчанию")}</h3>
         <div class="slider">
           <span>50%</span>
           <input
@@ -215,39 +290,39 @@
           <span class="current">{Math.round(zoom * 100)}%</span>
         </div>
 
-        <h3>Окно</h3>
+        <h3>{$t("Окно")}</h3>
         <label class="toggle">
           <input type="checkbox" bind:checked={middleClickMinimize} />
-          Сворачивать окно средним кликом по заголовку
+          {$t("Сворачивать окно средним кликом по заголовку")}
         </label>
 
-        <h3>Значок приложения</h3>
+        <h3>{$t("Значок приложения")}</h3>
         <div class="field">
-          <span>Где показывать</span>
+          <span>{$t("Где показывать")}</span>
           <div class="poll">
-            <Select bind:value={trayMode} label="Где показывать значок" options={TRAY.map(([value, label]) => ({ value, label }))} />
+            <Select bind:value={trayMode} label={$t("Где показывать значок")} options={TRAY.map(([value, label]) => ({ value, label }))} />
           </div>
         </div>
         <div class="field" class:disabled={trayMode === 'panel'}>
-          <span>Вид в трее</span>
+          <span>{$t("Вид в трее")}</span>
           <div class="poll">
             <Select
               bind:value={trayIcon}
-              label="Вид значка в трее"
+              label={$t("Вид значка в трее")}
               options={TRAY_ICONS.map(([value, label]) => ({ value, label }))}
             />
           </div>
         </div>
         <label class="toggle" class:disabled={trayMode === 'panel'}>
           <input type="checkbox" bind:checked={closeToTray} disabled={trayMode === 'panel'} />
-          Крестик прячет окно в трей (выход — из меню значка)
+          {$t("Крестик прячет окно в трей (выход — из меню значка)")}
         </label>
       </section>
     {:else}
       <section>
-        <h3>Подключённые ящики</h3>
+        <h3>{$t("Подключённые ящики")}</h3>
         {#if accounts.length === 0}
-          <p class="muted">Пока нет ни одного ящика — показываются демо-данные.</p>
+          <p class="muted">{$t("Пока нет ни одного ящика — показываются демо-данные.")}</p>
         {/if}
         <ul class="accounts">
           {#each accounts as address (address)}
@@ -255,59 +330,57 @@
               <Icon name="inbox" />
               <span class="address">{address}</span>
               {#if confirmRemove === address}
-                <span class="muted">Удалить ящик и пароль из KWallet?</span>
-                <button class="chip danger" onclick={() => remove(address)}>Удалить</button>
-                <button class="chip" onclick={() => (confirmRemove = null)}>Отмена</button>
+                <span class="muted">{$t("Удалить ящик и пароль из KWallet?")}</span>
+                <button class="chip danger" onclick={() => remove(address)}>{$t("Удалить")}</button>
+                <button class="chip" onclick={() => (confirmRemove = null)}>{$t("Отмена")}</button>
               {:else}
-                <button class="chip" onclick={() => (confirmRemove = address)}>Удалить</button>
+                <button class="chip" onclick={() => (confirmRemove = address)}>{$t("Удалить")}</button>
               {/if}
             </li>
           {/each}
         </ul>
 
-        <h3>Хранилище на диске</h3>
+        <h3>{$t("Хранилище на диске")}</h3>
         <div class="field">
-          <span>Хранить содержимое</span>
+          <span>{$t("Хранить содержимое")}</span>
           <div class="poll">
             <Select
               bind:value={() => bodyDays, changeBodyDays}
-              label="Срок хранения содержимого писем"
+              label={$t("Срок хранения содержимого писем")}
               options={BODY_DAYS.map(([value, label]) => ({ value, label }))}
             />
           </div>
         </div>
         <div class="storage">
           <span class="muted">
-            {#if cleaning}Очистка…{:else if cacheBytes != null}Занято: {megabytes(cacheBytes)}, зашифровано{/if}
+            {#if cleaning}{$t("Очистка…")}{:else if cacheBytes != null}{$t("Занято:")} {megabytes(cacheBytes)}{$t(", зашифровано")}{/if}
           </span>
           {#if bodyDays !== 'all'}
-            <button class="chip" disabled={cleaning} onclick={() => cleanup(clearCache)}>Очистить сейчас</button>
+            <button class="chip" disabled={cleaning} onclick={() => cleanup(clearCache)}>{$t("Очистить сейчас")}</button>
           {/if}
         </div>
         <p class="hint">
-          Список писем хранится всегда. Содержимое более старых писем стирается с диска и снова скачивается с
-          сервера, когда вы их открываете.
+          {$t("Список писем хранится всегда. Содержимое более старых писем стирается с диска и снова скачивается с сервера, когда вы их открываете.")}
         </p>
 
-        <h3>Проверка новых писем</h3>
+        <h3>{$t("Проверка новых писем")}</h3>
         <div class="poll">
-          <Select bind:value={pollSeconds} label="Интервал проверки" options={POLL.map(([value, label]) => ({ value, label }))} />
+          <Select bind:value={pollSeconds} label={$t("Интервал проверки")} options={POLL.map(([value, label]) => ({ value, label }))} />
         </div>
 
-        <h3>Добавить ящик</h3>
+        <h3>{$t("Добавить ящик")}</h3>
         <form onsubmit={add}>
-          <input type="email" placeholder="адрес@yandex.ru или @gmail.com" bind:value={email} required autocomplete="off" spellcheck="false" />
-          <input type="password" placeholder="Пароль приложения" bind:value={password} required autocomplete="off" />
-          <button class="primary" disabled={adding}>{adding ? 'Проверка входа…' : 'Добавить'}</button>
+          <input type="email" placeholder={$t("адрес@yandex.ru или @gmail.com")} bind:value={email} required autocomplete="off" spellcheck="false" />
+          <input type="password" placeholder={$t("Пароль приложения")} bind:value={password} required autocomplete="off" />
+          <button class="primary" disabled={adding}>{adding ? $t("Проверка входа…") : $t("Добавить")}</button>
         </form>
-        {#if addError}<div class="error">{addError}</div>{/if}
+        {#if addError}<div class="error">{$t(addError)}</div>{/if}
         <p class="hint">
-          Нужен <b>пароль приложения</b>, а не основной пароль. Яндекс: Яндекс ID → Безопасность → Пароли приложений
-          (и включите IMAP в настройках почты). Gmail: аккаунт Google → Безопасность → Пароли приложений (нужна
-          двухэтапная аутентификация). Пароль проверяется входом на сервер и хранится только в KWallet.
+          {$t("Нужен пароль приложения, а не основной пароль. Яндекс: Яндекс ID → Безопасность → Пароли приложений (и включите IMAP в настройках почты). Gmail: аккаунт Google → Безопасность → Пароли приложений (нужна двухэтапная аутентификация). Пароль проверяется входом на сервер и хранится только в KWallet.")}
         </p>
       </section>
     {/if}
+  </div>
   </div>
   </div>
 </div>
@@ -327,17 +400,28 @@
     border-radius: 0;
     border: 0;
   }
+  .titlebar-wrap {
+    flex: none;
+  }
   .scroll {
     flex: 1;
     min-height: 0;
-    overflow-y: auto;
+    display: flex;
+    padding: 4px 16px 16px;
+    overflow: hidden;
   }
   .content {
-    margin: 4px 16px 16px;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
     padding: 14px 22px 22px;
-    border-radius: var(--radius);
-    background: var(--surface);
-    border: 1px solid var(--glass-border);
+  }
+
+  .content.can-scroll {
+    overflow: auto;
+  }
+  .fields {
+    display: flow-root;
   }
 
   header {
@@ -375,7 +459,7 @@
 
   .themes {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(min(145px, 100%), 1fr));
     gap: 10px;
   }
 

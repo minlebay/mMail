@@ -30,6 +30,15 @@ extern "C" {
     fn gdk_wayland_window_get_wl_surface(window: *mut gdk::ffi::GdkWindow) -> *mut c_void;
 }
 
+/// Текущая wl_surface окна GTK (null, пока окно не показано).
+fn wl_surface_of(w: &gtk::ApplicationWindow) -> *mut c_void {
+    match w.window() {
+        // SAFETY: только читаем указатель, GTK владеет поверхностью.
+        Some(gdk_window) => unsafe { gdk_wayland_window_get_wl_surface(gdk_window.to_glib_none().0) },
+        None => std::ptr::null_mut(),
+    }
+}
+
 pub struct State;
 
 impl Dispatch<WlRegistry, GlobalListContents> for State {
@@ -57,6 +66,22 @@ struct Glass {
 
 impl Glass {
     fn reshape(&self, w: &gtk::ApplicationWindow, width: i32, height: i32) {
+        if !w.is_mapped() {
+            return;
+        }
+        if self.current.borrow().is_none() {
+            self.attach(w);
+            return;
+        }
+        // GTK мог тихо заменить wl_surface (например, окно, которому сразу меняют размер, —
+        // окно настроек): размытие, заказанное для старой поверхности, тогда не действует.
+        let stale = self.current.borrow().as_ref().is_some_and(|blur| blur.surface_ptr != wl_surface_of(w));
+        if stale {
+            eprintln!("mMail: у окна новая wl_surface — заново включаю размытие");
+            self.current.borrow_mut().take();
+            self.attach(w);
+            return;
+        }
         let radius = if w.is_maximized() { 0 } else { self.corner_radius };
         if let Some(blur) = self.current.borrow().as_ref() {
             blur.set_shape(width, height, radius);
@@ -84,6 +109,8 @@ struct KwinBlur {
     surface: WlSurface,
     blur: RefCell<Option<OrgKdeKwinBlur>>,
     shape: Cell<(i32, i32, i32)>,
+    /// Указатель на wl_surface GTK, для которой заказано размытие.
+    surface_ptr: *mut c_void,
     /// Есть не у всех композиторов; KWin даёт его и обычным приложениям.
     plasma_shell: Option<OrgKdePlasmaShell>,
     plasma_surface: RefCell<Option<OrgKdePlasmaSurface>>,
@@ -96,17 +123,20 @@ struct KwinBlur {
 pub fn enable(window: &tauri::WebviewWindow, corner_radius: i32) -> Result<(), Box<dyn Error>> {
     let gtk_window = window.gtk_window()?;
     let glass = Rc::new(Glass { corner_radius, skip_taskbar: Cell::new(false), current: RefCell::new(None) });
-    let current = KwinBlur::attach(&gtk_window)?;
-    *glass.current.borrow_mut() = Some(current);
-    let (width, height) = gtk_window.size();
-    glass.reshape(&gtk_window, width, height);
-
     // configure-event приходит на каждое изменение размера, в логических пикселях.
     let g = glass.clone();
     gtk_window.connect_configure_event(move |w, event| {
         let (width, height) = event.size();
         g.reshape(w, width as i32, height as i32);
         false
+    });
+    // GTK может завершить создание поверхности уже после map/configure.
+    // На первом кадре повторяем проверку; неизменный регион не отправляется повторно.
+    let g = glass.clone();
+    gtk_window.connect_draw(move |w, _| {
+        let (width, height) = w.size();
+        g.reshape(w, width, height);
+        gtk::glib::Propagation::Proceed
     });
     // Старая поверхность уничтожена GTK: забываем её объекты, не отправляя по ним запросов.
     let g = glass.clone();
@@ -119,7 +149,10 @@ pub fn enable(window: &tauri::WebviewWindow, corner_radius: i32) -> Result<(), B
             g.attach(w);
         }
     });
-    WINDOWS.with(|windows| windows.borrow_mut().insert(window.label().to_string(), glass));
+    // Подписываемся до первой попытки: у нового окна поверхность может ещё не существовать.
+    WINDOWS.with(|windows| windows.borrow_mut().insert(window.label().to_string(), glass.clone()));
+    let (width, height) = gtk_window.size();
+    glass.reshape(&gtk_window, width, height);
     Ok(())
 }
 
@@ -152,6 +185,9 @@ impl KwinBlur {
                 gdk_wayland_window_get_wl_surface(gdk_window.to_glib_none().0),
             )
         };
+        if display_ptr.is_null() || surface_ptr.is_null() {
+            return Err("поверхность Wayland ещё не создана".into());
+        }
         let conn = Connection::from_backend(unsafe { Backend::from_foreign_display(display_ptr.cast()) });
         let surface_id = unsafe { ObjectId::from_ptr(WlSurface::interface(), surface_ptr.cast()) }?;
         let surface = WlSurface::from_id(&conn, surface_id)?;
@@ -173,6 +209,7 @@ impl KwinBlur {
             surface,
             blur: RefCell::new(None),
             shape: Cell::new((0, 0, 0)),
+            surface_ptr,
             plasma_shell,
             plasma_surface: RefCell::new(None),
             gdk_window,
@@ -216,8 +253,10 @@ impl KwinBlur {
         if let Some(old) = self.blur.replace(Some(blur)) {
             old.release();
         }
+        // Состояние размытия применяется на commit поверхности. Статичное окно (настройки) само
+        // кадры не фиксирует, и размытие так и не включалось — фиксируем сами, как KWindowEffects.
+        self.surface.commit();
         let _ = self.conn.flush();
-        // Состояние размытия применяется на следующем commit поверхности — просим GTK перерисоваться.
         self.gdk_window.invalidate_rect(None, true);
     }
 }

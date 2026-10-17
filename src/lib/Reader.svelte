@@ -1,6 +1,8 @@
 <script>
+  import { t } from './i18n.js';
   import Icon from './Icon.svelte';
-  import { getMessage, setSenderTrusted, saveAttachment } from './api.js';
+  import { showContextMenu } from './contextMenu.js';
+  import { getMessage, writeClipboard, setSenderTrusted, saveAttachment } from './api.js';
 
   let { id, onreply } = $props();
 
@@ -36,7 +38,7 @@
   let saved = $state({});
 
   const size = (bytes) =>
-    bytes < 1024 ? `${bytes} Б` : bytes < 1048576 ? `${(bytes / 1024).toFixed(0)} КБ` : `${(bytes / 1048576).toFixed(1)} МБ`;
+    bytes < 1024 ? `${bytes} ${$t("Б")}` : bytes < 1048576 ? `${(bytes / 1024).toFixed(0)} ${$t("КБ")}` : `${(bytes / 1048576).toFixed(1)} ${$t("МБ")}`;
 
   async function save(index) {
     saved = { ...saved, [index]: 'saving' };
@@ -56,10 +58,29 @@
     loadingRemote = false;
   }
 
+  function menu(event) {
+    // Keep native copying for selected text and editable controls.
+    if (!msg || window.getSelection()?.toString() || event.target.closest('input, textarea, [contenteditable]')) return;
+    showContextMenu(event, [
+      { label: 'Ответить', run: () => onreply(msg, 'reply') },
+      { label: 'Переслать', run: () => onreply(msg, 'forward') },
+      { separator: true },
+      { label: 'Копировать адрес отправителя', run: () => writeClipboard(msg.fromAddr) },
+      { label: 'Копировать тему', run: () => writeClipboard(msg.subject) },
+    ]);
+  }
+
+  function attachmentMenu(event, attachment) {
+    showContextMenu(event, [
+      { label: 'Сохранить вложение', disabled: saved[attachment.index] === 'saving', run: () => save(attachment.index) },
+      { label: 'Копировать имя файла', run: () => writeClipboard(attachment.name) },
+    ]);
+  }
+
   const initial = (name) => name.trim().charAt(0).toUpperCase();
 </script>
 
-<article class="panel reader">
+<article class="panel reader" oncontextmenu={menu}>
   {#if msg}
     <header>
       <h1>{msg.subject}</h1>
@@ -69,7 +90,7 @@
           <div class="name">
             <span class="clip" title={msg.fromName}>{msg.fromName}</span>
             {#if msg.auth === 'pass'}
-              <span class="verified" title="SPF, DKIM и DMARC пройдены"><Icon name="shieldCheck" size={14} /></span>
+              <span class="verified" title={$t("SPF, DKIM и DMARC пройдены")}><Icon name="shieldCheck" size={14} /></span>
             {/if}
           </div>
           <div class="addr clip" title={msg.fromAddr}>{msg.fromAddr}</div>
@@ -78,18 +99,18 @@
       </div>
 
       {#each msg.warnings as w}
-        <div class="banner danger"><Icon name="alert" size={15} />{w}</div>
+        <div class="banner danger"><Icon name="alert" size={15} />{$t(w)}</div>
       {/each}
       {#if msg.blockedRemote && !msg.remoteShown}
         <div class="banner">
           <Icon name="imageOff" size={15} />
-          <span class="text">Внешние картинки скрыты: {msg.blockedRemote}</span>
+          <span class="text">{$t("Внешние картинки скрыты:")} {msg.blockedRemote}</span>
           <button class="chip" disabled={loadingRemote} onclick={showRemote}>
-            {loadingRemote ? 'Загрузка…' : 'Показать'}
+            {loadingRemote ? $t("Загрузка…") : $t("Показать")}
           </button>
           {#if msg.canTrust}
-            <button class="chip" title="Всегда показывать от {msg.fromAddr}" disabled={loadingRemote} onclick={() => trust(true)}>
-              Всегда для {msg.fromAddr}
+            <button class="chip" title={$t("Всегда показывать от {address}", { address: msg.fromAddr })} disabled={loadingRemote} onclick={() => trust(true)}>
+              {$t("Всегда для {address}", { address: msg.fromAddr })}
             </button>
           {/if}
         </div>
@@ -97,12 +118,12 @@
         <div class="banner">
           <Icon name="image" size={15} />
           <span class="text">
-            {msg.trusted ? `Внешнее содержимое показывается: ${msg.fromAddr} в доверенных` : 'Внешнее содержимое показано'}
+            {msg.trusted ? $t("Внешнее содержимое показывается: {address} в доверенных", { address: msg.fromAddr }) : $t("Внешнее содержимое показано")}
           </span>
           {#if msg.trusted}
-            <button class="chip" onclick={() => trust(false)}>Больше не доверять</button>
+            <button class="chip" onclick={() => trust(false)}>{$t("Больше не доверять")}</button>
           {:else if msg.canTrust}
-            <button class="chip" title="Всегда показывать от {msg.fromAddr}" onclick={() => trust(true)}>Всегда для {msg.fromAddr}</button>
+            <button class="chip" title={$t("Всегда показывать от {address}", { address: msg.fromAddr })} onclick={() => trust(true)}>{$t("Всегда для {address}", { address: msg.fromAddr })}</button>
           {/if}
         </div>
       {/if}
@@ -110,16 +131,16 @@
 
     <!-- Без скриптов, форм и доступа к origin приложения. allow-popups нужен только чтобы клик по ссылке
          дошёл до ядра как запрос нового окна: ядро его всегда отклоняет и спрашивает подтверждение. -->
-    <iframe class="body" title="Содержимое письма" sandbox="allow-popups" referrerpolicy="no-referrer" srcdoc={msg.srcdoc}></iframe>
+    <iframe class="body" title={$t("Содержимое письма")} sandbox="allow-popups" referrerpolicy="no-referrer" srcdoc={msg.srcdoc}></iframe>
 
     {#if msg.attachments.length}
       <div class="attachments">
         {#each msg.attachments as a (a.index)}
-          <div class="file" class:dangerous={a.dangerous} title={a.dangerous ? 'Исполняемый файл — запускайте, только если доверяете отправителю' : a.name}>
+          <div class="file" role="group" aria-label={a.name} oncontextmenu={(event) => attachmentMenu(event, a)} class:dangerous={a.dangerous} title={a.dangerous ? $t("Исполняемый файл — запускайте, только если доверяете отправителю") : a.name}>
             <Icon name={a.dangerous ? 'alert' : 'paperclip'} size={14} />
             <span class="fname">{a.name}</span>
             <span class="fsize">{size(a.size)}</span>
-            <button class="save" disabled={saved[a.index] === 'saving'} onclick={() => save(a.index)} title="Сохранить">
+            <button onkeydown={(event) => { if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) attachmentMenu(event, a); }} class="save" disabled={saved[a.index] === 'saving'} onclick={() => save(a.index)} title={$t("Сохранить")}>
               {#if saved[a.index] === 'done'}✓{:else}<Icon name="download" size={14} />{/if}
             </button>
           </div>
@@ -128,15 +149,15 @@
     {/if}
 
     <footer>
-      <button class="action" onclick={() => onreply(msg, 'reply')}><Icon name="reply" />Ответить</button>
-      <button class="action" onclick={() => onreply(msg, 'forward')}><Icon name="forward" />Переслать</button>
+      <button class="action" onclick={() => onreply(msg, 'reply')}><Icon name="reply" />{$t("Ответить")}</button>
+      <button class="action" onclick={() => onreply(msg, 'forward')}><Icon name="forward" />{$t("Переслать")}</button>
     </footer>
   {:else if error}
-    <div class="placeholder">Не удалось открыть письмо: {error}</div>
+    <div class="placeholder">{$t("Не удалось открыть письмо:")} {$t(error)}</div>
   {:else if id == null}
-    <div class="placeholder">Выберите письмо</div>
+    <div class="placeholder">{$t("Выберите письмо")}</div>
   {:else}
-    <div class="placeholder">Загрузка…</div>
+    <div class="placeholder">{$t("Загрузка…")}</div>
   {/if}
 </article>
 
@@ -246,7 +267,7 @@
   .body {
     flex: 1;
     min-height: 0;
-    width: 100%;
+    width: calc(100% + var(--scrollbar-size));
     margin-top: 16px;
     border: 0;
     background: transparent;

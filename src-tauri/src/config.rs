@@ -13,6 +13,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Config {
+    /// Язык интерфейса: ru, en или sr (латиница).
+    pub language: String,
     /// Цветовая тема UI (id из src/lib/themes.js).
     pub theme: String,
     /// Непрозрачность фона окна, 0.15–0.85; `None` — по умолчанию темы.
@@ -76,6 +78,14 @@ impl TrayMode {
 }
 
 impl Config {
+    pub fn language(&self) -> &'static str {
+        match self.language.as_str() {
+            "en" => "en",
+            "sr" => "sr",
+            _ => "ru",
+        }
+    }
+
     pub fn tray_mode(&self) -> TrayMode {
         self.tray_mode.as_deref().and_then(TrayMode::parse).unwrap_or(TrayMode::PanelTray)
     }
@@ -118,5 +128,33 @@ impl ConfigStore {
         file.write_all(&serde_json::to_vec_pretty(config)?)?;
         file.sync_all()?;
         fs::rename(tmp, &self.path)
+    }
+}
+
+#[cfg(test)]
+mod language_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_config_keeps_russian() {
+        let config: Config = serde_json::from_str(r#"{"theme":"graphite","zoom":1.1}"#).unwrap();
+        assert_eq!(config.language(), "ru");
+        assert_eq!(config.zoom, Some(1.1));
+    }
+
+    #[test]
+    fn language_survives_saving_and_loading() {
+        let dir = std::env::temp_dir().join(format!("mmail-language-test-{}", std::process::id()));
+        let store = ConfigStore::load(dir.clone());
+        for code in ["ru", "en", "sr"] {
+            store.update(|c| c.language = code.into()).unwrap();
+            assert_eq!(ConfigStore::load(dir.clone()).get().language(), code);
+        }
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn unknown_language_falls_back_to_russian() {
+        assert_eq!(Config { language: "unknown".into(), ..Default::default() }.language(), "ru");
     }
 }

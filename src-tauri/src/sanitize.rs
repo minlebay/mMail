@@ -14,13 +14,13 @@ const FRAME_CSP: &str =
 const BASE_CSS: &str = "\
 html,body{margin:0;background:transparent;color:#e7e4f0;\
 font:15px/1.6 'Inter','Noto Sans',system-ui,sans-serif;overflow-wrap:anywhere}\
-body{padding:0 4px 16px 0}\
+body{padding:0 0 16px}\
 a{color:#b3a8ff}\
 img{max-width:100%;height:auto}\
 table{max-width:100%}\
-blockquote{margin:0 0 0 .6em;padding-left:.8em;border-left:2px solid rgba(255,255,255,.2);color:#bdb8cc}\
-::-webkit-scrollbar{width:8px}\
-::-webkit-scrollbar-thumb{background:rgba(255,255,255,.15);border-radius:4px}";
+blockquote{margin:0 0 0 .6em;padding-left:.8em;border-left:2px solid rgba(255,255,255,.2);color:#bdb8cc}";
+
+const SCROLLBAR_CSS: &str = include_str!("../../src/scrollbars.css");
 
 const GENERIC_ATTRS: &[&str] = &[
     "style", "align", "valign", "width", "height", "bgcolor", "color", "border",
@@ -110,7 +110,7 @@ pub fn wrap(body: &str) -> String {
         "<!doctype html><html><head><meta charset=\"utf-8\">\
 <meta http-equiv=\"Content-Security-Policy\" content=\"{FRAME_CSP}\">\
 <meta name=\"referrer\" content=\"no-referrer\">\
-<style>{BASE_CSS}</style></head><body>{body}</body></html>"
+<style>{BASE_CSS}{SCROLLBAR_CSS}</style></head><body>{body}</body></html>"
     )
 }
 

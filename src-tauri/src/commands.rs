@@ -41,6 +41,7 @@ pub struct Page {
 #[serde(rename_all = "camelCase")]
 pub struct MessageView {
     id: u32,
+    in_trash: bool,
     /// Ящик письма — для «Ответить» с того же адреса; `None` у демо.
     account: Option<String>,
     from_name: String,
@@ -161,6 +162,7 @@ pub async fn get_message(
 
     Ok(MessageView {
         id: m.id,
+        in_trash: m.folder == crate::store::Folder::Trash,
         account: m.account,
         from_name: m.from_name,
         from_addr: m.from_addr,
@@ -196,6 +198,7 @@ pub fn set_sender_trusted(config: State<'_, ConfigStore>, address: String, trust
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Appearance {
+    language: String,
     theme: String,
     opacity: Option<f32>,
     middle_click_minimize: bool,
@@ -215,6 +218,7 @@ pub fn get_appearance(config: State<'_, ConfigStore>) -> Appearance {
     let poll_seconds = c.poll_seconds();
     let tray_mode = c.tray_mode().as_str();
     Appearance {
+        language: c.language().into(),
         theme: c.theme,
         opacity: c.opacity,
         middle_click_minimize: c.middle_click_minimize.unwrap_or(true),
@@ -231,6 +235,7 @@ pub fn set_appearance(
     app: tauri::AppHandle,
     config: State<'_, ConfigStore>,
     theme: String,
+    language: String,
     opacity: f32,
     middle_click_minimize: bool,
     zoom: f64,
@@ -239,6 +244,9 @@ pub fn set_appearance(
     tray_icon: String,
     close_to_tray: bool,
 ) -> Result<(), String> {
+    if !["ru", "en", "sr"].contains(&language.as_str()) {
+        return Err("unsupported interface language".into());
+    }
     if !["color", "auto", "light", "dark"].contains(&tray_icon.as_str()) {
         return Err("неизвестный стиль значка".into());
     }
@@ -250,6 +258,7 @@ pub fn set_appearance(
         return Err("некорректная тема".into());
     }
     config.update(|c| {
+        c.language = language;
         c.theme = theme;
         c.opacity = Some(opacity.clamp(0.15, 0.85));
         c.middle_click_minimize = Some(middle_click_minimize);
@@ -261,6 +270,9 @@ pub fn set_appearance(
     })?;
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
+        if let Some(window) = handle.get_webview_window("settings") {
+            let _ = window.set_title(&crate::i18n::text(&handle, "Настройки mMail"));
+        }
         if let Err(e) = crate::tray::apply(&handle) {
             eprintln!("mMail: трей: {e}");
         }
@@ -314,7 +326,7 @@ pub async fn save_attachment(app: tauri::AppHandle, store: State<'_, Store>, ima
     let part = parts.get(index).ok_or("вложение не найдено")?;
     let name = crate::attachments::safe_name(mail_parser::MimeHeaders::attachment_name(*part).unwrap_or("вложение"));
 
-    let Some(target) = app.dialog().file().set_title("Сохранить вложение").set_file_name(&name).blocking_save_file() else {
+    let Some(target) = app.dialog().file().set_title(crate::i18n::text(&app, "Сохранить вложение")).set_file_name(&name).blocking_save_file() else {
         return Ok(false);
     };
     let path = target.into_path().map_err(|e| e.to_string())?;
@@ -371,12 +383,58 @@ pub fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
         let _ = window.unminimize();
         return window.set_focus().map_err(|e| e.to_string());
     }
-    // Высоту окно подберёт само по содержимому (Settings.svelte).
-    let window = crate::glass_window(&app, "settings", "Настройки mMail")
+    // UI подбирает размер по содержимому в пределах рабочей области монитора.
+    let window = crate::glass_window(&app, "settings", &crate::i18n::text(&app, "Настройки mMail"))
         .inner_size(680.0, 640.0)
-        .min_inner_size(520.0, 300.0)
+        .min_inner_size(520.0, 360.0)
+        .maximizable(false)
         .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
         .build()
         .map_err(|e| e.to_string())?;
     crate::finish_window(&app, &window).map_err(|e| e.to_string())
+}
+
+/// Write-only clipboard access for explicit menu actions in the main window.
+#[tauri::command]
+pub async fn write_clipboard(app: tauri::AppHandle, text: String) -> Result<(), String> {
+    if text.len() > 1024 * 1024 { return Err("clipboard text is too large".into()); }
+    let (send, receive) = tokio::sync::oneshot::channel();
+    app.run_on_main_thread(move || {
+        let clipboard = gtk::Clipboard::get(&gtk::gdk::SELECTION_CLIPBOARD);
+        clipboard.set_text(&text);
+        let _ = send.send(());
+    }).map_err(|e| e.to_string())?;
+    receive.await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn mark_message_read(app: tauri::AppHandle, store: State<'_, Store>, imap: State<'_, Imap>, id: u32) -> Result<(), String> {
+    let message = store.details(id).ok_or("письмо пропало")?;
+    if let (Some(account), Some(uid)) = (message.account.as_deref(), message.uid) {
+        imap.mark_seen(account, message.folder, uid).await.map_err(|e| e.to_string())?;
+    }
+    store.set_unread(id, false);
+    let _ = tauri::Emitter::emit(&app, "mailbox-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn trash_message(app: tauri::AppHandle, store: State<'_, Store>, imap: State<'_, Imap>, id: u32) -> Result<(), String> {
+    let message = store.details(id).ok_or("письмо пропало")?;
+    if message.folder == crate::store::Folder::Trash { return Err("Письмо уже в корзине".into()); }
+    if let (Some(account), Some(uid)) = (message.account.as_deref(), message.uid) {
+        imap.move_to_trash(account, message.folder, uid).await.map_err(|e| e.to_string())?;
+    }
+    store.trashed(id);
+    let _ = tauri::Emitter::emit(&app, "message-trashed", id);
+    let _ = tauri::Emitter::emit(&app, "mailbox-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+pub fn message_translation_text(store: State<'_, Store>, id: u32) -> Result<String, String> {
+    let message = store.details(id).ok_or("письмо пропало")?;
+    let html = message.html.ok_or("Сначала откройте письмо")?;
+    let clean = sanitize::clean_html(&html, false);
+    Ok(mail_parser::decoders::html::html_to_text(&clean.html))
 }
