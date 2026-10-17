@@ -260,6 +260,8 @@ pub struct Appearance {
     notify_events: bool,
     window_buttons: bool,
     pin_buttons: bool,
+    /// Вид календаря при запуске: month | week | day.
+    calendar_view: String,
 }
 
 pub const ZOOM_MIN: f64 = 0.5;
@@ -289,6 +291,7 @@ pub fn get_appearance(config: State<'_, ConfigStore>) -> Appearance {
         notify_events: c.notify_events.unwrap_or(true),
         window_buttons: c.window_buttons.unwrap_or(true),
         pin_buttons: c.pin_buttons.unwrap_or(true),
+        calendar_view: c.calendar_view.clone().unwrap_or_else(|| "week".into()),
     }
 }
 
@@ -308,6 +311,17 @@ pub fn set_title_buttons(app: tauri::AppHandle, config: State<'_, ConfigStore>, 
         c.window_buttons = Some(window_buttons);
         c.pin_buttons = Some(pin_buttons);
     })?;
+    let _ = tauri::Emitter::emit(&app, "appearance-changed", get_appearance(config));
+    Ok(())
+}
+
+/// Вид календаря по умолчанию; главное окно переключается по appearance-changed.
+#[tauri::command]
+pub fn set_calendar_view(app: tauri::AppHandle, config: State<'_, ConfigStore>, view: String) -> Result<(), String> {
+    if !["month", "week", "day"].contains(&view.as_str()) {
+        return Err("неизвестный вид календаря".into());
+    }
+    config.update(|c| c.calendar_view = Some(view))?;
     let _ = tauri::Emitter::emit(&app, "appearance-changed", get_appearance(config));
     Ok(())
 }
@@ -483,14 +497,16 @@ pub fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
         let _ = window.unminimize();
         return window.set_focus().map_err(|e| e.to_string());
     }
-    // UI подбирает размер по содержимому в пределах рабочей области монитора.
-    let window = crate::glass_window(&app, "settings", &crate::i18n::text(&app, "Настройки mMail"))
+    // Размер свободный и запоминается; что не влезло — прокручивается внутри окна.
+    let builder = crate::glass_window(&app, "settings", &crate::i18n::text(&app, "Настройки mMail"))
         .inner_size(680.0, 640.0)
-        .min_inner_size(520.0, 360.0)
-        .maximizable(false)
+        .min_inner_size(480.0, 320.0)
+        .maximizable(false);
+    let window = crate::window_state::restore(&app, "settings", builder, (480.0, 320.0))
         .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
         .build()
         .map_err(|e| e.to_string())?;
+    crate::window_state::track(&app, &window, "settings");
     crate::finish_window(&app, &window).map_err(|e| e.to_string())
 }
 

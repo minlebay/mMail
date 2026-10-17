@@ -1158,5 +1158,13 @@
   "писем за последние 5 лет": {
     "en": "messages from the last 5 years",
     "sr": "poruka iz poslednjih 5 godina"
+  },
+  "Вид при запуске": {
+    "en": "Default view",
+    "sr": "Prikaz pri pokretanju"
+  },
+  "Вид календаря при запуске": {
+    "en": "Calendar view at startup",
+    "sr": "Prikaz kalendara pri pokretanju"
   }
 }

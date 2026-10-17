@@ -70,6 +70,7 @@ fn main() {
             commands::set_show_all_accounts,
             commands::set_notifications,
             commands::set_title_buttons,
+            commands::set_calendar_view,
             window_pins::window_pins,
             window_pins::set_window_pin,
             commands::write_clipboard,

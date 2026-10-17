@@ -3,13 +3,13 @@
   import { listen } from '@tauri-apps/api/event';
   import { t, setLanguage, LANGUAGES } from './i18n.js';
   // Настройки — отдельное окно (метка "settings"); размер подстраивается под содержимое.
-  import { untrack, onMount } from 'svelte';
-  import { getCurrentWindow, currentMonitor, LogicalSize } from '@tauri-apps/api/window';
+  import { untrack } from 'svelte';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
   import Icon from './Icon.svelte';
   import Select from './Select.svelte';
   import TitleBar from './TitleBar.svelte';
   import { THEMES, applyTheme, isDark } from './themes.js';
-  import { setAppearance, listAccounts, addAccount, removeAccount, storageInfo, setBodyDays, clearCache, setShowAllAccounts, googleStatus, googleConnect, googleDisconnect, setNotifications, setTitleButtons } from './api.js';
+  import { setAppearance, listAccounts, addAccount, removeAccount, storageInfo, setBodyDays, clearCache, setShowAllAccounts, googleStatus, googleConnect, googleDisconnect, setNotifications, setTitleButtons, setCalendarView } from './api.js';
 
   let { appearance } = $props();
 
@@ -23,90 +23,6 @@
     }
   }
   let maximized = $state(false);
-  let panel;
-  let fields;
-  let canScroll = $state(false);
-
-  onMount(() => {
-    let stopped = false;
-    let running = false;
-    let pending = false;
-    let frame;
-    let lastConstraints = '';
-
-    async function fitToContent() {
-      const monitor = await currentMonitor();
-      const scale = await win.scaleFactor();
-      const size = await win.innerSize();
-      if (stopped) return;
-      const area = monitor?.workArea.size;
-      const maxWidth = Math.floor(area ? area.width / monitor.scaleFactor : window.screen.availWidth);
-      const maxHeight = Math.floor(area ? area.height / monitor.scaleFactor : window.screen.availHeight);
-      const constraints = { minWidth: Math.min(520, maxWidth), minHeight: Math.min(360, maxHeight), maxWidth, maxHeight };
-      const key = JSON.stringify(constraints);
-      if (key !== lastConstraints) {
-        await win.setSizeConstraints(constraints);
-        lastConstraints = key;
-      }
-      if (stopped) return;
-
-      // Измеряем внутренний блок естественной высоты, а не растянутую панель.
-      // Соотношение учитывает и масштаб интерфейса, и масштаб экрана.
-      const ratio = size.width / scale / window.innerWidth;
-      const style = getComputedStyle(panel);
-      const paddingY = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
-      const paddingX = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
-      const chromeHeight = window.innerHeight - panel.clientHeight + paddingY;
-      const chromeWidth = window.innerWidth - panel.clientWidth + paddingX;
-      const neededHeight = Math.ceil((fields.getBoundingClientRect().height + chromeHeight) * ratio);
-      const neededWidth = Math.ceil((fields.scrollWidth + chromeWidth) * ratio);
-      const width = Math.min(maxWidth, Math.max(constraints.minWidth, size.width / scale, neededWidth));
-      // Если высоты экрана мало, сначала даём тексту всю доступную ширину.
-      // Следующий resize пересчитает высоту после переноса строк.
-      const targetWidth = neededHeight > maxHeight ? maxWidth : width;
-      const targetHeight = neededWidth > maxWidth
-        ? maxHeight
-        : Math.min(maxHeight, Math.max(constraints.minHeight, neededHeight));
-      canScroll = size.width / scale >= maxWidth - 1 && size.height / scale >= maxHeight - 1;
-      if (Math.abs(targetWidth - size.width / scale) > 1 || Math.abs(targetHeight - size.height / scale) > 1) {
-        await win.setSize(new LogicalSize(targetWidth, targetHeight));
-      }
-    }
-
-    function scheduleFit() {
-      if (stopped) return;
-      pending = true;
-      if (running || frame) return;
-      frame = requestAnimationFrame(async () => {
-        frame = null;
-        pending = false;
-        running = true;
-        try {
-          await fitToContent();
-        } catch (error) {
-          console.error('Размер окна настроек:', error);
-          // При недоступности API сохраняем доступ ко всем настройкам.
-          canScroll = true;
-        } finally {
-          running = false;
-          if (pending) scheduleFit();
-        }
-      });
-    }
-
-    const observer = new ResizeObserver(scheduleFit);
-    observer.observe(fields);
-    window.addEventListener('resize', scheduleFit);
-    document.fonts.ready.then(scheduleFit);
-    scheduleFit();
-    return () => {
-      stopped = true;
-      cancelAnimationFrame(frame);
-      observer.disconnect();
-      window.removeEventListener('resize', scheduleFit);
-    };
-  });
-
   let tab = $state('appearance');
   let version = $state('');
   getVersion().then((v) => (version = v));
@@ -138,6 +54,22 @@
   let windowButtons = $state(initial.windowButtons ?? true);
   let pinButtons = $state(initial.pinButtons ?? true);
   const saveTitleButtons = () => setTitleButtons(windowButtons, pinButtons);
+  let calendarView = $state(initial.calendarView ?? 'week');
+  const CALENDAR_VIEWS = $derived([
+    { value: 'month', label: $t('Месяц') },
+    { value: 'week', label: $t('Неделя') },
+    { value: 'day', label: $t('День') },
+  ]);
+  // Сохраняем при выборе (первый запуск эффекта — начальное значение, его не пишем).
+  let calendarViewLoaded = false;
+  $effect(() => {
+    const view = calendarView;
+    if (!calendarViewLoaded) {
+      calendarViewLoaded = true;
+      return;
+    }
+    setCalendarView(view).catch((e) => (saveError = String(e)));
+  });
 
   // Google Календарь: клиент OAuth вводится один раз; секреты уходят сразу в KWallet через ядро.
   let google = $state(null);
@@ -298,8 +230,8 @@
     <TitleBar title={$t("Настройки")} middleClickMinimize={appearance.middleClickMinimize} maximizable={false} {onclose} />
   </div>
   <div class="scroll">
-  <div class="content panel" class:can-scroll={canScroll} bind:this={panel}>
-  <div class="fields" bind:this={fields}>
+  <div class="content panel">
+  <div class="fields">
     {#if saveError}<p class="error">{$t("Не удалось сохранить настройки")}: {$t(saveError)}</p>{/if}
     <header>
       <nav>
@@ -376,6 +308,14 @@
           <input type="checkbox" bind:checked={pinButtons} onchange={saveTitleButtons} />
           {$t("Кнопки «Поверх других окон» и «На всех рабочих столах»")}
         </label>
+
+        <h3>{$t("Календарь")}</h3>
+        <div class="field">
+          <span>{$t("Вид при запуске")}</span>
+          <div class="poll">
+            <Select bind:value={calendarView} label={$t("Вид календаря при запуске")} options={CALENDAR_VIEWS} />
+          </div>
+        </div>
 
         <h3>{$t("Уведомления")}</h3>
         <label class="toggle">
@@ -541,13 +481,10 @@
   .content {
     flex: 1;
     min-width: 0;
-    overflow: hidden;
+    overflow: auto;
     padding: 14px 22px 22px;
   }
 
-  .content.can-scroll {
-    overflow: auto;
-  }
   .fields {
     display: flow-root;
   }

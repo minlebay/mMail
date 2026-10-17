@@ -42,8 +42,10 @@
       middleClickMinimize: a.middleClickMinimize,
       zoom: a.zoom,
       pollSeconds: a.pollSeconds,
+      calendarView: a.calendarView,
     };
     zoom = a.zoom;
+    calView = a.calendarView ?? 'week';
     applyTheme(appearance.theme, appearance.opacity, isDark(appearance), appearance.blurEnabled ?? true);
   });
 
@@ -113,6 +115,8 @@
       listen('appearance-changed', (e) => {
         const a = e.payload;
         if (a.zoom !== appearance.zoom) changeZoom(a.zoom);
+        // Вид по умолчанию поменяли в настройках — показываем его сразу.
+        if (a.calendarView && a.calendarView !== appearance.calendarView) calView = a.calendarView;
         appearance = { ...a, theme: a.theme || DEFAULT_THEME, opacity: a.opacity ?? DEFAULT_OPACITY };
         applyTheme(appearance.theme, appearance.opacity, isDark(appearance), appearance.blurEnabled ?? true);
       }),

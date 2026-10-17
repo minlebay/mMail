@@ -40,6 +40,8 @@ pub struct Config {
     pub windows: std::collections::BTreeMap<String, crate::window_state::Geometry>,
     /// «Поверх других окон» и «На всех рабочих столах» главного окна и настроек.
     pub window_pins: std::collections::BTreeMap<String, crate::window_pins::Pins>,
+    /// Вид календаря при запуске: `month`, `week`, `day`; `None` — неделя.
+    pub calendar_view: Option<String>,
     /// Кнопки «Свернуть» и «Развернуть» в шапке; `None` — показывать.
     pub window_buttons: Option<bool>,
     /// Кнопки «Поверх других окон» и «На всех рабочих столах» в шапке; `None` — показывать.
