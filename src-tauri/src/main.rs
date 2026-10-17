@@ -28,6 +28,7 @@ fn main() {
             commands::set_sender_trusted,
             commands::get_appearance,
             commands::set_appearance,
+            commands::set_zoom,
             links::open_link,
             imap::sync_status,
             imap::list_accounts,
@@ -44,6 +45,7 @@ fn main() {
                 .decorations(false)
                 .transparent(true)
                 .background_color(Color(0, 0, 0, 0))
+                .zoom_hotkeys_enabled(false)
                 .on_navigation(is_app_url)
                 .on_new_window({
                     // Клик по ссылке в письме: окно не открываем никогда, а просим UI подтвердить.
@@ -57,6 +59,15 @@ fn main() {
                     }
                 })
                 .build()?;
+
+            let zoom = app.state::<config::ConfigStore>().get().zoom.unwrap_or(1.0);
+            let _ = window.set_zoom(zoom.clamp(commands::ZOOM_MIN, commands::ZOOM_MAX));
+
+            // Никакого контекстного меню WebKit (Назад/Обновить/Inspect) — ни в UI, ни в письмах.
+            window.with_webview(|webview| {
+                use webkit2gtk::WebViewExt;
+                webview.inner().connect_context_menu(|_, _, _, _| true);
+            })?;
 
             if let Err(e) = blur::enable(&window, CORNER_RADIUS) {
                 eprintln!("mMail: размытие KWin недоступно: {e}");

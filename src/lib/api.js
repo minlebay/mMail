@@ -18,8 +18,10 @@ export const openLink = (id) => invoke('open_link', { id });
 
 export const getAppearance = () => invoke('get_appearance');
 
-export const setAppearance = (theme, opacity, middleClickMinimize) =>
-  invoke('set_appearance', { theme, opacity, middleClickMinimize });
+export const setAppearance = (theme, opacity, middleClickMinimize, zoom) =>
+  invoke('set_appearance', { theme, opacity, middleClickMinimize, zoom });
+
+export const setZoom = (scale) => invoke('set_zoom', { scale });
 
 export const listAccounts = () => invoke('list_accounts');
 

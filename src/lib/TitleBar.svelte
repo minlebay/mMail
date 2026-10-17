@@ -3,7 +3,10 @@
 
   import Icon from './Icon.svelte';
 
-  let { sync, middleClickMinimize, onsettings } = $props();
+  let { sync, middleClickMinimize, zoom, onzoom, onsettings } = $props();
+
+  let zoomOpen = $state(false);
+  const percent = (z) => `${Math.round(z * 100)}%`;
 
   const win = getCurrentWindow();
 
@@ -25,6 +28,27 @@
     {/if}
   </div>
   <div class="controls">
+    <div class="zoom">
+      <button class="pill" title="Масштаб (Ctrl +/−/0)" onclick={() => (zoomOpen = !zoomOpen)}>{percent(zoom)}</button>
+      {#if zoomOpen}
+        <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
+        <div class="backdrop" onclick={() => (zoomOpen = false)}></div>
+        <div class="popover">
+          <button class="step" aria-label="Уменьшить" onclick={() => onzoom(zoom - 0.1)}>−</button>
+          <input
+            type="range"
+            min="0.5"
+            max="2"
+            step="0.05"
+            value={zoom}
+            oninput={(e) => onzoom(Number(e.currentTarget.value))}
+            aria-label="Масштаб"
+          />
+          <button class="step" aria-label="Увеличить" onclick={() => onzoom(zoom + 0.1)}>+</button>
+          <span class="value">{percent(zoom)}</span>
+        </div>
+      {/if}
+    </div>
     <button class="ctl" aria-label="Настройки" title="Настройки" onclick={onsettings}>
       <Icon name="settings" size={14} />
     </button>
@@ -73,7 +97,64 @@
 
   .controls {
     display: flex;
+    align-items: center;
     gap: 8px;
+  }
+
+  .zoom {
+    position: relative;
+  }
+  .pill {
+    height: 26px;
+    padding: 0 10px;
+    border-radius: 13px;
+    background: rgba(255, 255, 255, 0.1);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+  .pill:hover {
+    background: rgba(255, 255, 255, 0.22);
+  }
+  .backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 20;
+  }
+  .popover {
+    position: absolute;
+    top: 32px;
+    right: 0;
+    z-index: 21;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-radius: 12px;
+    background: var(--surface);
+    border: 1px solid var(--glass-border);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+  }
+  .popover input {
+    width: 160px;
+    accent-color: var(--accent);
+  }
+  .step {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.1);
+    font-size: 15px;
+    line-height: 1;
+  }
+  .step:hover {
+    background: rgba(255, 255, 255, 0.22);
+  }
+  .value {
+    width: 40px;
+    text-align: right;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
   }
 
   .ctl {

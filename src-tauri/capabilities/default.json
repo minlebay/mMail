@@ -10,6 +10,7 @@
     "allow-set-sender-trusted",
     "allow-get-appearance",
     "allow-set-appearance",
+    "allow-set-zoom",
     "allow-open-link",
     "allow-sync-status",
     "allow-list-accounts",

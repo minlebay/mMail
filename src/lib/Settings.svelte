@@ -4,7 +4,7 @@
   import { THEMES, applyTheme } from './themes.js';
   import { setAppearance, listAccounts, addAccount, removeAccount } from './api.js';
 
-  let { appearance, onclose } = $props();
+  let { appearance, onzoom, onclose } = $props();
 
   let tab = $state('appearance');
   // Начальные значения формы; дальше форма сама пишет в appearance.
@@ -12,6 +12,7 @@
   let theme = $state(initial.theme);
   let opacity = $state(initial.opacity);
   let middleClickMinimize = $state(initial.middleClickMinimize);
+  let zoom = $state(initial.zoom);
 
   // Тема применяется сразу, в конфиг пишется с небольшой задержкой (ползунок дёргается часто).
   $effect(() => {
@@ -19,7 +20,8 @@
     appearance.theme = theme;
     appearance.opacity = opacity;
     appearance.middleClickMinimize = middleClickMinimize;
-    const t = setTimeout(() => setAppearance(theme, opacity, middleClickMinimize), 300);
+    appearance.zoom = zoom;
+    const t = setTimeout(() => setAppearance(theme, opacity, middleClickMinimize, zoom), 300);
     return () => clearTimeout(t);
   });
 
@@ -100,6 +102,21 @@
           <span>Плотнее</span>
         </div>
 
+        <h3>Масштаб по умолчанию</h3>
+        <div class="slider">
+          <span>50%</span>
+          <input
+            type="range"
+            min="0.5"
+            max="2"
+            step="0.05"
+            bind:value={zoom}
+            oninput={() => onzoom(zoom)}
+          />
+          <span>200%</span>
+          <span class="current">{Math.round(zoom * 100)}%</span>
+        </div>
+
         <h3>Окно</h3>
         <label class="toggle">
           <input type="checkbox" bind:checked={middleClickMinimize} />
@@ -162,7 +179,7 @@
     overflow-y: auto;
     padding: 14px 22px 22px;
     border-radius: var(--radius);
-    background: rgba(32, 27, 46, 0.97);
+    background: var(--surface);
     border: 1px solid var(--glass-border);
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
   }
@@ -270,6 +287,13 @@
   .slider input {
     flex: 1;
     accent-color: var(--accent);
+  }
+
+  .current {
+    width: 44px;
+    text-align: right;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
   }
 
   .toggle {

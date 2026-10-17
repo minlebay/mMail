@@ -141,9 +141,7 @@ pub async fn get_message(
             ));
         }
     }
-    for link in links::find_deceptive(&clean.html) {
-        warnings.push(format!("Ссылка «{}» на самом деле ведёт на {}", link.text, link.real_host));
-    }
+    warnings.extend(deceptive_warnings(links::find_deceptive(&clean.html)));
 
     Ok(MessageView {
         id: m.id,
@@ -183,12 +181,21 @@ pub struct Appearance {
     theme: String,
     opacity: Option<f32>,
     middle_click_minimize: bool,
+    zoom: f64,
 }
+
+pub const ZOOM_MIN: f64 = 0.5;
+pub const ZOOM_MAX: f64 = 2.0;
 
 #[tauri::command]
 pub fn get_appearance(config: State<'_, ConfigStore>) -> Appearance {
     let c = config.get();
-    Appearance { theme: c.theme, opacity: c.opacity, middle_click_minimize: c.middle_click_minimize.unwrap_or(true) }
+    Appearance {
+        theme: c.theme,
+        opacity: c.opacity,
+        middle_click_minimize: c.middle_click_minimize.unwrap_or(true),
+        zoom: c.zoom.unwrap_or(1.0),
+    }
 }
 
 #[tauri::command]
@@ -197,6 +204,7 @@ pub fn set_appearance(
     theme: String,
     opacity: f32,
     middle_click_minimize: bool,
+    zoom: f64,
 ) -> Result<(), String> {
     if theme.len() > 32 || !theme.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
         return Err("некорректная тема".into());
@@ -205,5 +213,36 @@ pub fn set_appearance(
         c.theme = theme;
         c.opacity = Some(opacity.clamp(0.15, 0.85));
         c.middle_click_minimize = Some(middle_click_minimize);
+        c.zoom = Some(zoom.clamp(ZOOM_MIN, ZOOM_MAX));
     })
+}
+
+/// Текущий масштаб окна (быстрый ползунок в шапке и Ctrl +/−/0).
+#[tauri::command]
+pub fn set_zoom(window: tauri::WebviewWindow, scale: f64) -> Result<(), String> {
+    if !scale.is_finite() {
+        return Err("некорректный масштаб".into());
+    }
+    window.set_zoom(scale.clamp(ZOOM_MIN, ZOOM_MAX)).map_err(|e| e.to_string())
+}
+
+/// Одно предупреждение на каждый реальный адрес, а не на каждую ссылку.
+fn deceptive_warnings(found: Vec<links::Deceptive>) -> Vec<String> {
+    let mut by_host: Vec<(String, Vec<String>)> = Vec::new();
+    for link in found {
+        let quoted = format!("«{}»", link.text);
+        match by_host.iter_mut().find(|(host, _)| *host == link.real_host) {
+            Some((_, texts)) if !texts.contains(&quoted) => texts.push(quoted),
+            Some(_) => {}
+            None => by_host.push((link.real_host, vec![quoted])),
+        }
+    }
+    by_host
+        .into_iter()
+        .map(|(host, texts)| match texts.len() {
+            1 => format!("Ссылка {} на самом деле ведёт на {host}", texts[0]),
+            n if n <= 3 => format!("Ссылки {} на самом деле ведут на {host}", texts.join(", ")),
+            n => format!("Ссылки {} и ещё {} на самом деле ведут на {host}", texts[..3].join(", "), n - 3),
+        })
+        .collect()
 }

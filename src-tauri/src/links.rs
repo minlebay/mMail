@@ -55,10 +55,10 @@ fn host_in_text(text: &str) -> Option<String> {
     }
     let with_scheme = if text.contains("://") { text.to_string() } else { format!("http://{text}") };
     let host = Url::parse(&with_scheme).ok()?.host_str()?.to_ascii_lowercase();
-    let tld = host.rsplit('.').next()?;
-    let looks_like_domain = host.contains('.') && tld.len() >= 2 && tld.chars().all(|c| c.is_ascii_alphabetic());
-    let looks_like_punycode_tld = tld.starts_with("xn--");
-    (looks_like_domain || looks_like_punycode_tld).then_some(host)
+    // Нужна хотя бы одна точка: иначе любое слово («Выбрать») стало бы «доменом» xn--….
+    let (_, tld) = host.rsplit_once('.')?;
+    let plain_tld = tld.len() >= 2 && tld.chars().all(|c| c.is_ascii_alphabetic());
+    (plain_tld || tld.starts_with("xn--")).then_some(host)
 }
 
 /// `docs.github.com` — тот же сайт, что и `github.com`; `github.com.evil.example` — нет.
@@ -144,6 +144,11 @@ mod tests {
     }
 
     #[test]
+    fn flags_cyrillic_domain_text() {
+        assert_eq!(hosts(r#"<a href="https://evil.example/">госуслуги.рф</a>"#).len(), 1);
+    }
+
+    #[test]
     fn flags_lookalike_suffix() {
         assert_eq!(hosts(r#"<a href="https://github.com.evil.example/">github.com</a>"#).len(), 1);
     }
@@ -154,6 +159,8 @@ mod tests {
         assert!(hosts(r#"<a href="https://www.github.com/x">https://github.com/x</a>"#).is_empty());
         assert!(hosts(r#"<a href="https://habr.com/1">Открыть статью</a>"#).is_empty());
         assert!(hosts(r#"<a href="https://x.example/">e.g.</a>"#).is_empty());
+        assert!(hosts(r#"<a href="https://click.example/">Выбрать</a>"#).is_empty(), "слово — не адрес");
+        assert!(hosts(r#"<a href="https://click.example/">Телефоны</a>"#).is_empty());
     }
 
     #[test]

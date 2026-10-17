@@ -2352,6 +2352,7 @@ dependencies = [
  "wayland-backend",
  "wayland-client",
  "wayland-protocols-plasma",
+ "webkit2gtk",
  "webpki-roots",
  "zeroize",
 ]

@@ -27,4 +27,7 @@ export function applyTheme(id, opacity = DEFAULT_OPACITY) {
   root.setProperty('--accent', theme.accent);
   root.setProperty('--accent-soft', `rgba(${r}, ${g}, ${b}, 0.28)`);
   root.setProperty('--window-tint', `rgba(${theme.tint.join(', ')}, ${opacity})`);
+  // Фон диалогов: оттенок темы, чуть светлее и почти непрозрачный.
+  const surface = theme.tint.map((c) => Math.min(255, c + 14));
+  root.setProperty('--surface', `rgba(${surface.join(', ')}, 0.97)`);
 }

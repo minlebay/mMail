@@ -160,6 +160,7 @@
 
   .banner {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 8px;
     margin-top: 12px;
@@ -169,7 +170,7 @@
     font-size: 13px;
   }
   .banner .text {
-    flex: 1;
+    flex: 1 1 160px;
     min-width: 0;
   }
   .chip {

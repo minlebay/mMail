@@ -9,7 +9,7 @@
   import { applyTheme, DEFAULT_THEME, DEFAULT_OPACITY } from './lib/themes.js';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { listen } from '@tauri-apps/api/event';
-  import { listFolders, syncStatus, getAppearance } from './lib/api.js';
+  import { listFolders, syncStatus, getAppearance, setZoom } from './lib/api.js';
 
   const win = getCurrentWindow();
   let maximized = $state(false);
@@ -20,12 +20,35 @@
     return () => window.removeEventListener('resize', syncMaximized);
   });
 
-  let appearance = $state({ theme: DEFAULT_THEME, opacity: DEFAULT_OPACITY, middleClickMinimize: true });
+  let appearance = $state({ theme: DEFAULT_THEME, opacity: DEFAULT_OPACITY, middleClickMinimize: true, zoom: 1 });
   let settingsOpen = $state(false);
+  // Текущий масштаб; при запуске ядро уже выставило масштаб по умолчанию из настроек.
+  let zoom = $state(1);
   getAppearance().then((a) => {
-    appearance = { theme: a.theme || DEFAULT_THEME, opacity: a.opacity ?? DEFAULT_OPACITY, middleClickMinimize: a.middleClickMinimize };
+    appearance = {
+      theme: a.theme || DEFAULT_THEME,
+      opacity: a.opacity ?? DEFAULT_OPACITY,
+      middleClickMinimize: a.middleClickMinimize,
+      zoom: a.zoom,
+    };
+    zoom = a.zoom;
     applyTheme(appearance.theme, appearance.opacity);
   });
+
+  function changeZoom(value) {
+    zoom = Math.round(Math.min(2, Math.max(0.5, value)) * 100) / 100;
+    setZoom(zoom);
+  }
+
+  // Ctrl + / Ctrl − / Ctrl 0 (сброс к масштабу по умолчанию).
+  function onkeydown(e) {
+    if (!e.ctrlKey || e.altKey || e.metaKey) return;
+    if (e.key === '=' || e.key === '+') changeZoom(zoom + 0.1);
+    else if (e.key === '-') changeZoom(zoom - 0.1);
+    else if (e.key === '0') changeZoom(appearance.zoom);
+    else return;
+    e.preventDefault();
+  }
 
   // Ширины панелей: удобство этого компьютера, поэтому localStorage.
   const SIZES = { sidebar: 210, list: 300 };
@@ -85,10 +108,18 @@
   }
 </script>
 
-<div class="window" class:maximized>
-  <TitleBar {sync} middleClickMinimize={appearance.middleClickMinimize} onsettings={() => (settingsOpen = true)} />
+<svelte:window {onkeydown} />
 
-  <main class="layout" style:grid-template-columns="{sizes.sidebar}px 12px {sizes.list}px 12px minmax(320px, 1fr)">
+<div class="window" class:maximized>
+  <TitleBar
+    {sync}
+    {zoom}
+    onzoom={changeZoom}
+    middleClickMinimize={appearance.middleClickMinimize}
+    onsettings={() => (settingsOpen = true)}
+  />
+
+  <main class="layout" style:grid-template-columns="minmax(150px, {sizes.sidebar}px) 12px minmax(220px, {sizes.list}px) 12px minmax(280px, 1fr)">
     <Sidebar {groups} {active} onpick={pickFolder} oncompose={() => {}} />
     <Splitter value={sizes.sidebar} min={150} max={380} initial={SIZES.sidebar} onchange={(px) => resize('sidebar', px)} />
     <MessageList account={active.account} folder={active.folder} {version} {selectedId} onselect={(id) => (selectedId = id)} />
@@ -98,7 +129,7 @@
 
   <LinkDialog />
   {#if settingsOpen}
-    <Settings {appearance} onclose={() => (settingsOpen = false)} />
+    <Settings {appearance} onzoom={changeZoom} onclose={() => (settingsOpen = false)} />
   {/if}
 </div>
 
