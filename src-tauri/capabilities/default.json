@@ -17,6 +17,7 @@
     "allow-list-accounts",
     "allow-add-account",
     "allow-remove-account",
+    "allow-unlock-store",
     "allow-open-compose",
     "core:event:allow-listen",
     "core:event:allow-unlisten",

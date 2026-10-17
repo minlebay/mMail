@@ -1,6 +1,6 @@
 //! IMAP: TLS-подключение, фоновая синхронизация каждого ящика и загрузка писем по требованию.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::error::Error;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -22,6 +22,7 @@ use zeroize::Zeroizing;
 use crate::accounts::{self, Account};
 use crate::attachments;
 use crate::config::ConfigStore;
+use crate::db::Db;
 use crate::fake;
 use crate::store::{Auth, Folder, Message, Opened, Store};
 
@@ -36,6 +37,10 @@ const TIMEOUT: Duration = Duration::from_secs(20);
 const FLAGS_EVERY: Duration = Duration::from_secs(60);
 /// У скольких последних писем папки сверять флаги.
 const FLAGS_WINDOW: u32 = 500;
+/// Тела писем до этого размера сохраняются в кэш заранее, в фоне; крупные — при открытии.
+const PREFETCH_MAX_BYTES: u32 = 1024 * 1024;
+/// Писем за один фоновый FETCH тел.
+const PREFETCH_BATCH: usize = 20;
 const HEADER_QUERY: &str = "(UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE CONTENT-TYPE)])";
 
 async fn connect(account: &Account, password: &str) -> Result<Session> {
@@ -74,31 +79,58 @@ async fn discover_folders(session: &mut Session) -> Result<HashMap<Folder, Strin
     Ok(folders)
 }
 
-/// Курсор синхронизации папки: идём от самых новых писем (большие номера) к старым.
+/// Синхронизация папки: письма, которые есть на сервере, но ещё нет в кэше.
 struct Cursor {
     folder: Folder,
     name: String,
-    total: u32,
-    /// Номер последнего ещё не загруженного письма; 0 — папка загружена целиком.
-    next: u32,
+    /// Писем в папке на сервере.
+    total: usize,
+    /// UID ещё не загруженных писем, от новых к старым; пусто — папка загружена целиком.
+    missing: Vec<u32>,
 }
 
 async fn fetch_batch(session: &mut Session, account: &str, cursor: &mut Cursor) -> Result<Vec<Message>> {
-    if cursor.next == 0 {
+    if cursor.missing.is_empty() {
         return Ok(Vec::new());
     }
     session.examine(&cursor.name).await?;
-    let first = cursor.next.saturating_sub(BATCH - 1).max(1);
+    let batch: Vec<u32> = cursor.missing.drain(..cursor.missing.len().min(BATCH as usize)).collect();
+    let set = uid_set(&batch);
     let started = std::time::Instant::now();
     // Только нужные поля заголовка — так же синхронизирует Thunderbird.
-    let fetches: Vec<Fetch> = session
-        .fetch(format!("{first}:{}", cursor.next), HEADER_QUERY)
-        .await?
-        .try_collect()
-        .await?;
-    eprintln!("mMail: {} {first}:{} за {:?}", cursor.name, cursor.next, started.elapsed());
-    cursor.next = first - 1;
+    let fetches: Vec<Fetch> = session.uid_fetch(&set, HEADER_QUERY).await?.try_collect().await?;
+    eprintln!("mMail: {} {} писем за {:?}", cursor.name, batch.len(), started.elapsed());
     Ok(fetches.iter().filter_map(|f| to_message(f, account, cursor.folder)).collect())
+}
+
+/// Набор UID для команды IMAP: подряд идущие сворачиваются в диапазоны («1:3,7,9:10»).
+fn uid_set(uids: &[u32]) -> String {
+    let mut sorted = uids.to_vec();
+    sorted.sort_unstable();
+    let mut parts: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < sorted.len() {
+        let start = sorted[i];
+        while i + 1 < sorted.len() && sorted[i + 1] == sorted[i] + 1 {
+            i += 1;
+        }
+        parts.push(if sorted[i] == start { start.to_string() } else { format!("{start}:{}", sorted[i]) });
+        i += 1;
+    }
+    parts.join(",")
+}
+
+/// Открывает шифрованный кэш (ключ — из KWallet) и сразу показывает сохранённые письма.
+async fn open_cache(app: &AppHandle) -> Result<()> {
+    if app.state::<Store>().has_db() {
+        return Ok(());
+    }
+    let key = accounts::db_key().await?;
+    let dir = app.path().app_data_dir()?;
+    let db = tauri::async_runtime::spawn_blocking(move || Db::open(&dir, &key)).await??;
+    app.state::<Store>().attach_db(db)?;
+    let _ = app.emit("mailbox-changed", ());
+    Ok(())
 }
 
 fn to_message(fetch: &Fetch, account: &str, folder: Folder) -> Option<Message> {
@@ -200,6 +232,10 @@ impl Imap {
         let pick = |state: &str| -> Vec<String> {
             statuses.iter().filter(|(_, s)| s.state == state).map(|(email, s)| format!("{email}: {}", s.message)).collect()
         };
+        let locked = pick("locked");
+        if !locked.is_empty() {
+            return SyncStatus { state: "locked", message: locked.join(" · ") };
+        }
         let (errors, busy) = (pick("error"), pick("busy"));
         match (errors.is_empty(), busy.is_empty()) {
             (false, _) => SyncStatus { state: "error", message: errors.join(" · ") },
@@ -238,6 +274,16 @@ pub fn sync_status(imap: State<'_, Imap>) -> SyncStatus {
     imap.summary()
 }
 
+const STORE_STATUS: &str = "Хранилище";
+
+/// Повторная попытка открыть хранилище (например, после отказа в окне KWallet).
+#[tauri::command]
+pub async fn unlock_store(app: AppHandle) {
+    set_status(&app, STORE_STATUS, "busy", "открываю…");
+    app.state::<Imap>().statuses.lock().unwrap().remove(STORE_STATUS);
+    start(app).await;
+}
+
 /// Запуск: синхронизируем все ящики из KWallet, а если их нет — показываем демо-данные.
 pub async fn start(app: AppHandle) {
     let emails = match accounts::list().await {
@@ -252,6 +298,11 @@ pub async fn start(app: AppHandle) {
         app.state::<Store>().replace_all(fake::generate(10_000));
         let _ = app.emit("mailbox-changed", ());
         let _ = app.emit("sync-status", app.state::<Imap>().summary());
+        return;
+    }
+    // Без кэша не синхронизируем: если KWallet закрыт, паролей ящиков всё равно не получить.
+    if let Err(e) = open_cache(&app).await {
+        set_status(&app, STORE_STATUS, "locked", format!("закрыто: {e}"));
         return;
     }
     for email in emails {
@@ -281,21 +332,32 @@ async fn run_sync(app: &AppHandle, account: Account) -> Result<()> {
     let reader = connect(&account, &password).await?;
     drop(password);
 
+    let store = app.state::<Store>();
     let folders = discover_folders(&mut session).await?;
     let mut cursors = Vec::new();
     for folder in [Folder::Inbox, Folder::Sent, Folder::Drafts, Folder::Trash] {
         let Some(name) = folders.get(&folder) else { continue };
-        let total = session.examine(name).await?.exists;
-        cursors.push(Cursor { folder, name: name.clone(), total, next: total });
+        let mailbox = session.examine(name).await?;
+        store.check_validity(&email, folder, mailbox.uid_validity.unwrap_or_default());
+        // Список UID папки — дёшево даже для десятков тысяч писем; сверяем с кэшем.
+        let on_server: HashSet<u32> = if mailbox.exists == 0 { HashSet::new() } else { session.uid_search("ALL").await? };
+        if store.retain_on_server(&email, folder, &on_server) {
+            let _ = app.emit("mailbox-changed", ());
+        }
+        let known = store.uids(&email, folder);
+        let mut missing: Vec<u32> = on_server.iter().copied().filter(|uid| !known.contains(uid)).collect();
+        missing.sort_unstable_by(|a, b| b.cmp(a));
+        cursors.push(Cursor { folder, name: name.clone(), total: on_server.len(), missing });
     }
     let conn = Arc::new(Connection { account, folders, reader: Mutex::new(Some(reader)), cancelled: AtomicBool::new(false) });
     app.state::<Imap>().register(conn.clone());
 
-    let store = app.state::<Store>();
     let step = |cursor: &Cursor, messages: Vec<Message>| {
-        store.append(messages);
-        let _ = app.emit("mailbox-changed", ());
-        let done = cursor.total - cursor.next;
+        if !messages.is_empty() {
+            store.append(messages);
+            let _ = app.emit("mailbox-changed", ());
+        }
+        let done = cursor.total - cursor.missing.len();
         let label = match cursor.folder {
             Folder::Inbox => "Входящие",
             Folder::Sent => "Отправленные",
@@ -313,7 +375,7 @@ async fn run_sync(app: &AppHandle, account: Account) -> Result<()> {
     let mut last_poll = std::time::Instant::now();
     let mut last_flags = std::time::Instant::now();
     for i in 0..cursors.len() {
-        while cursors[i].next > 0 {
+        while !cursors[i].missing.is_empty() {
             if conn.cancelled.load(Ordering::Relaxed) {
                 let _ = session.logout().await;
                 return Ok(());
@@ -334,13 +396,31 @@ async fn run_sync(app: &AppHandle, account: Account) -> Result<()> {
     set_status(app, &email, "ok", "");
 
     // Дальше — периодическая проверка; при обрыве соединения переподключаемся.
+    // Между проверками, пока есть что, сохраняем тела писем для чтения без сети.
+    let mut prefetching = store.has_db();
+    let mut skipped = HashSet::new();
     loop {
         while last_poll.elapsed() < poll() {
             if conn.cancelled.load(Ordering::Relaxed) {
                 let _ = session.logout().await;
                 return Ok(());
             }
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            if !prefetching {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                continue;
+            }
+            match prefetch_bodies(app, &mut session, &conn.account, &cursors, &mut skipped).await {
+                Ok(0) => {
+                    prefetching = false;
+                    set_status(app, &email, "ok", "");
+                }
+                Ok(left) => set_status(app, &email, "busy", format!("сохраняю письма: осталось {left}")),
+                Err(e) => {
+                    // Сессия могла оборваться — переподключится обновление ниже.
+                    eprintln!("mMail: загрузка тел {email} не удалась: {e}");
+                    break;
+                }
+            }
         }
         let with_flags = last_flags.elapsed() >= FLAGS_EVERY;
         last_poll = std::time::Instant::now();
@@ -355,6 +435,45 @@ async fn run_sync(app: &AppHandle, account: Account) -> Result<()> {
     }
 }
 
+/// Следующая порция тел писем, которых ещё нет в кэше (новые первыми). Возвращает, сколько осталось.
+async fn prefetch_bodies(
+    app: &AppHandle,
+    session: &mut Session,
+    account: &Account,
+    cursors: &[Cursor],
+    skipped: &mut HashSet<(Folder, u32)>,
+) -> Result<usize> {
+    let store = app.state::<Store>();
+    let pending = |c: &Cursor, skipped: &HashSet<(Folder, u32)>| -> Vec<u32> {
+        store.unopened(&account.email, c.folder).into_iter().filter(|uid| !skipped.contains(&(c.folder, *uid))).collect()
+    };
+    let Some((cursor, uids)) = cursors.iter().map(|c| (c, pending(c, skipped))).find(|(_, uids)| !uids.is_empty()) else {
+        return Ok(0);
+    };
+    let batch = &uids[..uids.len().min(PREFETCH_BATCH)];
+    // Порцию отмечаем заранее: письмо, на котором сервер или разбор ломается, не будет повторяться по кругу.
+    skipped.extend(batch.iter().map(|uid| (cursor.folder, *uid)));
+
+    session.examine(&cursor.name).await?;
+    let sizes: Vec<Fetch> = session.uid_fetch(uid_set(batch), "(UID RFC822.SIZE)").await?.try_collect().await?;
+    let small: Vec<u32> = sizes.iter().filter(|f| f.size.is_some_and(|s| s <= PREFETCH_MAX_BYTES)).filter_map(|f| f.uid).collect();
+    if !small.is_empty() {
+        let fetches: Vec<Fetch> = session.uid_fetch(uid_set(&small), "(UID BODY.PEEK[])").await?.try_collect().await?;
+        let mut changed = false;
+        for f in &fetches {
+            let (Some(uid), Some(raw)) = (f.uid, f.body()) else { continue };
+            match parse_opened(raw, account.provider) {
+                Ok(opened) => changed |= store.set_opened_uid(&account.email, cursor.folder, uid, opened),
+                Err(e) => eprintln!("mMail: письмо {uid} не разобрано: {e}"),
+            }
+        }
+        if changed {
+            let _ = app.emit("mailbox-changed", ());
+        }
+    }
+    Ok(cursors.iter().map(|c| pending(c, skipped).len()).sum())
+}
+
 /// Новые письма (UID больше известных) и, если `with_flags`, актуальные флаги последних писем.
 async fn refresh(app: &AppHandle, session: &mut Session, email: &str, cursors: &[Cursor], with_flags: bool) -> Result<()> {
     let store = app.state::<Store>();
@@ -366,7 +485,7 @@ async fn refresh(app: &AppHandle, session: &mut Session, email: &str, cursors: &
         }
         let max = store.max_uid(email, cursor.folder);
         // Пустую папку, которую ещё грузит основной цикл, не трогаем — иначе получим дубли.
-        if max > 0 || cursor.next == 0 {
+        if max > 0 || cursor.missing.is_empty() {
             let fetches: Vec<Fetch> = session.uid_fetch(format!("{}:*", max + 1), HEADER_QUERY).await?.try_collect().await?;
             // «N:*» всегда возвращает хотя бы последнее письмо, даже если его UID меньше N.
             let fresh: Vec<Message> = fetches
@@ -425,6 +544,10 @@ pub async fn add_account(app: AppHandle, email: String, password: String) -> std
         app.state::<Store>().replace_all(Vec::new());
         let _ = app.emit("mailbox-changed", ());
     }
+    // Первый ящик (или хранилище не открылось при запуске): без кэша почта работает, но не сохраняется.
+    if let Err(e) = open_cache(&app).await {
+        set_status(&app, STORE_STATUS, "error", format!("не открылось, письма не сохраняются: {e}"));
+    }
     let email = account.email.clone();
     app.state::<Store>().remove_account(&email);
     tauri::async_runtime::spawn(sync_account(app.clone(), account));
@@ -471,27 +594,32 @@ impl Imap {
     pub async fn open(&self, email: &str, folder: Folder, uid: u32) -> Result<Opened> {
         let raw = self.raw(email, folder, uid).await?;
         let provider = self.connection(email).ok_or("ящик отключён")?.account.provider;
-        let parsed = MessageParser::default().parse(&raw).ok_or("не удалось разобрать письмо")?;
-        let auth_results = parsed
-            .headers()
-            .iter()
-            .filter(|h| h.name().eq_ignore_ascii_case("Authentication-Results"))
-            .map(|h| String::from_utf8_lossy(&raw[h.offset_start as usize..h.offset_end as usize]).into_owned());
-        let auth = auth_verdict(auth_results, provider.trusted_authserv);
-        let html = parsed.body_html(0).map(|h| attachments::inline_cid_images(&h, &parsed)).unwrap_or_default();
-        let references = match parsed.references() {
-            mail_parser::HeaderValue::Text(id) => vec![id.to_string()],
-            mail_parser::HeaderValue::TextList(ids) => ids.iter().map(|id| id.to_string()).collect(),
-            _ => Vec::new(),
-        };
-        Ok(Opened {
-            html,
-            auth,
-            message_id: parsed.message_id().map(str::to_string),
-            references,
-            attachments: attachments::describe(&parsed),
-        })
+        parse_opened(&raw, provider)
     }
+}
+
+/// Тело письма, проверка отправителя, идентификаторы цепочки и список вложений (без их содержимого).
+fn parse_opened(raw: &[u8], provider: &accounts::Provider) -> Result<Opened> {
+    let parsed = MessageParser::default().parse(raw).ok_or("не удалось разобрать письмо")?;
+    let auth_results = parsed
+        .headers()
+        .iter()
+        .filter(|h| h.name().eq_ignore_ascii_case("Authentication-Results"))
+        .map(|h| String::from_utf8_lossy(&raw[h.offset_start as usize..h.offset_end as usize]).into_owned());
+    let auth = auth_verdict(auth_results, provider.trusted_authserv);
+    let html = parsed.body_html(0).map(|h| attachments::inline_cid_images(&h, &parsed)).unwrap_or_default();
+    let references = match parsed.references() {
+        mail_parser::HeaderValue::Text(id) => vec![id.to_string()],
+        mail_parser::HeaderValue::TextList(ids) => ids.iter().map(|id| id.to_string()).collect(),
+        _ => Vec::new(),
+    };
+    Ok(Opened {
+        html,
+        auth,
+        message_id: parsed.message_id().map(str::to_string),
+        references,
+        attachments: attachments::describe(&parsed),
+    })
 }
 
 impl Imap {
@@ -547,6 +675,12 @@ mod tests {
 
     fn verdict(headers: &[&str]) -> Auth {
         auth_verdict(headers.iter().map(|h| h.to_string()), crate::accounts::YANDEX.trusted_authserv)
+    }
+
+    #[test]
+    fn uid_sets_collapse_runs() {
+        assert_eq!(uid_set(&[10, 9, 3, 2, 1, 7]), "1:3,7,9:10");
+        assert_eq!(uid_set(&[5]), "5");
     }
 
     #[test]

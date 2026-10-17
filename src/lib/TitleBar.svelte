@@ -2,6 +2,7 @@
   import { getCurrentWindow } from '@tauri-apps/api/window';
 
   import Icon from './Icon.svelte';
+  import { unlockStore } from './api.js';
 
   // Шапка общая для главного окна и окон письма: лишнее (статус, масштаб, настройки) необязательно.
   let { title = 'mMail', sync = null, middleClickMinimize = true, zoom = null, onzoom, onsettings = null, onclose = null } = $props();
@@ -26,6 +27,9 @@
     <span class="name" data-tauri-drag-region>{title}</span>
     {#if sync?.message}
       <span class="status {sync.state}" data-tauri-drag-region>{sync.message}</span>
+    {/if}
+    {#if sync?.state === 'locked'}
+      <button class="pill" title="Снова запросить ключ у KWallet" onclick={unlockStore}>Открыть хранилище</button>
     {/if}
   </div>
   <div class="controls">
@@ -102,7 +106,8 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .status.error {
+  .status.error,
+  .status.locked {
     color: var(--danger);
   }
 

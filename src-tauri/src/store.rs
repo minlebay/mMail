@@ -1,13 +1,15 @@
 //! Письма в памяти: общий формат для IMAP-синхронизации и демо-данных.
-//! Пока без диска — шифрованное хранилище (SQLCipher) следующим шагом.
+//! Письма ящиков дублируются в шифрованный кэш на диске ([`Db`]); демо-письма — нет.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::RwLock;
+use std::sync::{Mutex, OnceLock, RwLock};
 
 use chrono::{Local, TimeZone};
 use serde::Serialize;
 
 use crate::attachments::AttachmentMeta;
+use crate::db::Db;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Folder {
@@ -102,9 +104,37 @@ pub struct Opened {
 pub struct Store {
     next_id: AtomicU32,
     entries: RwLock<Vec<Entry>>,
+    db: OnceLock<Db>,
+    /// UIDVALIDITY папок ящиков: если на сервере он другой, UID в кэше устарели.
+    validity: Mutex<HashMap<(String, Folder), u32>>,
 }
 
 impl Store {
+    /// Подключает открытый кэш и показывает всё, что в нём есть (до связи с сервером).
+    pub fn attach_db(&self, db: Db) -> crate::imap::Result<()> {
+        if self.db.get().is_some() {
+            return Ok(());
+        }
+        let (messages, validity) = db.load()?;
+        *self.validity.lock().unwrap() = validity.into_iter().map(|(a, f, v)| ((a, f), v)).collect();
+        self.replace(|m| m.account.is_some(), messages);
+        let _ = self.db.set(db);
+        Ok(())
+    }
+
+    pub fn has_db(&self) -> bool {
+        self.db.get().is_some()
+    }
+
+    /// Запись в кэш на диске. Ошибка не мешает работе: письма всё равно есть на сервере.
+    fn persist(&self, write: impl FnOnce(&Db) -> crate::imap::Result<()>) {
+        if let Some(db) = self.db.get() {
+            if let Err(e) = write(db) {
+                eprintln!("mMail: запись в кэш не удалась: {e}");
+            }
+        }
+    }
+
     /// Заменяет всё содержимое (демо-режим).
     pub fn replace_all(&self, messages: Vec<Message>) {
         self.replace(|_| true, messages);
@@ -113,11 +143,58 @@ impl Store {
     /// Убирает письма удалённого (или заново добавленного) ящика.
     pub fn remove_account(&self, email: &str) {
         self.entries.write().unwrap().retain(|e| e.msg.account.as_deref() != Some(email));
+        self.validity.lock().unwrap().retain(|(account, _), _| account != email);
+        self.persist(|db| db.remove_account(email));
     }
 
-    /// Добавляет порцию писем, пришедшую при синхронизации.
+    /// Добавляет порцию писем, пришедшую при синхронизации; уже известные (тот же UID) пропускает.
     pub fn append(&self, messages: Vec<Message>) {
+        let known: HashSet<(String, Folder, u32)> = {
+            let entries = self.entries.read().unwrap();
+            entries.iter().filter_map(|e| Some((e.msg.account.clone()?, e.msg.folder, e.msg.uid?))).collect()
+        };
+        let messages: Vec<Message> = messages
+            .into_iter()
+            .filter(|m| match (&m.account, m.uid) {
+                (Some(account), Some(uid)) => !known.contains(&(account.clone(), m.folder, uid)),
+                _ => true,
+            })
+            .collect();
+        self.persist(|db| db.insert(&messages.iter().collect::<Vec<_>>()));
         self.replace(|_| false, messages);
+    }
+
+    /// UID писем папки, которые уже есть в хранилище.
+    pub fn uids(&self, account: &str, folder: Folder) -> HashSet<u32> {
+        let entries = self.entries.read().unwrap();
+        entries.iter().filter(|e| e.msg.folder == folder && e.msg.account.as_deref() == Some(account)).filter_map(|e| e.msg.uid).collect()
+    }
+
+    /// Сверяет UIDVALIDITY папки; если он сменился (или папка новая) — забывает её письма.
+    pub fn check_validity(&self, account: &str, folder: Folder, validity: u32) {
+        let key = (account.to_string(), folder);
+        if self.validity.lock().unwrap().get(&key) == Some(&validity) {
+            return;
+        }
+        self.entries.write().unwrap().retain(|e| !(e.msg.folder == folder && e.msg.account.as_deref() == Some(account)));
+        self.validity.lock().unwrap().insert(key, validity);
+        self.persist(|db| db.reset_folder(account, folder, validity));
+    }
+
+    /// Убирает письма папки, которых больше нет на сервере. Возвращает, было ли что убирать.
+    pub fn retain_on_server(&self, account: &str, folder: Folder, on_server: &HashSet<u32>) -> bool {
+        let mut gone = Vec::new();
+        self.entries.write().unwrap().retain(|e| {
+            let stale = e.msg.folder == folder
+                && e.msg.account.as_deref() == Some(account)
+                && e.msg.uid.is_some_and(|uid| !on_server.contains(&uid));
+            if stale {
+                gone.extend(e.msg.uid);
+            }
+            !stale
+        });
+        self.persist(|db| db.delete(account, folder, &gone));
+        !gone.is_empty()
     }
 
     /// Удаляет письма, подходящие под `drop`, добавляет новые; держит порядок от новых к старым.
@@ -192,8 +269,11 @@ impl Store {
     }
 
     pub fn set_unread(&self, id: u32, unread: bool) {
-        if let Some(e) = self.entries.write().unwrap().iter_mut().find(|e| e.id == id) {
-            e.msg.unread = unread;
+        let mut entries = self.entries.write().unwrap();
+        let Some(e) = entries.iter_mut().find(|e| e.id == id) else { return };
+        e.msg.unread = unread;
+        if let (Some(account), Some(uid)) = (&e.msg.account, e.msg.uid) {
+            self.persist(|db| db.set_flags(account, e.msg.folder, &[(uid, unread, e.msg.starred)]));
         }
     }
 
@@ -211,7 +291,7 @@ impl Store {
     /// Флаги с сервера: `(uid, непрочитано, важное)`. Возвращает, изменилось ли что-нибудь.
     pub fn update_flags(&self, account: &str, folder: Folder, flags: &[(u32, bool, bool)]) -> bool {
         let by_uid: std::collections::HashMap<u32, (bool, bool)> = flags.iter().map(|&(uid, u, s)| (uid, (u, s))).collect();
-        let mut changed = false;
+        let mut changed = Vec::new();
         for e in self.entries.write().unwrap().iter_mut() {
             if e.msg.folder != folder || e.msg.account.as_deref() != Some(account) {
                 continue;
@@ -220,16 +300,47 @@ impl Store {
                 if (e.msg.unread, e.msg.starred) != (unread, starred) {
                     e.msg.unread = unread;
                     e.msg.starred = starred;
-                    changed = true;
+                    changed.push((e.msg.uid.unwrap_or_default(), unread, starred));
                 }
             }
         }
-        changed
+        if !changed.is_empty() {
+            self.persist(|db| db.set_flags(account, folder, &changed));
+        }
+        !changed.is_empty()
+    }
+
+    /// UID писем папки без загруженного тела, от новых к старым.
+    pub fn unopened(&self, account: &str, folder: Folder) -> Vec<u32> {
+        let entries = self.entries.read().unwrap();
+        entries
+            .iter()
+            .filter(|e| e.msg.html.is_none() && e.msg.folder == folder && e.msg.account.as_deref() == Some(account))
+            .filter_map(|e| e.msg.uid)
+            .collect()
+    }
+
+    /// Как [`Store::set_opened`], но по UID; возвращает, поменялась ли отметка о вложениях.
+    pub fn set_opened_uid(&self, account: &str, folder: Folder, uid: u32, opened: Opened) -> bool {
+        let found = {
+            let entries = self.entries.read().unwrap();
+            entries
+                .iter()
+                .find(|e| e.msg.uid == Some(uid) && e.msg.folder == folder && e.msg.account.as_deref() == Some(account))
+                .map(|e| (e.id, e.msg.has_attachments))
+        };
+        let Some((id, had)) = found else { return false };
+        let has = !opened.attachments.is_empty();
+        self.set_opened(id, opened);
+        had != has
     }
 
     /// Запоминает загруженное с сервера письмо: тело, проверку отправителя, идентификаторы цепочки.
     pub fn set_opened(&self, id: u32, opened: Opened) {
         if let Some(e) = self.entries.write().unwrap().iter_mut().find(|e| e.id == id) {
+            if let (Some(account), Some(uid)) = (&e.msg.account, e.msg.uid) {
+                self.persist(|db| db.set_opened(account, e.msg.folder, uid, &opened));
+            }
             e.msg.html = Some(opened.html);
             e.msg.auth = opened.auth;
             e.msg.message_id = opened.message_id;

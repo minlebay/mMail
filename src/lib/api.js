@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 export const listFolders = () => invoke('list_folders');
 
 export const syncStatus = () => invoke('sync_status');
+export const unlockStore = () => invoke('unlock_store');
 
 // account: null — все ящики, '' — демо, иначе адрес ящика.
 export const listMessages = (account, folder, query, offset, limit) =>

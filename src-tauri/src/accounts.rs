@@ -108,3 +108,27 @@ pub async fn remove(email: &str) -> Result<()> {
     }
     Ok(())
 }
+
+/// Ключ шифрованного кэша писем. Создаётся при первом запуске; новый — только если KWallet
+/// ответил, что ключа нет (при ошибке доступа к KWallet ничего не создаём, а возвращаем ошибку).
+pub async fn db_key() -> Result<Zeroizing<[u8; 32]>> {
+    let attributes = HashMap::from([("service", SERVICE), ("kind", "db-key")]);
+    let ss = connect().await?;
+    let found = ss.search_items(attributes.clone()).await?;
+    if let Some(item) = found.unlocked.into_iter().chain(found.locked).next() {
+        item.unlock().await?;
+        let secret = Zeroizing::new(item.get_secret().await?);
+        let mut key = Zeroizing::new([0u8; 32]);
+        if secret.len() != key.len() {
+            return Err("ключ хранилища в KWallet повреждён".into());
+        }
+        key.copy_from_slice(&secret);
+        return Ok(key);
+    }
+    let mut key = Zeroizing::new([0u8; 32]);
+    getrandom::fill(key.as_mut_slice()).map_err(|e| e.to_string())?;
+    let collection = ss.get_default_collection().await?;
+    collection.unlock().await?;
+    collection.create_item("mMail: ключ хранилища писем", attributes, key.as_slice(), true, "application/octet-stream").await?;
+    Ok(key)
+}

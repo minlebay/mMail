@@ -4,6 +4,7 @@ mod blur;
 mod commands;
 mod compose;
 mod config;
+mod db;
 mod fake;
 mod imap;
 mod links;
@@ -40,6 +41,7 @@ fn main() {
             imap::list_accounts,
             imap::add_account,
             imap::remove_account,
+            imap::unlock_store,
             smtp::send_message,
             compose::open_compose,
             compose::compose_init,

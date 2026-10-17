@@ -2,12 +2,12 @@
 
 use base64::Engine;
 use mail_parser::{Message, MessagePart, MimeHeaders};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Встроенные картинки крупнее этого не встраиваем в просмотр.
 const MAX_INLINE_IMAGE: usize = 5 * 1024 * 1024;
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AttachmentMeta {
     pub index: usize,
