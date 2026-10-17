@@ -10,6 +10,7 @@
     "allow-compose-init",
     "allow-send-message",
     "allow-pick-attachments",
+    "allow-clean-compose-html",
     "allow-get-appearance",
     "core:event:allow-listen",
     "core:event:allow-unlisten",

@@ -164,6 +164,16 @@ pub async fn compose_init(
     Ok(init)
 }
 
+/// HTML, набранный в режиме «Код»: прежде чем показать его в редакторе, чистим тем же
+/// фильтром, что и входящие письма (без скриптов, обработчиков и внешних картинок).
+#[tauri::command]
+pub fn clean_compose_html(html: String) -> Result<String, String> {
+    if html.len() > 1024 * 1024 {
+        return Err("письмо слишком большое".into());
+    }
+    Ok(sanitize::clean_html(&html, false).html)
+}
+
 /// Системный диалог выбора файлов открывает ядро; в UI уходят только id, имя и размер.
 #[tauri::command]
 pub async fn pick_attachments(app: AppHandle, state: State<'_, ComposeState>) -> Result<Vec<AttachmentInfo>, String> {

@@ -322,7 +322,7 @@
     color: #fff;
   }
   .primary {
-    background: var(--accent);
+    background: var(--accent-strong);
     color: #fff;
   }
   .primary:disabled {

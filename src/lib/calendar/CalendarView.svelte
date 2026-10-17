@@ -273,7 +273,7 @@
     background: rgba(255, 255, 255, 0.08);
   }
   .num.today {
-    background: var(--accent);
+    background: var(--accent-strong);
     color: #fff;
   }
   .chipev {

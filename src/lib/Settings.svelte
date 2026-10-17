@@ -695,7 +695,7 @@
     height: 36px;
     padding: 0 16px;
     border-radius: 9px;
-    background: var(--accent);
+    background: var(--accent-strong);
     color: #fff;
   }
   .primary:disabled {

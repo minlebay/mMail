@@ -121,7 +121,7 @@
     background: rgba(255, 255, 255, 0.18);
   }
   .primary {
-    background: var(--accent);
+    background: var(--accent-strong);
     color: #fff;
   }
   .primary:hover {

@@ -7,7 +7,7 @@
   import Icon from './lib/Icon.svelte';
   import Select from './lib/Select.svelte';
   import { applyTheme } from './lib/themes.js';
-  import { composeInit, sendMessage, pickAttachments, getAppearance } from './lib/api.js';
+  import { composeInit, sendMessage, pickAttachments, getAppearance, cleanComposeHtml } from './lib/api.js';
 
   const win = getCurrentWindow();
 
@@ -21,6 +21,10 @@
   let subject = $state('');
   let mode = $state('html');
   let text = $state('');
+  // Режим «Код»: HTML письма как текст с тегами.
+  let code = $state('');
+  let linkAnchor = null;
+  let linkRemovable = $state(false);
   let editor = $state();
   let attachments = $state([]);
   let sending = $state(false);
@@ -128,12 +132,27 @@
     sel.addRange(range);
   }
 
-  function switchMode(next) {
+  const currentHtml = () => (mode === 'html' ? editor.innerHTML : mode === 'code' ? code : textToHtml(text));
+
+  async function switchMode(next) {
     if (next === mode) return;
+    const html = currentHtml();
     if (next === 'text') {
-      text = htmlToText(editor.innerHTML);
+      text = htmlToText(html);
+    } else if (next === 'code') {
+      code = html;
     } else {
-      queueMicrotask(() => (editor.innerHTML = textToHtml(text)));
+      // Из кода — только через фильтр ядра; текст экранирован textToHtml.
+      let clean = html;
+      if (mode === 'code') {
+        try {
+          clean = await cleanComposeHtml(html);
+        } catch (e) {
+          error = String(e);
+          return;
+        }
+      }
+      queueMicrotask(() => (editor.innerHTML = clean));
     }
     mode = next;
   }
@@ -153,10 +172,52 @@
     }
   }
 
+  // Ссылка под курсором или внутри выделения — её можно изменить или убрать.
+  function linkAt(range) {
+    if (!range) return null;
+    const node = range.commonAncestorContainer;
+    const el = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+    const anchor = el?.closest('a');
+    if (anchor && editor.contains(anchor)) return anchor;
+    return range.collapsed ? null : [...editor.querySelectorAll('a')].find((a) => range.intersectsNode(a)) ?? null;
+  }
+
   function openLink() {
     rememberSelection();
-    linkUrl = 'https://';
+    linkAnchor = linkAt(savedRange);
+    linkRemovable = !!linkAnchor;
+    linkUrl = linkAnchor?.getAttribute('href') ?? 'https://';
     linkOpen = true;
+  }
+
+  function restoreSelection() {
+    editor.focus();
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    if (savedRange && editor.contains(savedRange.commonAncestorContainer)) {
+      sel.addRange(savedRange);
+    } else {
+      // Курсор в тело ещё не ставили — в конец письма.
+      const end = document.createRange();
+      end.selectNodeContents(editor);
+      end.collapse(false);
+      sel.addRange(end);
+    }
+    return sel;
+  }
+
+  function removeLink() {
+    linkOpen = false;
+    const sel = restoreSelection();
+    // Курсор просто стоит в ссылке — убираем её целиком, текст остаётся.
+    if (sel.isCollapsed && linkAnchor) {
+      const range = document.createRange();
+      range.selectNodeContents(linkAnchor);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+    document.execCommand('unlink');
+    touched = true;
   }
 
   function applyLink(e) {
@@ -164,19 +225,11 @@
     const url = linkUrl.trim();
     linkOpen = false;
     if (!/^(https?:\/\/|mailto:)\S+$/i.test(url)) return;
-    editor.focus();
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    if (savedRange && editor.contains(savedRange.commonAncestorContainer)) {
-      sel.addRange(savedRange);
-    } else {
-      // Курсор в тело ещё не ставили — ссылка в конец письма.
-      const end = document.createRange();
-      end.selectNodeContents(editor);
-      end.collapse(false);
-      sel.addRange(end);
-    }
-    if (sel.isCollapsed) {
+    const sel = restoreSelection();
+    if (sel.isCollapsed && linkAnchor) {
+      // Курсор в существующей ссылке — меняем её адрес.
+      linkAnchor.setAttribute('href', url);
+    } else if (sel.isCollapsed) {
       // Без выделения — вставляем сам адрес ссылкой там, где курсор.
       document.execCommand('insertHTML', false, `<a href="${escapeHtml(url)}">${escapeHtml(url)}</a>`);
     } else {
@@ -199,14 +252,14 @@
     sending = true;
     error = '';
     try {
-      const html = mode === 'html' ? editor.innerHTML : null;
+      const html = mode === 'text' ? null : currentHtml();
       await sendMessage({
         from,
         to,
         cc,
         bcc,
         subject,
-        body: mode === 'html' ? editor.innerText : text,
+        body: mode === 'html' ? editor.innerText : mode === 'code' ? htmlToText(code) : text,
         html,
         attachments: attachments.map((a) => a.id),
         inReplyTo: init.inReplyTo,
@@ -286,12 +339,14 @@
             <!-- svelte-ignore a11y_autofocus -->
             <input bind:value={linkUrl} autofocus spellcheck="false" />
             <button class="ok">OK</button>
+            {#if linkRemovable}<button type="button" class="ok" onclick={removeLink}>{$t("Убрать ссылку")}</button>{/if}
           </form>
         {/if}
       {/if}
       <div class="modes">
         <button class:active={mode === 'html'} onclick={() => switchMode('html')}>HTML</button>
         <button class:active={mode === 'text'} onclick={() => switchMode('text')}>{$t("Текст")}</button>
+        <button class:active={mode === 'code'} title={$t("HTML-код письма")} onclick={() => switchMode('code')}>{$t("Код")}</button>
       </div>
     </div>
 
@@ -308,6 +363,8 @@
     ></div>
     {#if mode === 'text'}
       <textarea class="editor" bind:value={text} oninput={() => (touched = true)} placeholder={$t("Текст письма")}></textarea>
+    {:else if mode === 'code'}
+      <textarea class="editor code" bind:value={code} oninput={() => (touched = true)} spellcheck="false"></textarea>
     {/if}
 
     {#if attachments.length}
@@ -483,6 +540,11 @@
     contain: paint;
     transform: translateZ(0);
   }
+  .editor.code {
+    font-family: ui-monospace, 'JetBrains Mono', 'DejaVu Sans Mono', monospace;
+    font-size: 12.5px;
+    white-space: pre-wrap;
+  }
   .editor:focus {
     border-color: var(--accent);
   }
@@ -570,7 +632,7 @@
     flex: none;
   }
   .primary {
-    background: var(--accent);
+    background: var(--accent-strong);
     color: #fff;
   }
   .primary:disabled {

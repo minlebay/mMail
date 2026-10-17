@@ -20,11 +20,29 @@ function hexToRgb(hex) {
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
+// Белый текст на кнопке должен читаться: затемняем акцент, пока контраст с белым не станет
+// не ниже 3.5:1 (у светлых акцентов вроде «Графита» без этого текст сливается с фоном).
+const luminance = (rgb) => {
+  const [r, g, b] = rgb.map((c) => {
+    const v = c / 255;
+    return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+export function strongAccent(hex) {
+  let rgb = hexToRgb(hex);
+  for (let k = 0; k < 40 && 1.05 / (luminance(rgb) + 0.05) < 3.5; k++) {
+    rgb = rgb.map((c) => Math.round(c * 0.96));
+  }
+  return `rgb(${rgb.join(', ')})`;
+}
+
 export function applyTheme(id, opacity = DEFAULT_OPACITY) {
   const theme = themeById(id);
   const [r, g, b] = hexToRgb(theme.accent);
   const root = document.documentElement.style;
   root.setProperty('--accent', theme.accent);
+  root.setProperty('--accent-strong', strongAccent(theme.accent));
   root.setProperty('--accent-soft', `rgba(${r}, ${g}, ${b}, 0.28)`);
   root.setProperty('--window-tint', `rgba(${theme.tint.join(', ')}, ${opacity})`);
   // Фон диалогов: оттенок темы, чуть светлее и почти непрозрачный.

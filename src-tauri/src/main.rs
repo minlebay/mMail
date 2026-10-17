@@ -90,6 +90,7 @@ fn main() {
             compose::open_compose,
             compose::compose_init,
             compose::pick_attachments,
+            compose::clean_compose_html,
         ])
         .setup(|app| {
             app.manage(config::ConfigStore::load(app.path().app_config_dir()?));

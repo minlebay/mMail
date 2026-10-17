@@ -1094,5 +1094,17 @@
   "получатели не увидят этих адресов": {
     "en": "other recipients won't see these addresses",
     "sr": "ostali primaoci neće videti ove adrese"
+  },
+  "Убрать ссылку": {
+    "en": "Remove link",
+    "sr": "Ukloni vezu"
+  },
+  "Код": {
+    "en": "Code",
+    "sr": "Kod"
+  },
+  "HTML-код письма": {
+    "en": "Message HTML source",
+    "sr": "HTML kod poruke"
   }
 }

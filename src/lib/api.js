@@ -57,6 +57,7 @@ export const composeInit = () => invoke('compose_init');
 
 // Файлы выбираются в системном диалоге ядра; сюда приходят только id, имя и размер.
 export const pickAttachments = () => invoke('pick_attachments');
+export const cleanComposeHtml = (html) => invoke('clean_compose_html', { html });
 
 // Путь выбирается в системном диалоге ядра; возвращает false, если сохранение отменили.
 export const saveAttachment = (id, index) => invoke('save_attachment', { id, index });

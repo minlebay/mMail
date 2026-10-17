@@ -9,6 +9,7 @@
   --glass-border: rgba(255, 255, 255, 0.14);
   --accent: #8b7bff;
   --accent-soft: rgba(139, 123, 255, 0.28);
+  --accent-strong: rgb(133, 118, 245);
   --surface: rgba(36, 31, 48, 0.97);
   /* Полупрозрачный фон всплывающих меню под backdrop-filter. */
   --glass-menu: rgba(36, 31, 48, 0.94);
