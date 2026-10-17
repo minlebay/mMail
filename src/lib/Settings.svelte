@@ -1,4 +1,5 @@
 <script>
+  import { getVersion } from '@tauri-apps/api/app';
   import { listen } from '@tauri-apps/api/event';
   import { t, setLanguage, LANGUAGES } from './i18n.js';
   // Настройки — отдельное окно (метка "settings"); размер подстраивается под содержимое.
@@ -107,6 +108,8 @@
   });
 
   let tab = $state('appearance');
+  let version = $state('');
+  getVersion().then((v) => (version = v));
   // Начальные значения формы; дальше форма сама пишет в appearance.
   const initial = untrack(() => $state.snapshot(appearance));
   let theme = $state(initial.theme);
@@ -496,12 +499,20 @@
         </p>
       </section>
     {/if}
+    <p class="version">mMail {version}</p>
   </div>
   </div>
   </div>
 </div>
 
 <style>
+  .version {
+    margin: 18px 0 0;
+    font-size: 12px;
+    color: var(--muted);
+    text-align: right;
+    user-select: text;
+  }
   .glass-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
   .window {
     position: fixed;

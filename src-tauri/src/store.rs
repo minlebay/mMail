@@ -177,6 +177,7 @@ impl Store {
         *self.validity.lock().unwrap() = validity.into_iter().map(|(a, f, v)| ((a, f), v)).collect();
         self.replace_entries(|m| m.account.is_some(), messages);
         let _ = self.db.set(db);
+        crate::memory::trim();
         Ok(())
     }
 

@@ -14,6 +14,7 @@ mod folders;
 mod imap;
 mod i18n;
 mod links;
+mod memory;
 mod notify;
 mod remote;
 mod sanitize;
@@ -33,6 +34,7 @@ use tauri::{AppHandle, Emitter, Manager, Url, WebviewUrl, WebviewWindow, Webview
 const CORNER_RADIUS: i32 = 12;
 
 fn main() {
+    memory::limit_arenas();
     tauri::Builder::default()
         .manage(store::Store::default())
         .manage(imap::Imap::default())

@@ -725,6 +725,9 @@ async fn prefetch_bodies(
         if changed {
             let _ = app.emit("mailbox-changed", ());
         }
+        // Пачка писем (до мегабайта каждое) уже на диске — освобождённое отдаём системе.
+        drop(fetches);
+        crate::memory::trim();
     }
     Ok(cursors.iter().map(|c| pending(c, skipped).len()).sum())
 }
