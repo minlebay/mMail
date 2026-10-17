@@ -1154,5 +1154,9 @@
   "От 2560 пикселей ширины интерфейса: почта и календарь рядом. При увеличении масштаба или ширины панелей потребуется больше места.": {
     "en": "From 2560 interface pixels wide: mail and calendar side by side. Larger zoom or wider panels require more space.",
     "sr": "Od 2560 piksela širine interfejsa: pošta i kalendar jedan pored drugog. Veće uvećanje ili širi paneli zahtevaju više prostora."
+  },
+  "писем за последние 5 лет": {
+    "en": "messages from the last 5 years",
+    "sr": "poruka iz poslednjih 5 godina"
   }
 }

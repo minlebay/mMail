@@ -69,7 +69,7 @@ pub struct ConfigStore {
 }
 
 pub const POLL_CHOICES: [u64; 5] = [5, 10, 30, 60, 300];
-pub const BODY_DAYS_CHOICES: [u32; 5] = [0, 30, 90, 180, 365];
+pub const BODY_DAYS_CHOICES: [u32; 6] = [0, 30, 90, 180, 365, 1826];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum TrayMode {
