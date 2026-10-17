@@ -1082,5 +1082,17 @@
   "Уже началось": {
     "en": "Started",
     "sr": "Već je počelo"
+  },
+  "Письмо не открыто": {
+    "en": "Message not opened",
+    "sr": "Poruka nije otvorena"
+  },
+  "Скрытая": {
+    "en": "Bcc",
+    "sr": "Skrivena"
+  },
+  "получатели не увидят этих адресов": {
+    "en": "other recipients won't see these addresses",
+    "sr": "ostali primaoci neće videti ove adrese"
   }
 }

@@ -21,18 +21,20 @@ pub const MAX_ATTACHMENTS_BYTES: u64 = 25 * 1024 * 1024;
 #[serde(default, rename_all = "camelCase")]
 pub struct Prefill {
     /// Желаемый отправитель (ящик выбранной папки или ящик исходного письма).
-    from: Option<String>,
-    to: String,
-    subject: String,
+    pub(crate) from: Option<String>,
+    pub(crate) to: String,
+    pub(crate) cc: String,
+    pub(crate) bcc: String,
+    pub(crate) subject: String,
     /// Готовый текст письма (простой текст) — для писем, открытых извне.
-    body: String,
+    pub(crate) body: String,
     /// Файлы для писем, открытых извне. Из UI их передать нельзя (`skip`) — только ядро знает пути.
     #[serde(skip)]
-    attach: Vec<PathBuf>,
+    pub(crate) attach: Vec<PathBuf>,
     /// Исходное письмо для ответа или пересылки.
-    source: Option<u32>,
+    pub(crate) source: Option<u32>,
     /// "new" | "reply" | "forward"
-    kind: String,
+    pub(crate) kind: String,
 }
 
 #[derive(Serialize)]
@@ -41,6 +43,8 @@ pub struct ComposeInit {
     from: String,
     accounts: Vec<String>,
     to: String,
+    cc: String,
+    bcc: String,
     subject: String,
     body: String,
     attachments: Vec<AttachmentInfo>,
@@ -120,6 +124,8 @@ pub async fn compose_init(
         from,
         accounts,
         to: prefill.to,
+        cc: prefill.cc,
+        bcc: prefill.bcc,
         subject: prefill.subject,
         body: prefill.body,
         attachments: prefill.attach.iter().filter_map(|path| state.register(path)).collect(),
@@ -195,77 +201,4 @@ pub fn open_reply(app: &AppHandle, id: u32) -> Result<(), String> {
     let prefill = Prefill { from: m.account.clone(), to: m.from_addr.clone(), subject, source: Some(id), kind: "reply".into(), ..Default::default() };
     open_from_background(app, prefill);
     Ok(())
-}
-
-/// Лимиты для писем, открытых извне: адресаты и тема — строка, текст — до 1 МБ.
-const EXTERNAL_LINE_MAX: usize = 2000;
-const EXTERNAL_BODY_MAX: usize = 1024 * 1024;
-
-/// Письмо, открытое другой программой (например, Claude Code через scripts/mmail-compose):
-/// `mmail compose --from <ящик> --to <адрес> --subject <тема> --body <текст> --attach <путь>…`.
-/// Только открывает окно с заполненными полями — отправляет всегда сам человек кнопкой.
-/// Отправитель — только один из подключённых ящиков (проверяет compose_init).
-pub fn from_args(args: &[String]) -> Result<Option<Prefill>, String> {
-    let Some(pos) = args.iter().position(|a| a == "compose") else { return Ok(None) };
-    let mut prefill = Prefill { kind: "new".into(), ..Default::default() };
-    let mut rest = args[pos + 1..].iter();
-    while let Some(flag) = rest.next() {
-        let value = rest.next().ok_or_else(|| format!("нет значения для {flag}"))?;
-        let line = || -> Result<String, String> {
-            if value.chars().count() > EXTERNAL_LINE_MAX || value.contains(['\r', '\n']) {
-                return Err(format!("{flag}: слишком длинная или многострочная строка"));
-            }
-            Ok(value.trim().to_string())
-        };
-        match flag.as_str() {
-            "--from" => prefill.from = Some(line()?),
-            "--to" => prefill.to = line()?,
-            "--subject" => prefill.subject = line()?,
-            "--body" if value.len() <= EXTERNAL_BODY_MAX => prefill.body = value.replace("\r\n", "\n"),
-            "--body" => return Err("--body: текст больше 1 МБ".into()),
-            // Только абсолютный путь к обычному файлу; вложения видны в окне, их можно убрать.
-            "--attach" => {
-                let path = PathBuf::from(value);
-                if !path.is_absolute() || !path.is_file() {
-                    return Err(format!("--attach: нет файла {value}"));
-                }
-                prefill.attach.push(path);
-                let total: u64 = prefill.attach.iter().filter_map(|p| std::fs::metadata(p).ok()).map(|m| m.len()).sum();
-                if total > MAX_ATTACHMENTS_BYTES {
-                    return Err("--attach: вложения больше 25 МБ".into());
-                }
-            }
-            _ => return Err(format!("неизвестный параметр {flag}")),
-        }
-    }
-    Ok(Some(prefill))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn args(list: &[&str]) -> Vec<String> {
-        list.iter().map(|s| s.to_string()).collect()
-    }
-
-    #[test]
-    fn external_compose_arguments() {
-        let p = from_args(&args(&["mmail", "compose", "--from", "me@gmail.com", "--to", "a@b.c", "--subject", "Привет", "--body", "строка 1\r\nстрока 2"]))
-            .unwrap()
-            .unwrap();
-        assert_eq!((p.from.as_deref(), p.to.as_str(), p.subject.as_str(), p.body.as_str()), (Some("me@gmail.com"), "a@b.c", "Привет", "строка 1\nстрока 2"));
-        assert_eq!(p.kind, "new");
-        assert!(from_args(&args(&["mmail"])).unwrap().is_none());
-        assert!(from_args(&args(&["mmail", "compose", "--to"])).is_err());
-        assert!(from_args(&args(&["mmail", "compose", "--subject", "a\nBcc: x@y.z"])).is_err());
-        assert!(from_args(&args(&["mmail", "compose", "--cc", "x@y.z"])).is_err());
-        assert!(from_args(&args(&["mmail", "compose", "--attach", "relative.txt"])).is_err());
-        assert!(from_args(&args(&["mmail", "compose", "--attach", "/nonexistent/file"])).is_err());
-        let file = std::env::temp_dir().join(format!("mmail-attach-{}.txt", std::process::id()));
-        std::fs::write(&file, "x").unwrap();
-        let p = from_args(&args(&["mmail", "compose", "--attach", file.to_str().unwrap()])).unwrap().unwrap();
-        std::fs::remove_file(&file).unwrap();
-        assert_eq!(p.attach, vec![file]);
-    }
 }

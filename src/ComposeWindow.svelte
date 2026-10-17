@@ -16,6 +16,7 @@
   let from = $state('');
   let to = $state('');
   let cc = $state('');
+  let bcc = $state('');
   let showCc = $state(false);
   let subject = $state('');
   let mode = $state('html');
@@ -49,6 +50,9 @@
         init = data;
         from = data.from;
         to = data.to;
+        cc = data.cc ?? '';
+        bcc = data.bcc ?? '';
+        showCc = !!(cc || bcc);
         subject = data.subject;
         attachments = data.attachments ?? [];
         setupBody(data);
@@ -175,6 +179,7 @@
         from,
         to,
         cc,
+        bcc,
         subject,
         body: mode === 'html' ? editor.innerText : text,
         html,
@@ -226,6 +231,10 @@
         <label>
           <span>{$t("Копия")}</span>
           <input bind:value={cc} spellcheck="false" />
+        </label>
+        <label>
+          <span>{$t("Скрытая")}</span>
+          <input bind:value={bcc} spellcheck="false" placeholder={$t("получатели не увидят этих адресов")} />
         </label>
       {/if}
       <label>

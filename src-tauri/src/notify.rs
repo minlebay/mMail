@@ -61,6 +61,12 @@ fn show(
     });
 }
 
+/// Ошибка в аргументах `mmail -compose …`: вызывающему по D-Bus ответить нечем, показываем человеку.
+pub fn cli_error(app: &AppHandle, error: &str) {
+    eprintln!("mMail: командная строка: {error}");
+    show(app, crate::i18n::text(app, "Письмо не открыто"), escape(&plain(error, 300)), &[], |_, _| {});
+}
+
 fn open_message(app: &AppHandle, id: Option<u32>, account: &str) {
     crate::tray::show_main(app);
     let _ = app.emit_to("main", "open-message", serde_json::json!({ "id": id, "account": account }));

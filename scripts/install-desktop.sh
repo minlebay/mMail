@@ -15,7 +15,8 @@ for size in 16 22 24 32 48 64 128 256; do
   install -Dm644 "$tmp/${size}x${size}.png" "$data/icons/hicolor/${size}x${size}/apps/mmail.png"
 done
 
-# Пока нет релизной сборки, ярлык запускает dev-режим (scripts/launch.sh).
+# Пока нет релизной сборки, ярлык запускает dev-режим (через scripts/mmail → launch.sh).
+# MimeType: mMail в списке программ для ссылок mailto: (выбрать по умолчанию — в «Параметрах системы»).
 install -d "$data/applications"
 cat > "$data/applications/mmail.desktop" <<DESKTOP
 [Desktop Entry]
@@ -24,10 +25,11 @@ Name=mMail
 GenericName=Почтовый клиент
 Comment=Почта Яндекса и Gmail
 Icon=mmail
-Exec=$root/scripts/launch.sh
+Exec=$root/scripts/mmail %u
 Terminal=false
 Categories=Network;Email;
 StartupWMClass=mmail
+MimeType=x-scheme-handler/mailto;
 DESKTOP
 
 touch "$data/icons/hicolor"

@@ -27,6 +27,8 @@ pub struct Draft {
     from: String,
     to: String,
     cc: String,
+    #[serde(default)]
+    bcc: String,
     subject: String,
     /// Текстовая версия (всегда).
     body: String,
@@ -68,10 +70,11 @@ fn parse_list(list: &str) -> Result<Vec<Mailbox>, String> {
 fn build(account: &Account, draft: &Draft, files: Vec<File>) -> Result<Message, String> {
     let to = parse_list(&draft.to)?;
     let cc = parse_list(&draft.cc)?;
+    let bcc = parse_list(&draft.bcc)?;
     if to.is_empty() {
         return Err("укажите получателя".into());
     }
-    if to.len() + cc.len() > MAX_RECIPIENTS {
+    if to.len() + cc.len() + bcc.len() > MAX_RECIPIENTS {
         return Err(format!("не больше {MAX_RECIPIENTS} получателей"));
     }
     if draft.body.len() > MAX_BODY || draft.html.as_ref().is_some_and(|h| h.len() > MAX_BODY) {
@@ -91,6 +94,10 @@ fn build(account: &Account, draft: &Draft, files: Vec<File>) -> Result<Message, 
     }
     for mailbox in cc {
         builder = builder.cc(mailbox);
+    }
+    // Скрытые копии: lettre кладёт их только в конверт SMTP и убирает заголовок Bcc из письма.
+    for mailbox in bcc {
+        builder = builder.bcc(mailbox);
     }
     if let Some(id) = draft.in_reply_to.as_deref().and_then(message_id) {
         builder = builder.in_reply_to(id);
@@ -183,6 +190,7 @@ mod tests {
             from: "me@yandex.ru".into(),
             to: to.into(),
             cc: String::new(),
+            bcc: String::new(),
             subject: subject.into(),
             body: "hi".into(),
             html: None,
@@ -220,5 +228,16 @@ mod tests {
         let raw = String::from_utf8(ok.formatted()).unwrap();
         assert!(!raw.contains("\r\nBcc:"), "перевод строки в теме не должен давать новый заголовок: {raw}");
         assert!(!raw.to_ascii_lowercase().contains("user-agent"));
+    }
+
+    #[test]
+    fn bcc_goes_to_envelope_only() {
+        let account = Account::new("me@yandex.ru").unwrap();
+        let mut d = draft("a@b.example", "x");
+        d.bcc = "hidden@c.example".into();
+        let message = build_plain(&account, &d).unwrap();
+        let raw = String::from_utf8(message.formatted()).unwrap();
+        assert!(!raw.contains("hidden@c.example"), "{raw}");
+        assert!(message.envelope().to().iter().any(|a| a.to_string() == "hidden@c.example"));
     }
 }

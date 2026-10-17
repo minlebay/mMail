@@ -3,6 +3,7 @@ mod attachments;
 mod blur;
 mod commands;
 mod calendar;
+mod cli;
 mod compose;
 mod config;
 mod context_menu;
@@ -38,14 +39,14 @@ fn main() {
         .manage(tray::TrayState::default())
         .manage(google::Google::default())
         // Второй запуск не создаёт копию, а передаёт аргументы работающему mMail (D-Bus):
-        // без аргументов — показать окно, `compose …` — открыть новое письмо.
-        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| match compose::from_args(&argv) {
+        // без аргументов — показать окно, `-compose …` / `mailto:…` — открыть новое письмо.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| match cli::parse(&argv, std::path::Path::new(&cwd)) {
             Ok(Some(prefill)) => compose::open_from_background(app, prefill),
             Ok(None) => {
                 let handle = app.clone();
                 let _ = app.run_on_main_thread(move || tray::show_main(&handle));
             }
-            Err(e) => eprintln!("mMail: compose: {e}"),
+            Err(e) => notify::cli_error(app, &e),
         }))
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
@@ -122,6 +123,13 @@ fn main() {
             });
             if let Err(e) = tray::init(app.handle()) {
                 eprintln!("mMail: трей недоступен: {e}");
+            }
+            // Первый запуск сразу с письмом (`mmail -compose …`, ссылка mailto: из браузера).
+            let argv: Vec<String> = std::env::args().collect();
+            match cli::parse(&argv, &std::env::current_dir().unwrap_or_default()) {
+                Ok(Some(prefill)) => compose::open_compose(app.handle().clone(), app.state(), prefill)?,
+                Ok(None) => {}
+                Err(e) => notify::cli_error(app.handle(), &e),
             }
             tauri::async_runtime::spawn(imap::start(app.handle().clone()));
             tauri::async_runtime::spawn(notify::reminders_loop(app.handle().clone()));

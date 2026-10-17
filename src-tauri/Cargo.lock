@@ -2581,6 +2581,7 @@ dependencies = [
  "mail-parser",
  "mime_guess",
  "notify-rust",
+ "percent-encoding",
  "rusqlite",
  "secret-service",
  "serde",

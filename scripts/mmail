@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# mmail — командная строка mMail (как у Thunderbird). Письмо только открывается в окне:
+# проверить и нажать «Отправить» должен человек.
+#
+#   mmail                                   показать mMail (запустить, если не запущен)
+#   mmail -compose "to='a@b.c,d@e.f',cc='…',bcc='…',subject='Тема',from='я@gmail.com',
+#                   body='Текст',attachment='/путь/1.pdf,file:///путь/2.jpg'"
+#   mmail -compose "to='a@b.c',subject='Отчёт',message='текст.txt'"   текст из файла (UTF-8)
+#   mmail mailto:a@b.c?subject=Тема&body=Текст
+#   mmail compose --to a@b.c --subject Тема --attach файл.pdf < текст.txt
+#
+# from — один из ящиков mMail (иначе первый). Относительные пути — от текущей папки.
+# Вложения до 25 МБ. Ошибку в аргументах mMail покажет уведомлением.
+set -euo pipefail
+
+NAME=dev.minlebay.mmail.SingleInstance
+OBJECT=/dev/minlebay/mmail/SingleInstance
+here=$(dirname "$(readlink -f "$0")")
+
+case "${1:-}" in
+  -h|--help|help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+esac
+
+args=(mmail "$@")
+# `compose --…` без --body: текст из stdin, если он перенаправлен.
+if [[ ${1:-} == compose && ! -t 0 ]] && ! printf '%s\n' "$@" | grep -qx -- '--body'; then
+  args+=(--body "$(cat)")
+fi
+
+running() { busctl --user status "$NAME" >/dev/null 2>&1; }
+
+if ! running; then
+  (($# == 0)) && exec "$here/launch.sh"
+  setsid "$here/launch.sh" >/dev/null 2>&1 < /dev/null &
+  for _ in $(seq 180); do running && break; sleep 1; done
+  running || { echo "mMail не запустился" >&2; exit 1; }
+  sleep 3 # ящики подключаются после старта окна
+fi
+
+busctl --user call -- "$NAME" "$OBJECT" org.SingleInstance.DBus ExecuteCallback ass "${#args[@]}" "${args[@]}" "$PWD" >/dev/null
+(($# == 0)) || echo "mMail: запрос передан — откроется окно письма (ошибку в аргументах mMail покажет уведомлением)."
