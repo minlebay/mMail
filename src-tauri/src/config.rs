@@ -32,6 +32,10 @@ pub struct Config {
     pub tray_icon: Option<String>,
     /// Размеры окон между запусками: `main`, `compose`.
     pub windows: std::collections::BTreeMap<String, crate::window_state::Geometry>,
+    /// Уведомления о новых письмах во «Входящих»; `None` — включены.
+    pub notify_mail: Option<bool>,
+    /// Напоминания о событиях календаря; `None` — включены.
+    pub notify_events: Option<bool>,
     /// Подключённый аккаунт Google Календаря (ключи — в KWallet).
     pub google_account: Option<String>,
     /// Календари, скрытые в сетке (id календарей Google).

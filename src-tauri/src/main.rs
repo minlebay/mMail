@@ -13,6 +13,7 @@ mod folders;
 mod imap;
 mod i18n;
 mod links;
+mod notify;
 mod remote;
 mod sanitize;
 mod smtp;
@@ -51,6 +52,7 @@ fn main() {
             commands::clear_cache,
             commands::open_settings,
             commands::set_show_all_accounts,
+            commands::set_notifications,
             commands::write_clipboard,
             context_menu::context_menu_items,
             google::google_status,
@@ -112,6 +114,7 @@ fn main() {
                 eprintln!("mMail: трей недоступен: {e}");
             }
             tauri::async_runtime::spawn(imap::start(app.handle().clone()));
+            tauri::async_runtime::spawn(notify::reminders_loop(app.handle().clone()));
             Ok(())
         })
         .run(tauri::generate_context!())

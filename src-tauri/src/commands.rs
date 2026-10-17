@@ -251,6 +251,8 @@ pub struct Appearance {
     tray_icon: String,
     close_to_tray: bool,
     show_all_accounts: bool,
+    notify_mail: bool,
+    notify_events: bool,
 }
 
 pub const ZOOM_MIN: f64 = 0.5;
@@ -272,7 +274,18 @@ pub fn get_appearance(config: State<'_, ConfigStore>) -> Appearance {
         tray_icon: c.tray_icon.clone().unwrap_or_else(|| "color".into()),
         close_to_tray: c.close_to_tray.unwrap_or(true),
         show_all_accounts: c.show_all_accounts.unwrap_or(true),
+        notify_mail: c.notify_mail.unwrap_or(true),
+        notify_events: c.notify_events.unwrap_or(true),
     }
+}
+
+/// Уведомления KDE: о новых письмах и напоминания календаря.
+#[tauri::command]
+pub fn set_notifications(config: State<'_, ConfigStore>, mail: bool, events: bool) -> Result<(), String> {
+    config.update(|c| {
+        c.notify_mail = Some(mail);
+        c.notify_events = Some(events);
+    })
 }
 
 /// Раздел «Все ящики» в дереве папок; главное окно перестраивает дерево по mailbox-changed.

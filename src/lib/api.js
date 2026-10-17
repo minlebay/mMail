@@ -38,6 +38,7 @@ export const calendarSetVisible = (id, visible) => invoke('calendar_set_visible'
 export const calendarEvents = (calendars, from, to) => invoke('calendar_events', { calendars, from, to });
 export const calendarSaveEvent = (calendarId, eventId, draft) => invoke('calendar_save_event', { calendarId, eventId, draft });
 export const calendarDeleteEvent = (calendarId, eventId) => invoke('calendar_delete_event', { calendarId, eventId });
+export const setNotifications = (mail, events) => invoke('set_notifications', { mail, events });
 export const openSettings = () => invoke('open_settings');
 
 export const setZoom = (scale) => invoke('set_zoom', { scale });

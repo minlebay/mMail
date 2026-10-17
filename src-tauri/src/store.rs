@@ -383,6 +383,12 @@ impl Store {
         accounts
     }
 
+    /// id письма в хранилище по ящику, папке и UID.
+    pub fn id_of(&self, account: &str, folder: Folder, uid: u32) -> Option<u32> {
+        let entries = self.entries.read().unwrap();
+        entries.iter().find(|e| e.msg.uid == Some(uid) && e.msg.folder == folder && e.msg.account.as_deref() == Some(account)).map(|e| e.id)
+    }
+
     pub fn details(&self, id: u32) -> Option<Details> {
         let entries = self.entries.read().unwrap();
         let e = entries.iter().find(|e| e.id == id)?;

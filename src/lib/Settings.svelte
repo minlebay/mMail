@@ -7,7 +7,7 @@
   import Select from './Select.svelte';
   import TitleBar from './TitleBar.svelte';
   import { THEMES, applyTheme } from './themes.js';
-  import { setAppearance, listAccounts, addAccount, removeAccount, storageInfo, setBodyDays, clearCache, setShowAllAccounts, googleStatus, googleConnect, googleDisconnect } from './api.js';
+  import { setAppearance, listAccounts, addAccount, removeAccount, storageInfo, setBodyDays, clearCache, setShowAllAccounts, googleStatus, googleConnect, googleDisconnect, setNotifications } from './api.js';
 
   let { appearance } = $props();
 
@@ -119,6 +119,9 @@
   let closeToTray = $state(initial.closeToTray);
   // Сохраняется сразу отдельной командой: это дерево папок, а не оформление.
   let showAllAccounts = $state(initial.showAllAccounts ?? true);
+  let notifyMail = $state(initial.notifyMail ?? true);
+  let notifyEvents = $state(initial.notifyEvents ?? true);
+  const saveNotifications = () => setNotifications(notifyMail, notifyEvents);
 
   // Google Календарь: клиент OAuth вводится один раз; секреты уходят сразу в KWallet через ядро.
   let google = $state(null);
@@ -325,6 +328,16 @@
         <label class="toggle">
           <input type="checkbox" bind:checked={middleClickMinimize} />
           {$t("Сворачивать окно средним кликом по заголовку")}
+        </label>
+
+        <h3>{$t("Уведомления")}</h3>
+        <label class="toggle">
+          <input type="checkbox" bind:checked={notifyMail} onchange={saveNotifications} />
+          {$t("О новых письмах во «Входящих»")}
+        </label>
+        <label class="toggle">
+          <input type="checkbox" bind:checked={notifyEvents} onchange={saveNotifications} />
+          {$t("Напоминания о событиях календаря")}
         </label>
 
         <h3>{$t("Значок приложения")}</h3>

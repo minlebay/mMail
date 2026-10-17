@@ -10,7 +10,7 @@
   import CalendarSidebar from './lib/calendar/CalendarSidebar.svelte';
   import CalendarView from './lib/calendar/CalendarView.svelte';
   import EventDialog from './lib/calendar/EventDialog.svelte';
-  import { visibleRange, toRfc3339 } from './lib/calendar/dates.js';
+  import { visibleRange, toRfc3339, fromDateKey } from './lib/calendar/dates.js';
   import { applyTheme, DEFAULT_THEME, DEFAULT_OPACITY } from './lib/themes.js';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { listen } from '@tauri-apps/api/event';
@@ -108,6 +108,17 @@
       }),
       listen('message-sent', () => showToast('Письмо отправлено')),
       listen('google-changed', () => refreshGoogle()),
+      // Клик по уведомлению: новое письмо (или несколько — тогда «Входящие» ящика) и день события.
+      listen('open-message', ({ payload }) => {
+        setMode('mail');
+        if (groups.some((g) => g.account === payload.account)) active = { account: payload.account, folder: 'inbox' };
+        if (payload.id != null) selectedId = payload.id;
+      }),
+      listen('open-date', ({ payload }) => {
+        setMode('calendar');
+        calDate = fromDateKey(payload);
+        calView = 'day';
+      }),
       listen('operation-error', (e) => showToast(String(e.payload))),
       // Удалённое письмо больше не показываем в просмотре.
       listen('message-trashed', (e) => {

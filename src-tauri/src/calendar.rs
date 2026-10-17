@@ -309,3 +309,89 @@ mod tests {
         assert!(event_body(&d(true, "2026-10-20", "nonsense")).is_err());
     }
 }
+
+/// Напоминание календаря, которое пора показать уведомлением.
+pub struct Reminder {
+    /// Чтобы не показать дважды: календарь, событие, начало, за сколько минут.
+    pub key: String,
+    pub title: String,
+    /// «Через 10 мин · 14:00–15:00».
+    pub when: String,
+    /// День события — для перехода в календарь по клику.
+    pub date_key: String,
+    pub fire_at: DateTime<chrono::Utc>,
+}
+
+/// Напоминания (способ «уведомление») видимых календарей на ближайшие сутки:
+/// у события — свои или стандартные для календаря, как в Google.
+pub async fn upcoming_reminders(app: &AppHandle) -> Result<Vec<Reminder>, String> {
+    let hidden = tauri::Manager::state::<ConfigStore>(app).get().hidden_calendars;
+    let now = Local::now();
+    let (from, to) = (now - chrono::Duration::hours(1), now + chrono::Duration::hours(26));
+    let list = api(app, "GET", &format!("{API}/users/me/calendarList?maxResults=250"), None).await?;
+    let mut out = Vec::new();
+    for calendar in list.get("items").and_then(Value::as_array).into_iter().flatten() {
+        let Some(calendar_id) = calendar.get("id").and_then(Value::as_str) else { continue };
+        if hidden.contains(calendar_id) {
+            continue;
+        }
+        let defaults = popup_minutes(calendar.get("defaultReminders"));
+        let mut url = url::Url::parse(&event_url(calendar_id, None)?).map_err(|e| e.to_string())?;
+        url.query_pairs_mut()
+            .append_pair("timeMin", &from.to_rfc3339())
+            .append_pair("timeMax", &to.to_rfc3339())
+            .append_pair("singleEvents", "true")
+            .append_pair("maxResults", "250");
+        let events = api(app, "GET", url.as_str(), None).await?;
+        for e in events.get("items").and_then(Value::as_array).into_iter().flatten() {
+            let Some(event) = to_event(e, calendar_id) else { continue };
+            let reminders = e.get("reminders");
+            let minutes = if reminders.and_then(|r| r.get("useDefault")).and_then(Value::as_bool).unwrap_or(true) {
+                defaults.clone()
+            } else {
+                popup_minutes(reminders.and_then(|r| r.get("overrides")))
+            };
+            let Some(start) = local_start(&event) else { continue };
+            for m in minutes {
+                let fire_at = (start - chrono::Duration::minutes(m)).with_timezone(&chrono::Utc);
+                if fire_at < now - chrono::Duration::minutes(5) || fire_at > to {
+                    continue;
+                }
+                let span = if event.all_day {
+                    crate::i18n::text(app, "весь день")
+                } else {
+                    let end = DateTime::parse_from_rfc3339(&event.end).map(|d| d.with_timezone(&Local)).unwrap_or(start);
+                    format!("{}–{}", start.format("%H:%M"), end.format("%H:%M"))
+                };
+                let soon = crate::i18n::text(app, "Через {minutes} мин").replace("{minutes}", &m.to_string());
+                out.push(Reminder {
+                    key: format!("{calendar_id}\u{1}{}\u{1}{}\u{1}{m}", event.id, event.start),
+                    title: event.title.clone(),
+                    when: format!("{soon} · {span}"),
+                    date_key: start.format("%Y-%m-%d").to_string(),
+                    fire_at,
+                });
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Минуты напоминаний способом «уведомление» (письма-напоминания Google шлёт сам).
+fn popup_minutes(list: Option<&Value>) -> Vec<i64> {
+    list.and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|r| r.get("method").and_then(Value::as_str) == Some("popup"))
+        .filter_map(|r| r.get("minutes").and_then(Value::as_i64))
+        .filter(|m| (0..=40_320).contains(m))
+        .collect()
+}
+
+fn local_start(e: &Event) -> Option<DateTime<Local>> {
+    if e.all_day {
+        let day = NaiveDate::parse_from_str(&e.start, "%Y-%m-%d").ok()?;
+        return day.and_hms_opt(0, 0, 0)?.and_local_timezone(Local).earliest();
+    }
+    DateTime::parse_from_rfc3339(&e.start).ok().map(|d| d.with_timezone(&Local))
+}

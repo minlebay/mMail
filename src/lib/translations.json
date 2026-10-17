@@ -1038,5 +1038,29 @@
   "Сохраняю…": {
     "en": "Saving…",
     "sr": "Čuvam…"
+  },
+  "Уведомления": {
+    "en": "Notifications",
+    "sr": "Obaveštenja"
+  },
+  "О новых письмах во «Входящих»": {
+    "en": "New messages in Inbox",
+    "sr": "Nove poruke u prijemnom sandučetu"
+  },
+  "Напоминания о событиях календаря": {
+    "en": "Calendar event reminders",
+    "sr": "Podsetnici za događaje u kalendaru"
+  },
+  "Открыть": {
+    "en": "Open",
+    "sr": "Otvori"
+  },
+  "Новых писем: {count}": {
+    "en": "New messages: {count}",
+    "sr": "Novih poruka: {count}"
+  },
+  "Через {minutes} мин": {
+    "en": "In {minutes} min",
+    "sr": "Za {minutes} min"
   }
 }

@@ -758,8 +758,21 @@ async fn refresh(app: &AppHandle, session: &mut Session, email: &str, cursors: &
                 .filter_map(|f| to_message(f, email, cursor.folder))
                 .collect();
             if !fresh.is_empty() {
+                // Новые непрочитанные во «Входящих» — уведомление (после записи: нужен id для клика).
+                let incoming: Vec<(u32, String, String)> = fresh
+                    .iter()
+                    .filter(|m| m.folder == Folder::Inbox && m.unread)
+                    .filter_map(|m| Some((m.uid?, m.from_name.clone(), m.subject.clone())))
+                    .collect();
                 store.append(fresh);
                 changed = true;
+                let mail: Vec<crate::notify::NewMail> = incoming
+                    .into_iter()
+                    .filter_map(|(uid, from, subject)| {
+                        Some(crate::notify::NewMail { id: store.id_of(email, Folder::Inbox, uid)?, account: email.to_string(), from, subject })
+                    })
+                    .collect();
+                crate::notify::new_mail(app, mail);
             }
         }
         // Писем на сервере не столько, сколько у нас, — что-то удалили или перенесли в другом клиенте.
