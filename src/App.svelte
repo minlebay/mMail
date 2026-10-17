@@ -1,4 +1,5 @@
 <script>
+  import { wideLayoutEnabled } from './lib/layout.js';
   import { t } from './lib/i18n.js';
   import TitleBar from './lib/TitleBar.svelte';
   import Sidebar from './lib/Sidebar.svelte';
@@ -35,13 +36,15 @@
       theme: a.theme || DEFAULT_THEME,
       opacity: a.opacity ?? DEFAULT_OPACITY,
       scheme: a.scheme,
+      blurEnabled: a.blurEnabled ?? true,
+      wideLayout: a.wideLayout ?? false,
       systemDark: a.systemDark,
       middleClickMinimize: a.middleClickMinimize,
       zoom: a.zoom,
       pollSeconds: a.pollSeconds,
     };
     zoom = a.zoom;
-    applyTheme(appearance.theme, appearance.opacity, isDark(appearance));
+    applyTheme(appearance.theme, appearance.opacity, isDark(appearance), appearance.blurEnabled ?? true);
   });
 
   function changeZoom(value) {
@@ -60,8 +63,13 @@
   }
 
   // Ширины панелей: удобство этого компьютера, поэтому localStorage.
-  const SIZES = { sidebar: 210, list: 300 };
+  const SIZES = { sidebar: 210, list: 300, calendar: 900 };
   let sizes = $state(readSizes());
+  let viewportWidth = $state(window.innerWidth);
+  const wide = $derived(wideLayoutEnabled(appearance.wideLayout, viewportWidth, sizes.sidebar, sizes.list));
+
+  const calendarMax = $derived(Math.max(560, viewportWidth - sizes.sidebar - sizes.list - 70 - 360));
+  const calendarWidth = $derived(Math.min(calendarMax, Math.max(560, sizes.calendar)));
 
   function readSizes() {
     try {
@@ -106,7 +114,7 @@
         const a = e.payload;
         if (a.zoom !== appearance.zoom) changeZoom(a.zoom);
         appearance = { ...a, theme: a.theme || DEFAULT_THEME, opacity: a.opacity ?? DEFAULT_OPACITY };
-        applyTheme(appearance.theme, appearance.opacity, isDark(appearance));
+        applyTheme(appearance.theme, appearance.opacity, isDark(appearance), appearance.blurEnabled ?? true);
       }),
       listen('message-sent', () => showToast('Письмо отправлено')),
       listen('google-changed', () => refreshGoogle()),
@@ -198,7 +206,7 @@
   refreshGoogle();
 
   $effect(() => {
-    if (mode !== 'calendar' || !googleAccount) return;
+    if ((mode !== 'calendar' && !wide) || !googleAccount) return;
     const visible = calendars.filter((c) => c.visible).map((c) => c.id);
     const [from, to] = visibleRange(calView, calDate);
     calVersion;
@@ -238,30 +246,7 @@
   }
 </script>
 
-<svelte:window {onkeydown} />
-
-<div class="window" class:maximized>
-  <TitleBar
-    {sync}
-    {zoom}
-    onzoom={changeZoom}
-    middleClickMinimize={appearance.middleClickMinimize}
-    onsettings={openSettings}
-  />
-
-  {#if mode === 'calendar'}
-    <main class="layout" style:grid-template-columns="minmax(150px, {sizes.sidebar}px) 12px minmax(400px, 1fr)">
-      <CalendarSidebar
-        {mode}
-        onmode={setMode}
-        date={calDate}
-        onpick={(d) => (calDate = d)}
-        {calendars}
-        ontoggle={toggleCalendar}
-        oncreate={() => (eventDialog = { preset: { start: new Date(calDate.getFullYear(), calDate.getMonth(), calDate.getDate(), new Date().getHours() + 1) } })}
-        connected={!!googleAccount}
-      />
-      <Splitter value={sizes.sidebar} min={150} max={380} initial={SIZES.sidebar} onchange={(px) => resize('sidebar', px)} />
+{#snippet calendarPane()}
       <CalendarView
         date={calDate}
         ondate={(d) => (calDate = d)}
@@ -276,14 +261,53 @@
         connected={!!googleAccount}
         onconnect={openSettings}
       />
+{/snippet}
+
+{#snippet calendarSidebar()}
+      <CalendarSidebar
+        {mode}
+        onmode={setMode}
+        date={calDate}
+        onpick={(d) => (calDate = d)}
+        {calendars}
+        ontoggle={toggleCalendar}
+        oncreate={() => (eventDialog = { preset: { start: new Date(calDate.getFullYear(), calDate.getMonth(), calDate.getDate(), new Date().getHours() + 1) } })}
+        connected={!!googleAccount}
+      />
+{/snippet}
+
+<svelte:window {onkeydown} bind:innerWidth={viewportWidth} />
+
+<div class="window" class:maximized>
+  <TitleBar
+    {sync}
+    {zoom}
+    onzoom={changeZoom}
+    middleClickMinimize={appearance.middleClickMinimize}
+    onsettings={openSettings}
+  />
+
+  {#if mode === 'calendar' && !wide}
+    <main class="layout" style:grid-template-columns="minmax(150px, {sizes.sidebar}px) 12px minmax(400px, 1fr)">
+      {@render calendarSidebar()}
+      <Splitter value={sizes.sidebar} min={150} max={380} initial={SIZES.sidebar} onchange={(px) => resize('sidebar', px)} />
+      {@render calendarPane()}
     </main>
   {:else}
-  <main class="layout" style:grid-template-columns="minmax(150px, {sizes.sidebar}px) 12px minmax(220px, {sizes.list}px) 12px minmax(280px, 1fr)">
+  <main class="layout" style:grid-template-columns="minmax(150px, {sizes.sidebar}px) 12px minmax(220px, {sizes.list}px) 12px minmax({wide ? 360 : 280}px, 1fr){wide ? ` 12px ${calendarWidth}px` : ''}">
+    {#if wide && mode === 'calendar'}
+      {@render calendarSidebar()}
+    {:else}
     <Sidebar {mode} onmode={setMode} {groups} {active} onpick={pickFolder} oncompose={(from) => openCompose(from ? { from } : {})} onrefresh={() => { version++; refreshFolders(); }} onerror={showToast} />
+    {/if}
     <Splitter value={sizes.sidebar} min={150} max={380} initial={SIZES.sidebar} onchange={(px) => resize('sidebar', px)} />
     <MessageList onreply={replyTo} onerror={showToast} account={active.account} folder={active.folder} {version} {selectedId} onselect={(id) => (selectedId = id)} />
     <Splitter value={sizes.list} min={220} max={640} initial={SIZES.list} onchange={(px) => resize('list', px)} />
     <Reader id={selectedId} onreply={replyTo} />
+    {#if wide}
+      <Splitter value={calendarWidth} min={560} max={calendarMax} initial={SIZES.calendar} reverse onchange={(px) => resize('calendar', px)} />
+      {@render calendarPane()}
+    {/if}
   </main>
   {/if}
   {#if eventDialog}

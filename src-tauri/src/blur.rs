@@ -8,7 +8,8 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::error::Error;
 use std::ffi::c_void;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
+use tauri::Manager;
 
 use gtk::gdk;
 use gtk::glib::translate::ToGlibPtr;
@@ -54,6 +55,22 @@ delegate_noop!(State: ignore OrgKdePlasmaSurface);
 // Окна, у которых включено размытие: GTK живёт в главном потоке, поэтому thread_local.
 thread_local! {
     static WINDOWS: RefCell<HashMap<String, Rc<Glass>>> = RefCell::new(HashMap::new());
+    static ENABLED: Cell<bool> = const { Cell::new(true) };
+    static WATCHED: RefCell<Vec<(Weak<Glass>, gtk::glib::WeakRef<gtk::Window>)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Обновляет все живые окна, включая GTK-меню. Вызывать в главном потоке.
+pub fn set_enabled(enabled: bool) {
+    if ENABLED.with(|value| value.replace(enabled)) == enabled { return; }
+    let windows = WATCHED.with(|watched| {
+        let mut watched = watched.borrow_mut();
+        watched.retain(|(glass, window)| glass.strong_count() > 0 && window.upgrade().is_some());
+        watched.iter().filter_map(|(glass, window)| Some((glass.upgrade()?, window.upgrade()?))).collect::<Vec<_>>()
+    });
+    for (glass, window) in windows {
+        let (width, height) = window.size();
+        glass.reshape(&window, width, height);
+    }
 }
 
 /// Состояние окна, переживающее смену wl_surface.
@@ -121,6 +138,7 @@ struct KwinBlur {
 /// Включает размытие под окном и держит его форму в актуальном состоянии при ресайзе.
 /// `corner_radius` — радиус скругления окна в UI; у развёрнутого окна углы прямые.
 pub fn enable(window: &tauri::WebviewWindow, corner_radius: i32) -> Result<(), Box<dyn Error>> {
+    set_enabled(window.app_handle().state::<crate::config::ConfigStore>().get().blur_enabled.unwrap_or(true));
     let gtk_window: gtk::Window = window.gtk_window()?.upcast();
     let glass = watch(&gtk_window, corner_radius);
     WINDOWS.with(|windows| windows.borrow_mut().insert(window.label().to_string(), glass));
@@ -135,6 +153,11 @@ pub fn enable_popup(window: &gtk::Window, corner_radius: i32) {
 /// Подписка на жизненный цикл окна: заказ размытия при показе, форма при каждом ресайзе.
 fn watch(gtk_window: &gtk::Window, corner_radius: i32) -> Rc<Glass> {
     let glass = Rc::new(Glass { corner_radius, skip_taskbar: Cell::new(false), current: RefCell::new(None) });
+    WATCHED.with(|watched| {
+        let mut watched = watched.borrow_mut();
+        watched.retain(|(_, window)| window.upgrade().is_some());
+        watched.push((Rc::downgrade(&glass), gtk_window.downgrade()));
+    });
     // configure-event приходит на каждое изменение размера, в логических пикселях.
     let g = glass.clone();
     gtk_window.connect_configure_event(move |w, event| {
@@ -246,6 +269,17 @@ impl KwinBlur {
     /// KWin читает регион только при создании blur-объекта, поэтому на каждое изменение
     /// создаём новый и освобождаем старый — так же делает KWindowEffects в KDE.
     fn set_shape(&self, width: i32, height: i32, radius: i32) {
+        if !ENABLED.with(Cell::get) {
+            if let Some(blur) = self.blur.borrow_mut().take() {
+                self.manager.unset(&self.surface);
+                blur.release();
+                self.shape.set((0, 0, 0));
+                self.surface.commit();
+                let _ = self.conn.flush();
+                self.gdk_window.invalidate_rect(None, true);
+            }
+            return;
+        }
         if self.shape.replace((width, height, radius)) == (width, height, radius) {
             return;
         }

@@ -46,7 +46,7 @@
     <div class="calendars scroll-gutter">
       {#each calendars as c (c.id)}
         <label class="calendar" title={c.name}>
-          <input type="checkbox" checked={c.visible} onchange={(e) => ontoggle(c.id, e.currentTarget.checked)} style:accent-color={c.color} />
+          <input type="checkbox" checked={c.visible} onchange={(e) => ontoggle(c.id, e.currentTarget.checked)} />
           <span class="dot" style:background={c.color}></span>
           <span class="name">{c.name}</span>
         </label>
@@ -151,6 +151,8 @@
   .calendar input {
     width: 15px;
     height: 15px;
+    margin: 0;
+    accent-color: var(--accent-strong);
     flex: none;
   }
   .dot {

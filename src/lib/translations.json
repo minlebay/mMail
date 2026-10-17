@@ -1138,5 +1138,21 @@
   "Светлая": {
     "en": "Light",
     "sr": "Svetla"
+  },
+  "Размытие фона": {
+    "en": "Background blur",
+    "sr": "Zamućenje pozadine"
+  },
+  "Блюр": {
+    "en": "Blur",
+    "sr": "Zamućenje"
+  },
+  "Календарь справа на широком экране": {
+    "en": "Show calendar on the right on wide screens",
+    "sr": "Prikaži kalendar desno na širokim ekranima"
+  },
+  "От 2560 пикселей ширины интерфейса: почта и календарь рядом. При увеличении масштаба или ширины панелей потребуется больше места.": {
+    "en": "From 2560 interface pixels wide: mail and calendar side by side. Larger zoom or wider panels require more space.",
+    "sr": "Od 2560 piksela širine interfejsa: pošta i kalendar jedan pored drugog. Veće uvećanje ili širi paneli zahtevaju više prostora."
   }
 }

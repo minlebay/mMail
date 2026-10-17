@@ -120,6 +120,8 @@
   let selectedLanguage = $state(initial.language || 'ru');
   let saveError = $state('');
   let opacity = $state(initial.opacity);
+  let blurEnabled = $state(initial.blurEnabled ?? true);
+  let wideLayout = $state(initial.wideLayout ?? false);
   let middleClickMinimize = $state(initial.middleClickMinimize);
   let zoom = $state(initial.zoom);
   let pollSeconds = $state(initial.pollSeconds);
@@ -189,12 +191,14 @@
 
   // Тема применяется сразу, в конфиг пишется с небольшой задержкой (ползунок дёргается часто).
   $effect(() => {
-    applyTheme(theme, opacity, isDark({ scheme, systemDark }));
+    applyTheme(theme, opacity, isDark({ scheme, systemDark }), blurEnabled);
     setLanguage(selectedLanguage);
     appearance.scheme = scheme;
     appearance.language = selectedLanguage;
     appearance.theme = theme;
     appearance.opacity = opacity;
+    appearance.blurEnabled = blurEnabled;
+    appearance.wideLayout = wideLayout;
     appearance.middleClickMinimize = middleClickMinimize;
     appearance.zoom = zoom;
     appearance.pollSeconds = pollSeconds;
@@ -208,7 +212,7 @@
   });
 
   async function saveAppearance() {
-    await setAppearance({ language: selectedLanguage, theme, scheme, opacity, middleClickMinimize, zoom, pollSeconds, trayMode, trayIcon, closeToTray });
+    await setAppearance({ language: selectedLanguage, theme, scheme, opacity, blurEnabled, wideLayout, middleClickMinimize, zoom, pollSeconds, trayMode, trayIcon, closeToTray });
     saveError = '';
   }
 
@@ -325,10 +329,13 @@
           {/each}
         </div>
 
-        <h3>{$t("Прозрачность окна")}</h3>
+        <div class="glass-heading">
+          <h3>{$t("Прозрачность окна")}</h3>
+          <label class="check"><input type="checkbox" bind:checked={blurEnabled} /> {$t('Блюр')}</label>
+        </div>
         <div class="slider">
           <span>{$t("Больше стекла")}</span>
-          <input type="range" min="0.15" max="0.85" step="0.01" bind:value={opacity} />
+          <input type="range" min="0.15" max="0.85" step="0.01" bind:value={opacity} disabled={!blurEnabled} />
           <span>{$t("Плотнее")}</span>
         </div>
 
@@ -348,6 +355,11 @@
         </div>
 
         <h3>{$t("Окно")}</h3>
+        <label class="check">
+          <input type="checkbox" bind:checked={wideLayout} />
+          {$t('Календарь справа на широком экране')}
+        </label>
+        <p class="hint">{$t('От 2560 пикселей ширины интерфейса: почта и календарь рядом. При увеличении масштаба или ширины панелей потребуется больше места.')}</p>
         <label class="toggle">
           <input type="checkbox" bind:checked={middleClickMinimize} />
           {$t("Сворачивать окно средним кликом по заголовку")}
@@ -489,6 +501,7 @@
 </div>
 
 <style>
+  .glass-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
   .window {
     position: fixed;
     inset: 0;

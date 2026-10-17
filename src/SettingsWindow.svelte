@@ -7,7 +7,7 @@
   let appearance = $state(null);
   getAppearance().then((a) => {
     appearance = { ...a, theme: a.theme || DEFAULT_THEME, opacity: a.opacity ?? DEFAULT_OPACITY };
-    applyTheme(appearance.theme, appearance.opacity, isDark(appearance));
+    applyTheme(appearance.theme, appearance.opacity, isDark(appearance), appearance.blurEnabled ?? true);
   });
 </script>
 

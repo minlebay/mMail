@@ -51,8 +51,10 @@ export function isDark(a) {
 // Смесь цвета с белым: светлое стекло с оттенком акцента темы.
 const towardWhite = (rgb, amount) => rgb.map((c) => Math.round(255 - (255 - c) * amount));
 
-export function applyTheme(id, opacity = DEFAULT_OPACITY, dark = true) {
+export function applyTheme(id, opacity = DEFAULT_OPACITY, dark = true, blurEnabled = true) {
   const theme = themeById(id);
+  const windowOpacity = blurEnabled ? opacity : 1;
+  const alpha = (value) => blurEnabled ? value : 1;
   const el = document.documentElement;
   el.dataset.scheme = dark ? 'dark' : 'light';
   darkScheme.set(dark);
@@ -65,20 +67,19 @@ export function applyTheme(id, opacity = DEFAULT_OPACITY, dark = true) {
   root.setProperty('--accent-strong', strong);
   root.setProperty('--accent-soft', `rgba(${r}, ${g}, ${b}, ${dark ? 0.28 : 0.2})`);
   if (dark) {
-    root.setProperty('--window-tint', `rgba(${theme.tint.join(', ')}, ${opacity})`);
+    root.setProperty('--window-tint', `rgba(${theme.tint.join(', ')}, ${windowOpacity})`);
     // Фон диалогов: оттенок темы, чуть светлее и почти непрозрачный.
     const surface = theme.tint.map((c) => Math.min(255, c + 14));
-    root.setProperty('--surface', `rgba(${surface.join(', ')}, 0.97)`);
-    root.setProperty('--glass-menu', `rgba(${surface.join(', ')}, 0.94)`);
-    root.setProperty('--native-menu', `rgba(${surface.join(', ')}, 0.62)`);
+    root.setProperty('--surface', `rgba(${surface.join(', ')}, ${alpha(0.97)})`);
+    root.setProperty('--glass-menu', `rgba(${surface.join(', ')}, ${alpha(0.94)})`);
+    root.setProperty('--native-menu', `rgba(${surface.join(', ')}, ${alpha(0.62)})`);
   } else {
-    // Тёмный текст на светлом стекле читается, только если стекло плотнее: обои под ним
-    // бывают тёмными. Ползунок прозрачности работает в диапазоне 0.62–0.97.
+    // Та же прозрачность, что у тёмной темы: плотность стекла выбирает пользователь.
     const tint = towardWhite(hexToRgb(theme.accent), 0.1);
-    root.setProperty('--window-tint', `rgba(${tint.join(', ')}, ${(0.55 + opacity * 0.5).toFixed(3)})`);
+    root.setProperty('--window-tint', `rgba(${tint.join(', ')}, ${windowOpacity})`);
     const surface = towardWhite(hexToRgb(theme.accent), 0.04);
-    root.setProperty('--surface', `rgba(${surface.join(', ')}, 0.98)`);
-    root.setProperty('--glass-menu', `rgba(${surface.join(', ')}, 0.96)`);
-    root.setProperty('--native-menu', `rgba(${surface.join(', ')}, 0.8)`);
+    root.setProperty('--surface', `rgba(${surface.join(', ')}, ${alpha(0.98)})`);
+    root.setProperty('--glass-menu', `rgba(${surface.join(', ')}, ${alpha(0.96)})`);
+    root.setProperty('--native-menu', `rgba(${surface.join(', ')}, ${alpha(0.8)})`);
   }
 }

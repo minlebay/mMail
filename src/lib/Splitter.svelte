@@ -1,6 +1,6 @@
 <script>
   // Вертикальный разделитель между панелями: тянется мышью, двойной клик — ширина по умолчанию.
-  let { value, min, max, initial, onchange } = $props();
+  let { value, min, max, initial, reverse = false, onchange } = $props();
 
   let start = null;
 
@@ -12,7 +12,7 @@
 
   function onpointermove(e) {
     if (!start) return;
-    onchange(Math.round(Math.min(max, Math.max(min, start.value + e.clientX - start.x))));
+    onchange(Math.round(Math.min(max, Math.max(min, start.value + (e.clientX - start.x) * (reverse ? -1 : 1)))));
   }
 
   function onpointerup() {
@@ -28,7 +28,7 @@
   {onpointerdown}
   {onpointermove}
   {onpointerup}
-  ondblclick={() => onchange(initial)}
+  ondblclick={() => onchange(Math.min(max, Math.max(min, initial)))}
 ></div>
 
 <style>

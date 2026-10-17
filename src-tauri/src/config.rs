@@ -21,6 +21,10 @@ pub struct Config {
     pub scheme: Option<String>,
     /// Непрозрачность фона окна, 0.15–0.85; `None` — по умолчанию темы.
     pub opacity: Option<f32>,
+    /// Размытие фона KWin; старые конфиги сохраняют включённый эффект.
+    pub blur_enabled: Option<bool>,
+    /// Показывать календарь справа от почты, когда хватает ширины.
+    pub wide_layout: Option<bool>,
     /// Масштаб интерфейса по умолчанию, 0.5–2.0; `None` — 100%.
     pub zoom: Option<f64>,
     /// Как часто проверять новые письма, секунд; `None` — 10.
@@ -154,6 +158,17 @@ impl ConfigStore {
 #[cfg(test)]
 mod language_tests {
     use super::*;
+
+    #[test]
+    fn blur_preference_round_trips_and_defaults_to_enabled() {
+        let old: Config = serde_json::from_str("{}").unwrap();
+        assert!(old.blur_enabled.unwrap_or(true));
+        for enabled in [false, true] {
+            let config = Config { blur_enabled: Some(enabled), ..Default::default() };
+            let restored: Config = serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+            assert_eq!(restored.blur_enabled, Some(enabled));
+        }
+    }
 
     #[test]
     fn legacy_config_keeps_russian() {

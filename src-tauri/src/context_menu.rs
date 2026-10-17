@@ -7,6 +7,7 @@
 //! письмо во фрейме) — только безопасные действия правки WebKit: без навигации и без обхода
 //! подтверждения ссылок.
 
+use tauri::Manager;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -206,7 +207,7 @@ fn popup(app: &AppHandle, window_label: &str, click: Click, page: Option<PageMen
             }
         }
     }
-    style(page.as_ref().map(|p| &p.colors));
+    style(page.as_ref().map(|p| &p.colors), app.state::<crate::config::ConfigStore>().get().blur_enabled.unwrap_or(true));
 
     // Полупрозрачное всплывающее окно (RGBA) — иначе вместо стекла будет чёрный фон.
     if let Some(top) = menu.toplevel().and_then(|t| t.downcast::<gtk::Window>().ok()) {
@@ -228,10 +229,16 @@ fn popup(app: &AppHandle, window_label: &str, click: Click, page: Option<PageMen
 }
 
 /// Оформление меню под тему приложения: стекло (полупрозрачный фон над размытием KWin).
-fn style(colors: Option<&Colors>) {
+fn style(colors: Option<&Colors>, blur_enabled: bool) {
     let (surface, text, accent, danger, border) = match colors {
         Some(c) => (c.surface.as_str(), c.text.as_str(), c.accent.as_str(), c.danger.as_str(), c.border.as_str()),
         None => ("rgba(36, 31, 48, 0.62)", "#f1eef8", "rgba(139, 123, 255, 0.28)", "#ff6b8b", "rgba(255, 255, 255, 0.14)"),
+    };
+    // Even a fallback or stale page palette must be opaque when glass is disabled.
+    let surface = if !blur_enabled && surface.starts_with("rgba(") {
+        surface.rsplit_once(',').map(|(rgb, _)| format!("{rgb}, 1)")).unwrap_or_else(|| surface.to_owned())
+    } else {
+        surface.to_owned()
     };
     let css = format!(
         "window.mmail-menu-window, window.mmail-menu-window decoration {{

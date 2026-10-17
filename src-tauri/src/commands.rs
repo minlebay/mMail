@@ -241,6 +241,8 @@ pub fn set_sender_trusted(config: State<'_, ConfigStore>, address: String, trust
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Appearance {
+    wide_layout: bool,
+    blur_enabled: bool,
     language: String,
     theme: String,
     scheme: String,
@@ -269,6 +271,8 @@ pub fn get_appearance(config: State<'_, ConfigStore>) -> Appearance {
     let poll_seconds = c.poll_seconds();
     let tray_mode = c.tray_mode().as_str();
     Appearance {
+        wide_layout: c.wide_layout.unwrap_or(false),
+        blur_enabled: c.blur_enabled.unwrap_or(true),
         language: c.language().into(),
         theme: c.theme,
         scheme: c.scheme.clone().unwrap_or_else(|| "system".into()),
@@ -324,6 +328,8 @@ pub fn set_appearance(
     scheme: String,
     language: String,
     opacity: f32,
+    blur_enabled: bool,
+    wide_layout: bool,
     middle_click_minimize: bool,
     zoom: f64,
     poll_seconds: u64,
@@ -352,6 +358,8 @@ pub fn set_appearance(
         c.theme = theme;
         c.scheme = Some(scheme);
         c.opacity = Some(opacity.clamp(0.15, 0.85));
+        c.blur_enabled = Some(blur_enabled);
+        c.wide_layout = Some(wide_layout);
         c.middle_click_minimize = Some(middle_click_minimize);
         c.zoom = Some(zoom.clamp(ZOOM_MIN, ZOOM_MAX));
         c.poll_seconds = Some(poll_seconds);
@@ -361,6 +369,7 @@ pub fn set_appearance(
     })?;
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
+        crate::blur::set_enabled(blur_enabled);
         if let Some(window) = handle.get_webview_window("settings") {
             let _ = window.set_title(&crate::i18n::text(&handle, "Настройки mMail"));
         }

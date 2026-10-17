@@ -38,7 +38,7 @@
 
   // Оформление как у главного окна, и сразу подхватываем изменения из настроек.
   function applyAppearance(a) {
-    applyTheme(a.theme, a.opacity ?? undefined, isDark(a));
+    applyTheme(a.theme, a.opacity ?? undefined, isDark(a), a.blurEnabled ?? true);
     middleClickMinimize = a.middleClickMinimize;
   }
 
