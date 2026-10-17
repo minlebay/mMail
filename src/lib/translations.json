@@ -1106,5 +1106,21 @@
   "HTML-код письма": {
     "en": "Message HTML source",
     "sr": "HTML kod poruke"
+  },
+  "Поверх других окон": {
+    "en": "Keep above other windows",
+    "sr": "Iznad drugih prozora"
+  },
+  "На всех рабочих столах": {
+    "en": "On all desktops",
+    "sr": "Na svim radnim površinama"
+  },
+  "Кнопки «Свернуть» и «Развернуть»": {
+    "en": "“Minimize” and “Maximize” buttons",
+    "sr": "Dugmad „Umanji” i „Uvećaj”"
+  },
+  "Кнопки «Поверх других окон» и «На всех рабочих столах»": {
+    "en": "“Keep above” and “On all desktops” buttons",
+    "sr": "Dugmad „Iznad drugih prozora” i „Na svim radnim površinama”"
   }
 }

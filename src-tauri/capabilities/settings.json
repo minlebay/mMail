@@ -6,6 +6,9 @@
     "settings"
   ],
   "permissions": [
+    "allow-set-title-buttons",
+    "allow-set-window-pin",
+    "allow-window-pins",
     "allow-context-menu-items",
     "allow-google-status",
     "allow-google-connect",

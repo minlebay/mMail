@@ -253,6 +253,8 @@ pub struct Appearance {
     show_all_accounts: bool,
     notify_mail: bool,
     notify_events: bool,
+    window_buttons: bool,
+    pin_buttons: bool,
 }
 
 pub const ZOOM_MIN: f64 = 0.5;
@@ -276,6 +278,8 @@ pub fn get_appearance(config: State<'_, ConfigStore>) -> Appearance {
         show_all_accounts: c.show_all_accounts.unwrap_or(true),
         notify_mail: c.notify_mail.unwrap_or(true),
         notify_events: c.notify_events.unwrap_or(true),
+        window_buttons: c.window_buttons.unwrap_or(true),
+        pin_buttons: c.pin_buttons.unwrap_or(true),
     }
 }
 
@@ -286,6 +290,17 @@ pub fn set_notifications(config: State<'_, ConfigStore>, mail: bool, events: boo
         c.notify_mail = Some(mail);
         c.notify_events = Some(events);
     })
+}
+
+/// Какие кнопки показывать в шапке окон; все окна перерисовывают шапку по appearance-changed.
+#[tauri::command]
+pub fn set_title_buttons(app: tauri::AppHandle, config: State<'_, ConfigStore>, window_buttons: bool, pin_buttons: bool) -> Result<(), String> {
+    config.update(|c| {
+        c.window_buttons = Some(window_buttons);
+        c.pin_buttons = Some(pin_buttons);
+    })?;
+    let _ = tauri::Emitter::emit(&app, "appearance-changed", get_appearance(config));
+    Ok(())
 }
 
 /// Раздел «Все ящики» в дереве папок; главное окно перестраивает дерево по mailbox-changed.

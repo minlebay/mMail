@@ -32,6 +32,12 @@ pub struct Config {
     pub tray_icon: Option<String>,
     /// Размеры окон между запусками: `main`, `compose`.
     pub windows: std::collections::BTreeMap<String, crate::window_state::Geometry>,
+    /// «Поверх других окон» и «На всех рабочих столах» главного окна и настроек.
+    pub window_pins: std::collections::BTreeMap<String, crate::window_pins::Pins>,
+    /// Кнопки «Свернуть» и «Развернуть» в шапке; `None` — показывать.
+    pub window_buttons: Option<bool>,
+    /// Кнопки «Поверх других окон» и «На всех рабочих столах» в шапке; `None` — показывать.
+    pub pin_buttons: Option<bool>,
     /// Уведомления о новых письмах во «Входящих»; `None` — включены.
     pub notify_mail: Option<bool>,
     /// Напоминания о событиях календаря; `None` — включены.

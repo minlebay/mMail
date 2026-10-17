@@ -2,8 +2,12 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Главное окно: чтение ящика через команды ядра и управление своим окном.",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
+    "allow-set-window-pin",
+    "allow-window-pins",
     "allow-context-menu-items",
     "allow-google-status",
     "allow-calendar-list",

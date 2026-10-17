@@ -20,6 +20,7 @@ mod sanitize;
 mod smtp;
 mod store;
 mod tray;
+mod window_pins;
 mod window_state;
 mod translation;
 
@@ -37,6 +38,7 @@ fn main() {
         .manage(links::PendingLink::default())
         .manage(compose::ComposeState::default())
         .manage(tray::TrayState::default())
+        .manage(window_pins::PinState::default())
         .manage(google::Google::default())
         // Второй запуск не создаёт копию, а передаёт аргументы работающему mMail (D-Bus):
         // без аргументов — показать окно, `-compose …` / `mailto:…` — открыть новое письмо.
@@ -64,6 +66,9 @@ fn main() {
             commands::open_settings,
             commands::set_show_all_accounts,
             commands::set_notifications,
+            commands::set_title_buttons,
+            window_pins::window_pins,
+            window_pins::set_window_pin,
             commands::write_clipboard,
             context_menu::context_menu_items,
             google::google_status,
@@ -165,6 +170,7 @@ pub(crate) fn finish_window(app: &AppHandle, window: &WebviewWindow) -> tauri::R
     if let Err(e) = blur::enable(window, CORNER_RADIUS) {
         eprintln!("mMail: размытие KWin недоступно: {e}");
     }
+    window_pins::restore(app, window);
     Ok(())
 }
 

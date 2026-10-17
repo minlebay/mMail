@@ -7,7 +7,7 @@
   import Select from './Select.svelte';
   import TitleBar from './TitleBar.svelte';
   import { THEMES, applyTheme } from './themes.js';
-  import { setAppearance, listAccounts, addAccount, removeAccount, storageInfo, setBodyDays, clearCache, setShowAllAccounts, googleStatus, googleConnect, googleDisconnect, setNotifications } from './api.js';
+  import { setAppearance, listAccounts, addAccount, removeAccount, storageInfo, setBodyDays, clearCache, setShowAllAccounts, googleStatus, googleConnect, googleDisconnect, setNotifications, setTitleButtons } from './api.js';
 
   let { appearance } = $props();
 
@@ -122,6 +122,9 @@
   let notifyMail = $state(initial.notifyMail ?? true);
   let notifyEvents = $state(initial.notifyEvents ?? true);
   const saveNotifications = () => setNotifications(notifyMail, notifyEvents);
+  let windowButtons = $state(initial.windowButtons ?? true);
+  let pinButtons = $state(initial.pinButtons ?? true);
+  const saveTitleButtons = () => setTitleButtons(windowButtons, pinButtons);
 
   // Google Календарь: клиент OAuth вводится один раз; секреты уходят сразу в KWallet через ядро.
   let google = $state(null);
@@ -328,6 +331,14 @@
         <label class="toggle">
           <input type="checkbox" bind:checked={middleClickMinimize} />
           {$t("Сворачивать окно средним кликом по заголовку")}
+        </label>
+        <label class="toggle">
+          <input type="checkbox" bind:checked={windowButtons} onchange={saveTitleButtons} />
+          {$t("Кнопки «Свернуть» и «Развернуть»")}
+        </label>
+        <label class="toggle">
+          <input type="checkbox" bind:checked={pinButtons} onchange={saveTitleButtons} />
+          {$t("Кнопки «Поверх других окон» и «На всех рабочих столах»")}
         </label>
 
         <h3>{$t("Уведомления")}</h3>

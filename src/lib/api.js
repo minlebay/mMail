@@ -39,6 +39,10 @@ export const calendarEvents = (calendars, from, to) => invoke('calendar_events',
 export const calendarSaveEvent = (calendarId, eventId, draft) => invoke('calendar_save_event', { calendarId, eventId, draft });
 export const calendarDeleteEvent = (calendarId, eventId) => invoke('calendar_delete_event', { calendarId, eventId });
 export const setNotifications = (mail, events) => invoke('set_notifications', { mail, events });
+export const setTitleButtons = (windowButtons, pinButtons) => invoke('set_title_buttons', { windowButtons, pinButtons });
+// Поверх других окон / на всех рабочих столах — для окна, которое вызывает.
+export const windowPins = () => invoke('window_pins');
+export const setWindowPin = (pin, on) => invoke('set_window_pin', { pin, on });
 export const openSettings = () => invoke('open_settings');
 
 export const setZoom = (scale) => invoke('set_zoom', { scale });

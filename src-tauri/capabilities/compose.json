@@ -6,6 +6,8 @@
     "compose-*"
   ],
   "permissions": [
+    "allow-set-window-pin",
+    "allow-window-pins",
     "allow-context-menu-items",
     "allow-compose-init",
     "allow-send-message",

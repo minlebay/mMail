@@ -1,9 +1,11 @@
 <script>
   import { t, statusText } from './i18n.js';
+  import { onMount } from 'svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { listen } from '@tauri-apps/api/event';
 
   import Icon from './Icon.svelte';
-  import { unlockStore } from './api.js';
+  import { unlockStore, getAppearance, windowPins, setWindowPin } from './api.js';
 
   // Шапка общая для главного окна и окон письма: лишнее (статус, масштаб, настройки) необязательно.
   let { title = 'mMail', sync = null, middleClickMinimize = true, zoom = null, onzoom, onsettings = null, onclose = null, maximizable = true } = $props();
@@ -12,6 +14,29 @@
   const percent = (z) => `${Math.round(z * 100)}%`;
 
   const win = getCurrentWindow();
+
+  // Какие кнопки показывать — общая настройка всех окон; состояние «поверх»/«на всех столах» — своё у окна.
+  let windowButtons = $state(true);
+  let pinButtons = $state(true);
+  let pins = $state({ above: false, allDesktops: false });
+  const applyButtons = (a) => {
+    windowButtons = a.windowButtons ?? true;
+    pinButtons = a.pinButtons ?? true;
+  };
+  onMount(() => {
+    getAppearance().then(applyButtons);
+    windowPins().then((p) => (pins = p));
+    const stop = listen('appearance-changed', (e) => applyButtons(e.payload));
+    return () => stop.then((f) => f());
+  });
+
+  async function togglePin(pin) {
+    try {
+      pins = await setWindowPin(pin, !pins[pin]);
+    } catch (e) {
+      console.error(e);
+    }
+  }
 
   // Средний клик по свободному месту шапки сворачивает окно (настраивается).
   function onmousedown(e) {
@@ -23,7 +48,17 @@
 
 <!-- Своя шапка вместо рамки KDE: тянется за пустое место, двойной клик разворачивает. -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<header class="titlebar" data-tauri-drag-region {onmousedown}>
+<header class="titlebar" class:pinbar={pinButtons} data-tauri-drag-region {onmousedown}>
+  {#if pinButtons}
+    <div class="pins">
+      <button class="ctl" class:active={pins.above} aria-pressed={pins.above} aria-label={$t("Поверх других окон")} title={$t("Поверх других окон")} onclick={() => togglePin('above')}>
+        <svg viewBox="0 0 12 12"><path d="M2.5 2h7M6 10.5V4.5M3.8 6.7L6 4.5l2.2 2.2" /></svg>
+      </button>
+      <button class="ctl" class:active={pins.allDesktops} aria-pressed={pins.allDesktops} aria-label={$t("На всех рабочих столах")} title={$t("На всех рабочих столах")} onclick={() => togglePin('allDesktops')}>
+        <svg viewBox="0 0 12 12"><path d="M4.2 1.8h3.6M4.8 1.8v3.3L3.2 6.9h5.6L7.2 5.1V1.8M6 6.9v3.6" /></svg>
+      </button>
+    </div>
+  {/if}
   <div class="title" data-tauri-drag-region>
     <span class="name" data-tauri-drag-region>{title}</span>
     {#if sync?.message}
@@ -62,10 +97,12 @@
         <Icon name="settings" size={14} />
       </button>
     {/if}
+    {#if windowButtons}
     <button class="ctl" aria-label={$t("Свернуть")} onclick={() => win.minimize()}>
       <svg viewBox="0 0 12 12"><path d="M2.5 6h7" /></svg>
     </button>
-    {#if maximizable}
+    {/if}
+    {#if maximizable && windowButtons}
     <button class="ctl" aria-label={$t("Развернуть")} onclick={() => win.toggleMaximize()}>
       <svg viewBox="0 0 12 12"><rect x="2.5" y="2.5" width="7" height="7" rx="1.5" /></svg>
     </button>
@@ -85,7 +122,20 @@
     padding: 0 6px 0 18px;
   }
 
+  .titlebar.pinbar {
+    padding-left: 6px;
+  }
+  .pins {
+    display: flex;
+    gap: 8px;
+    margin-right: 14px;
+  }
+  .ctl.active {
+    background: var(--accent-soft);
+    color: var(--text);
+  }
   .title {
+    flex: 1;
     display: flex;
     align-items: baseline;
     gap: 14px;
