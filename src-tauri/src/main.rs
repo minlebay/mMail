@@ -2,11 +2,13 @@ mod accounts;
 mod attachments;
 mod blur;
 mod commands;
+mod calendar;
 mod compose;
 mod config;
 mod context_menu;
 mod db;
 mod fake;
+mod google;
 mod folders;
 mod imap;
 mod i18n;
@@ -33,6 +35,7 @@ fn main() {
         .manage(links::PendingLink::default())
         .manage(compose::ComposeState::default())
         .manage(tray::TrayState::default())
+        .manage(google::Google::default())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             commands::list_folders,
@@ -50,6 +53,14 @@ fn main() {
             commands::set_show_all_accounts,
             commands::write_clipboard,
             context_menu::context_menu_items,
+            google::google_status,
+            google::google_connect,
+            google::google_disconnect,
+            calendar::calendar_list,
+            calendar::calendar_set_visible,
+            calendar::calendar_events,
+            calendar::calendar_save_event,
+            calendar::calendar_delete_event,
             commands::mark_message_read,
             commands::mark_folder_read,
             commands::set_message_flags,

@@ -7,6 +7,9 @@
   ],
   "permissions": [
     "allow-context-menu-items",
+    "allow-google-status",
+    "allow-google-connect",
+    "allow-google-disconnect",
     "allow-get-appearance",
     "allow-set-appearance",
     "allow-list-accounts",

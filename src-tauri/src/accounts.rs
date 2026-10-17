@@ -132,3 +132,35 @@ pub async fn db_key() -> Result<Zeroizing<[u8; 32]>> {
     collection.create_item("mMail: ключ хранилища писем", attributes, key.as_slice(), true, "application/octet-stream").await?;
     Ok(key)
 }
+
+/// Секреты Google (OAuth): отдельная метка `service`, чтобы они не попадали в список почтовых ящиков.
+const GOOGLE_SERVICE: &str = "mmail-google";
+
+/// Секрет Google по виду (`client`, `refresh`); `None`, если его нет.
+pub async fn google_secret(kind: &str) -> Result<Option<Zeroizing<Vec<u8>>>> {
+    let ss = connect().await?;
+    let found = ss.search_items(HashMap::from([("service", GOOGLE_SERVICE), ("kind", kind)])).await?;
+    let Some(item) = found.unlocked.into_iter().chain(found.locked).next() else { return Ok(None) };
+    item.unlock().await?;
+    Ok(Some(Zeroizing::new(item.get_secret().await?)))
+}
+
+/// Сохраняет (заменяя прежний) секрет Google.
+pub async fn set_google_secret(kind: &str, label: &str, secret: &[u8]) -> Result<()> {
+    let ss = connect().await?;
+    let collection = ss.get_default_collection().await?;
+    collection.unlock().await?;
+    collection
+        .create_item(label, HashMap::from([("service", GOOGLE_SERVICE), ("kind", kind)]), secret, true, "application/octet-stream")
+        .await?;
+    Ok(())
+}
+
+pub async fn remove_google_secrets() -> Result<()> {
+    let ss = connect().await?;
+    let found = ss.search_items(HashMap::from([("service", GOOGLE_SERVICE)])).await?;
+    for item in found.unlocked.iter().chain(found.locked.iter()) {
+        item.delete().await?;
+    }
+    Ok(())
+}

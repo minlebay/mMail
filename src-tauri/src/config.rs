@@ -32,6 +32,10 @@ pub struct Config {
     pub tray_icon: Option<String>,
     /// Размеры окон между запусками: `main`, `compose`.
     pub windows: std::collections::BTreeMap<String, crate::window_state::Geometry>,
+    /// Подключённый аккаунт Google Календаря (ключи — в KWallet).
+    pub google_account: Option<String>,
+    /// Календари, скрытые в сетке (id календарей Google).
+    pub hidden_calendars: std::collections::BTreeSet<String>,
     /// Показывать в дереве общий раздел «Все ящики»; `None` — показывать.
     pub show_all_accounts: Option<bool>,
     /// Крестик прячет окно в трей, а не закрывает приложение; `None` — прячет.

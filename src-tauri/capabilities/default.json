@@ -5,6 +5,12 @@
   "windows": ["main"],
   "permissions": [
     "allow-context-menu-items",
+    "allow-google-status",
+    "allow-calendar-list",
+    "allow-calendar-set-visible",
+    "allow-calendar-events",
+    "allow-calendar-save-event",
+    "allow-calendar-delete-event",
     "allow-list-folders",
     "allow-write-clipboard",
     "allow-mark-message-read",
