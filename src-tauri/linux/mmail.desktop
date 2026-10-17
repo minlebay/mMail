@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=mMail
+GenericName=Почтовый клиент
+GenericName[en]=Mail Client
+Comment=Почта и календарь
+Comment[en]=Mail and calendar
+Icon={{icon}}
+Exec={{exec}} %u
+Terminal=false
+Categories=Network;Email;
+MimeType=x-scheme-handler/mailto;
+StartupWMClass=mmail
