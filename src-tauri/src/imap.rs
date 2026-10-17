@@ -29,6 +29,11 @@ type Session = async_imap::Session<TlsStream<TcpStream>>;
 /// Писем за один FETCH: каждая порция сразу появляется в списке.
 const BATCH: u32 = 200;
 const TIMEOUT: Duration = Duration::from_secs(20);
+/// Как часто проверять новые письма и флаги (прочитано/важное), изменённые в других клиентах.
+const REFRESH_EVERY: Duration = Duration::from_secs(60);
+/// У скольких последних писем папки сверять флаги.
+const FLAGS_WINDOW: u32 = 500;
+const HEADER_QUERY: &str = "(UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])";
 
 async fn connect(account: &Account, password: &str) -> Result<Session> {
     let mut roots = RootCertStore::empty();
@@ -84,7 +89,7 @@ async fn fetch_batch(session: &mut Session, account: &str, cursor: &mut Cursor) 
     let started = std::time::Instant::now();
     // Только нужные поля заголовка — так же синхронизирует Thunderbird.
     let fetches: Vec<Fetch> = session
-        .fetch(format!("{first}:{}", cursor.next), "(UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])")
+        .fetch(format!("{first}:{}", cursor.next), HEADER_QUERY)
         .await?
         .try_collect()
         .await?;
@@ -294,17 +299,79 @@ async fn run_sync(app: &AppHandle, account: Account) -> Result<()> {
         let messages = fetch_batch(&mut session, &email, cursor).await?;
         step(cursor, messages);
     }
-    for cursor in &mut cursors {
-        while cursor.next > 0 {
+    let mut last_refresh = std::time::Instant::now();
+    for i in 0..cursors.len() {
+        while cursors[i].next > 0 {
             if conn.cancelled.load(Ordering::Relaxed) {
                 let _ = session.logout().await;
                 return Ok(());
             }
-            let messages = fetch_batch(&mut session, &email, cursor).await?;
-            step(cursor, messages);
+            let messages = fetch_batch(&mut session, &email, &mut cursors[i]).await?;
+            step(&cursors[i], messages);
+            // Пока догружается история, свежие изменения тоже подтягиваем.
+            if last_refresh.elapsed() >= REFRESH_EVERY {
+                refresh(app, &mut session, &email, &cursors).await?;
+                last_refresh = std::time::Instant::now();
+            }
         }
     }
-    let _ = session.logout().await;
+    set_status(app, &email, "ok", "");
+
+    // Дальше — периодическая проверка; при обрыве соединения переподключаемся.
+    loop {
+        for _ in 0..REFRESH_EVERY.as_secs() {
+            if conn.cancelled.load(Ordering::Relaxed) {
+                let _ = session.logout().await;
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+        if let Err(e) = refresh(app, &mut session, &email, &cursors).await {
+            eprintln!("mMail: обновление {email} не удалось ({e}), переподключаюсь");
+            let password = accounts::password(&email).await?;
+            session = connect(&conn.account, &password).await?;
+        }
+    }
+}
+
+/// Новые письма (UID больше известных) и актуальные флаги последних писем каждой папки.
+async fn refresh(app: &AppHandle, session: &mut Session, email: &str, cursors: &[Cursor]) -> Result<()> {
+    let store = app.state::<Store>();
+    let mut changed = false;
+    for cursor in cursors {
+        let mailbox = session.examine(&cursor.name).await?;
+        if mailbox.exists == 0 {
+            continue;
+        }
+        let max = store.max_uid(email, cursor.folder);
+        // Пустую папку, которую ещё грузит основной цикл, не трогаем — иначе получим дубли.
+        if max > 0 || cursor.next == 0 {
+            let fetches: Vec<Fetch> = session.uid_fetch(format!("{}:*", max + 1), HEADER_QUERY).await?.try_collect().await?;
+            // «N:*» всегда возвращает хотя бы последнее письмо, даже если его UID меньше N.
+            let fresh: Vec<Message> = fetches
+                .iter()
+                .filter(|f| f.uid.is_some_and(|uid| uid > max))
+                .filter_map(|f| to_message(f, email, cursor.folder))
+                .collect();
+            if !fresh.is_empty() {
+                store.append(fresh);
+                changed = true;
+            }
+        }
+        let first = mailbox.exists.saturating_sub(FLAGS_WINDOW - 1).max(1);
+        let fetches: Vec<Fetch> = session.fetch(format!("{first}:*"), "(UID FLAGS)").await?.try_collect().await?;
+        let flags: Vec<_> = fetches
+            .iter()
+            .filter_map(|f| {
+                let flags: Vec<_> = f.flags().collect();
+                Some((f.uid?, !flags.contains(&Flag::Seen), flags.contains(&Flag::Flagged)))
+            })
+            .collect();
+        changed |= store.update_flags(email, cursor.folder, &flags);
+    }
+    if changed {
+        let _ = app.emit("mailbox-changed", ());
+    }
     Ok(())
 }
 
@@ -386,6 +453,46 @@ impl Imap {
             }
         }
         unreachable!()
+    }
+}
+
+impl Imap {
+    /// Кладёт готовое письмо в папку ящика (копия отправленного).
+    pub async fn append(&self, email: &str, folder: Folder, raw: &[u8], flags: &str) -> Result<()> {
+        let conn = self.connection(email).ok_or("ящик ещё подключается")?;
+        let name = conn.folders.get(&folder).ok_or("папка не найдена на сервере")?;
+        let mut reader = conn.reader.lock().await;
+        if reader.is_none() {
+            let password = accounts::password(email).await?;
+            *reader = Some(connect(&conn.account, &password).await?);
+        }
+        let result = reader.as_mut().unwrap().append(name, Some(flags), None, raw).await;
+        if result.is_err() {
+            *reader = None;
+        }
+        Ok(result?)
+    }
+
+    /// Помечает письмо прочитанным на сервере.
+    pub async fn mark_seen(&self, email: &str, folder: Folder, uid: u32) -> Result<()> {
+        let conn = self.connection(email).ok_or("ящик ещё подключается")?;
+        let name = conn.folders.get(&folder).ok_or("папка не найдена на сервере")?;
+        let mut reader = conn.reader.lock().await;
+        if reader.is_none() {
+            let password = accounts::password(email).await?;
+            *reader = Some(connect(&conn.account, &password).await?);
+        }
+        let session = reader.as_mut().unwrap();
+        let result: Result<()> = async {
+            session.select(name).await?;
+            let _: Vec<Fetch> = session.uid_store(uid.to_string(), "+FLAGS.SILENT (\\Seen)").await?.try_collect().await?;
+            Ok(())
+        }
+        .await;
+        if result.is_err() {
+            *reader = None;
+        }
+        result
     }
 }
 

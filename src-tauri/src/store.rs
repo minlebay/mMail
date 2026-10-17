@@ -72,6 +72,7 @@ pub struct Details {
     pub date: String,
     pub auth: Auth,
     pub html: Option<String>,
+    pub unread: bool,
 }
 
 #[derive(Default)]
@@ -158,7 +159,44 @@ impl Store {
             date: date_label(e.msg.timestamp),
             auth: e.msg.auth,
             html: e.msg.html.clone(),
+            unread: e.msg.unread,
         })
+    }
+
+    pub fn set_unread(&self, id: u32, unread: bool) {
+        if let Some(e) = self.entries.write().unwrap().iter_mut().find(|e| e.id == id) {
+            e.msg.unread = unread;
+        }
+    }
+
+    /// Наибольший известный UID папки ящика (0 — писем ещё нет).
+    pub fn max_uid(&self, account: &str, folder: Folder) -> u32 {
+        let entries = self.entries.read().unwrap();
+        entries
+            .iter()
+            .filter(|e| e.msg.folder == folder && e.msg.account.as_deref() == Some(account))
+            .filter_map(|e| e.msg.uid)
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Флаги с сервера: `(uid, непрочитано, важное)`. Возвращает, изменилось ли что-нибудь.
+    pub fn update_flags(&self, account: &str, folder: Folder, flags: &[(u32, bool, bool)]) -> bool {
+        let by_uid: std::collections::HashMap<u32, (bool, bool)> = flags.iter().map(|&(uid, u, s)| (uid, (u, s))).collect();
+        let mut changed = false;
+        for e in self.entries.write().unwrap().iter_mut() {
+            if e.msg.folder != folder || e.msg.account.as_deref() != Some(account) {
+                continue;
+            }
+            if let Some(&(unread, starred)) = e.msg.uid.and_then(|uid| by_uid.get(&uid)) {
+                if (e.msg.unread, e.msg.starred) != (unread, starred) {
+                    e.msg.unread = unread;
+                    e.msg.starred = starred;
+                    changed = true;
+                }
+            }
+        }
+        changed
     }
 
     /// Запоминает загруженное с сервера тело письма и результат проверки отправителя.

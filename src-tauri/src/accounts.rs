@@ -11,12 +11,25 @@ use crate::imap::Result;
 
 pub struct Provider {
     pub imap_host: &'static str,
+    pub smtp_host: &'static str,
+    /// Сервер сам кладёт отправленное через SMTP в «Отправленные».
+    pub saves_sent: bool,
     /// Authserv-id серверов провайдера: верим только их Authentication-Results.
     pub trusted_authserv: &'static [&'static str],
 }
 
-pub const YANDEX: Provider = Provider { imap_host: "imap.yandex.com", trusted_authserv: &[".yandex.net", ".yandex.ru"] };
-pub const GMAIL: Provider = Provider { imap_host: "imap.gmail.com", trusted_authserv: &["mx.google.com"] };
+pub const YANDEX: Provider = Provider {
+    imap_host: "imap.yandex.com",
+    smtp_host: "smtp.yandex.com",
+    saves_sent: false,
+    trusted_authserv: &[".yandex.net", ".yandex.ru"],
+};
+pub const GMAIL: Provider = Provider {
+    imap_host: "imap.gmail.com",
+    smtp_host: "smtp.gmail.com",
+    saves_sent: true,
+    trusted_authserv: &["mx.google.com"],
+};
 
 pub fn provider_for(email: &str) -> Option<&'static Provider> {
     let domain = email.rsplit_once('@')?.1.to_ascii_lowercase();

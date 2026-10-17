@@ -132,7 +132,7 @@
   </label>
 
   <div
-    class="viewport"
+    class="viewport scroll-gutter"
     role="listbox"
     aria-label="Письма"
     tabindex="0"
@@ -203,9 +203,9 @@
   }
 
   .viewport {
+    --gutter: 10px;
     flex: 1;
     min-height: 0;
-    overflow-y: auto;
     outline: none;
   }
 

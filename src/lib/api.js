@@ -28,3 +28,5 @@ export const listAccounts = () => invoke('list_accounts');
 export const addAccount = (email, password) => invoke('add_account', { email, password });
 
 export const removeAccount = (email) => invoke('remove_account', { email });
+
+export const sendMessage = (draft) => invoke('send_message', { draft });

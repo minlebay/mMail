@@ -41,6 +41,8 @@ pub struct Page {
 #[serde(rename_all = "camelCase")]
 pub struct MessageView {
     id: u32,
+    /// Ящик письма — для «Ответить» с того же адреса; `None` у демо.
+    account: Option<String>,
     from_name: String,
     from_addr: String,
     subject: String,
@@ -102,6 +104,7 @@ pub fn list_messages(
 
 #[tauri::command]
 pub async fn get_message(
+    app: tauri::AppHandle,
     store: State<'_, Store>,
     imap: State<'_, Imap>,
     config: State<'_, ConfigStore>,
@@ -119,6 +122,16 @@ pub async fn get_message(
         }
         _ => String::new(),
     };
+    if m.unread {
+        // Открыл — значит прочитал, как в любом почтовом клиенте; демо-письма только локально.
+        if let (Some(account), Some(uid)) = (m.account.as_deref(), m.uid) {
+            if let Err(e) = imap.mark_seen(account, m.folder, uid).await {
+                eprintln!("mMail: не удалось пометить прочитанным: {e}");
+            }
+        }
+        store.set_unread(id, false);
+        let _ = tauri::Emitter::emit(&app, "mailbox-changed", ());
+    }
     let sender = m.from_addr.to_lowercase();
     let lookalike = sender.rsplit_once('@').is_some_and(|(_, domain)| !domain.is_ascii());
     let can_trust = m.auth != Auth::Fail && !lookalike && !sender.is_empty();
@@ -145,6 +158,7 @@ pub async fn get_message(
 
     Ok(MessageView {
         id: m.id,
+        account: m.account,
         from_name: m.from_name,
         from_addr: m.from_addr,
         subject: m.subject,

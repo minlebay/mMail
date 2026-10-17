@@ -7,6 +7,7 @@ mod imap;
 mod links;
 mod remote;
 mod sanitize;
+mod smtp;
 mod store;
 
 use tauri::webview::NewWindowResponse;
@@ -34,6 +35,7 @@ fn main() {
             imap::list_accounts,
             imap::add_account,
             imap::remove_account,
+            smtp::send_message,
         ])
         .setup(|app| {
             app.manage(config::ConfigStore::load(app.path().app_config_dir()?));

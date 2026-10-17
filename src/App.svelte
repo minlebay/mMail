@@ -6,10 +6,11 @@
   import LinkDialog from './lib/LinkDialog.svelte';
   import Settings from './lib/Settings.svelte';
   import Splitter from './lib/Splitter.svelte';
+  import Compose from './lib/Compose.svelte';
   import { applyTheme, DEFAULT_THEME, DEFAULT_OPACITY } from './lib/themes.js';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { listen } from '@tauri-apps/api/event';
-  import { listFolders, syncStatus, getAppearance, setZoom } from './lib/api.js';
+  import { listFolders, syncStatus, getAppearance, setZoom, listAccounts } from './lib/api.js';
 
   const win = getCurrentWindow();
   let maximized = $state(false);
@@ -102,6 +103,30 @@
     return () => stops.forEach((p) => p.then((stop) => stop()));
   });
 
+  // Написание письма: отправитель по умолчанию — ящик выбранной слева папки.
+  let compose = $state(null);
+  let composeAccounts = $state([]);
+  let toast = $state('');
+
+  async function openCompose(prefill = {}) {
+    composeAccounts = await listAccounts();
+    const current = active.account && composeAccounts.includes(active.account) ? active.account : composeAccounts[0];
+    const from = prefill.from && composeAccounts.includes(prefill.from) ? prefill.from : current ?? '';
+    compose = { from, to: '', cc: '', subject: '', body: '', ...prefill, from };
+  }
+
+  function replyTo(msg, kind) {
+    const prefix = kind === 'reply' ? 'Re: ' : 'Fwd: ';
+    const subject = /^(re|fwd?):/i.test(msg.subject) ? msg.subject : prefix + msg.subject;
+    openCompose({ from: msg.account, to: kind === 'reply' ? msg.fromAddr : '', subject });
+  }
+
+  function sent() {
+    compose = null;
+    toast = 'Письмо отправлено';
+    setTimeout(() => (toast = ''), 3000);
+  }
+
   function pickFolder(account, folder) {
     active = { account, folder };
     selectedId = null;
@@ -120,14 +145,18 @@
   />
 
   <main class="layout" style:grid-template-columns="minmax(150px, {sizes.sidebar}px) 12px minmax(220px, {sizes.list}px) 12px minmax(280px, 1fr)">
-    <Sidebar {groups} {active} onpick={pickFolder} oncompose={() => {}} />
+    <Sidebar {groups} {active} onpick={pickFolder} oncompose={() => openCompose()} />
     <Splitter value={sizes.sidebar} min={150} max={380} initial={SIZES.sidebar} onchange={(px) => resize('sidebar', px)} />
     <MessageList account={active.account} folder={active.folder} {version} {selectedId} onselect={(id) => (selectedId = id)} />
     <Splitter value={sizes.list} min={220} max={640} initial={SIZES.list} onchange={(px) => resize('list', px)} />
-    <Reader id={selectedId} />
+    <Reader id={selectedId} onreply={replyTo} />
   </main>
 
   <LinkDialog />
+  {#if compose}
+    <Compose draft={compose} accounts={composeAccounts} onclose={() => (compose = null)} onsent={sent} />
+  {/if}
+  {#if toast}<div class="toast">{toast}</div>{/if}
   {#if settingsOpen}
     <Settings {appearance} onzoom={changeZoom} onclose={() => (settingsOpen = false)} />
   {/if}
@@ -146,6 +175,19 @@
     border: 1px solid rgba(255, 255, 255, 0.14);
     background: var(--window-tint);
   }
+  .toast {
+    position: absolute;
+    left: 50%;
+    bottom: 28px;
+    z-index: 30;
+    transform: translateX(-50%);
+    padding: 10px 18px;
+    border-radius: 20px;
+    background: var(--surface);
+    border: 1px solid var(--glass-border);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  }
+
   .window.maximized {
     border-radius: 0;
     border: 0;

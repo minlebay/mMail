@@ -2,7 +2,7 @@
   import Icon from './Icon.svelte';
   import { getMessage, setSenderTrusted } from './api.js';
 
-  let { id } = $props();
+  let { id, onreply } = $props();
 
   let msg = $state(null);
   let error = $state('');
@@ -71,7 +71,9 @@
             {loadingRemote ? 'Загрузка…' : 'Показать'}
           </button>
           {#if msg.canTrust}
-            <button class="chip" disabled={loadingRemote} onclick={() => trust(true)}>Всегда для {msg.fromAddr}</button>
+            <button class="chip" title="Всегда показывать от {msg.fromAddr}" disabled={loadingRemote} onclick={() => trust(true)}>
+              Всегда для {msg.fromAddr}
+            </button>
           {/if}
         </div>
       {:else if msg.remoteShown}
@@ -83,7 +85,7 @@
           {#if msg.trusted}
             <button class="chip" onclick={() => trust(false)}>Больше не доверять</button>
           {:else if msg.canTrust}
-            <button class="chip" onclick={() => trust(true)}>Всегда для {msg.fromAddr}</button>
+            <button class="chip" title="Всегда показывать от {msg.fromAddr}" onclick={() => trust(true)}>Всегда для {msg.fromAddr}</button>
           {/if}
         </div>
       {/if}
@@ -94,8 +96,8 @@
     <iframe class="body" title="Содержимое письма" sandbox="allow-popups" referrerpolicy="no-referrer" srcdoc={msg.srcdoc}></iframe>
 
     <footer>
-      <button class="action"><Icon name="reply" />Ответить</button>
-      <button class="action"><Icon name="forward" />Переслать</button>
+      <button class="action" onclick={() => onreply(msg, 'reply')}><Icon name="reply" />Ответить</button>
+      <button class="action" onclick={() => onreply(msg, 'forward')}><Icon name="forward" />Переслать</button>
     </footer>
   {:else if error}
     <div class="placeholder">Не удалось открыть письмо: {error}</div>
@@ -174,8 +176,9 @@
     min-width: 0;
   }
   .chip {
-    flex: none;
-    max-width: 260px;
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
     height: 26px;
     padding: 0 12px;
     border-radius: 13px;

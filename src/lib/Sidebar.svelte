@@ -34,7 +34,7 @@
 <nav class="panel sidebar">
   <button class="compose" onclick={oncompose}><Icon name="pencil" />Написать</button>
 
-  <div class="tree">
+  <div class="tree scroll-gutter">
     {#each groups as group (keyOf(group.account))}
       {@const open = !collapsed.has(keyOf(group.account))}
       <section>
@@ -86,9 +86,9 @@
   }
 
   .tree {
+    --gutter: 12px;
     flex: 1;
     min-height: 0;
-    overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 8px;
