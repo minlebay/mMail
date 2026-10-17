@@ -67,12 +67,12 @@
         <div class="avatar">{initial(msg.fromName)}</div>
         <div class="who">
           <div class="name">
-            {msg.fromName}
+            <span class="clip" title={msg.fromName}>{msg.fromName}</span>
             {#if msg.auth === 'pass'}
               <span class="verified" title="SPF, DKIM и DMARC пройдены"><Icon name="shieldCheck" size={14} /></span>
             {/if}
           </div>
-          <div class="addr">{msg.fromAddr}</div>
+          <div class="addr clip" title={msg.fromAddr}>{msg.fromAddr}</div>
         </div>
         <div class="date">{msg.date}</div>
       </div>
@@ -183,13 +183,24 @@
     font-size: 15px;
   }
   .verified {
+    flex: none;
     display: flex;
     color: var(--ok);
+  }
+  .clip {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .addr,
   .date {
     color: var(--muted);
     font-size: 13px;
+  }
+  .date {
+    flex: none;
+    white-space: nowrap;
   }
 
   .banner {
