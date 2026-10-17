@@ -30,3 +30,10 @@ export const addAccount = (email, password) => invoke('add_account', { email, pa
 export const removeAccount = (email) => invoke('remove_account', { email });
 
 export const sendMessage = (draft) => invoke('send_message', { draft });
+
+export const openCompose = (prefill) => invoke('open_compose', { prefill });
+
+export const composeInit = () => invoke('compose_init');
+
+// Файлы выбираются в системном диалоге ядра; сюда приходят только id, имя и размер.
+export const pickAttachments = () => invoke('pick_attachments');

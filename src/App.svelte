@@ -6,11 +6,10 @@
   import LinkDialog from './lib/LinkDialog.svelte';
   import Settings from './lib/Settings.svelte';
   import Splitter from './lib/Splitter.svelte';
-  import Compose from './lib/Compose.svelte';
   import { applyTheme, DEFAULT_THEME, DEFAULT_OPACITY } from './lib/themes.js';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { listen } from '@tauri-apps/api/event';
-  import { listFolders, syncStatus, getAppearance, setZoom, listAccounts } from './lib/api.js';
+  import { listFolders, syncStatus, getAppearance, setZoom, openCompose as openComposeWindow } from './lib/api.js';
 
   const win = getCurrentWindow();
   let maximized = $state(false);
@@ -94,6 +93,7 @@
         refreshFolders();
       }),
       listen('sync-status', (e) => (sync = e.payload)),
+      listen('message-sent', () => showToast('Письмо отправлено')),
     ];
     // Всё, что случилось до подписки, забираем явно.
     Promise.all(stops).then(() => {
@@ -104,27 +104,22 @@
     return () => stops.forEach((p) => p.then((stop) => stop()));
   });
 
-  // Написание письма: отправитель по умолчанию — ящик выбранной слева папки.
-  let compose = $state(null);
-  let composeAccounts = $state([]);
+  // Написание письма — отдельное окно; отправитель по умолчанию — ящик выбранной слева папки.
   let toast = $state('');
 
-  async function openCompose(prefill = {}) {
-    composeAccounts = await listAccounts();
-    const current = active.account && composeAccounts.includes(active.account) ? active.account : composeAccounts[0];
-    const from = prefill.from && composeAccounts.includes(prefill.from) ? prefill.from : current ?? '';
-    compose = { from, to: '', cc: '', subject: '', body: '', ...prefill, from };
+  function openCompose(prefill = {}) {
+    const current = active.account || null;
+    openComposeWindow({ kind: 'new', from: current, ...prefill });
   }
 
   function replyTo(msg, kind) {
     const prefix = kind === 'reply' ? 'Re: ' : 'Fwd: ';
     const subject = /^(re|fwd?):/i.test(msg.subject) ? msg.subject : prefix + msg.subject;
-    openCompose({ from: msg.account, to: kind === 'reply' ? msg.fromAddr : '', subject });
+    openCompose({ kind, from: msg.account, to: kind === 'reply' ? msg.fromAddr : '', subject, source: msg.id });
   }
 
-  function sent() {
-    compose = null;
-    toast = 'Письмо отправлено';
+  function showToast(text) {
+    toast = text;
     setTimeout(() => (toast = ''), 3000);
   }
 
@@ -154,9 +149,6 @@
   </main>
 
   <LinkDialog />
-  {#if compose}
-    <Compose draft={compose} accounts={composeAccounts} onclose={() => (compose = null)} onsent={sent} />
-  {/if}
   {#if toast}<div class="toast">{toast}</div>{/if}
   {#if settingsOpen}
     <Settings {appearance} onzoom={changeZoom} onclose={() => (settingsOpen = false)} />

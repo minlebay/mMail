@@ -3,7 +3,8 @@
 
   import Icon from './Icon.svelte';
 
-  let { sync, middleClickMinimize, zoom, onzoom, onsettings } = $props();
+  // Шапка общая для главного окна и окон письма: лишнее (статус, масштаб, настройки) необязательно.
+  let { title = 'mMail', sync = null, middleClickMinimize = true, zoom = null, onzoom, onsettings = null, onclose = null } = $props();
 
   let zoomOpen = $state(false);
   const percent = (z) => `${Math.round(z * 100)}%`;
@@ -22,12 +23,13 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <header class="titlebar" data-tauri-drag-region {onmousedown}>
   <div class="title" data-tauri-drag-region>
-    <span data-tauri-drag-region>mMail</span>
-    {#if sync.message}
+    <span class="name" data-tauri-drag-region>{title}</span>
+    {#if sync?.message}
       <span class="status {sync.state}" data-tauri-drag-region>{sync.message}</span>
     {/if}
   </div>
   <div class="controls">
+    {#if zoom != null}
     <div class="zoom">
       <button class="pill" title="Масштаб (Ctrl +/−/0)" onclick={() => (zoomOpen = !zoomOpen)}>{percent(zoom)}</button>
       {#if zoomOpen}
@@ -49,16 +51,19 @@
         </div>
       {/if}
     </div>
-    <button class="ctl" aria-label="Настройки" title="Настройки" onclick={onsettings}>
-      <Icon name="settings" size={14} />
-    </button>
+    {/if}
+    {#if onsettings}
+      <button class="ctl" aria-label="Настройки" title="Настройки" onclick={onsettings}>
+        <Icon name="settings" size={14} />
+      </button>
+    {/if}
     <button class="ctl" aria-label="Свернуть" onclick={() => win.minimize()}>
       <svg viewBox="0 0 12 12"><path d="M2.5 6h7" /></svg>
     </button>
     <button class="ctl" aria-label="Развернуть" onclick={() => win.toggleMaximize()}>
       <svg viewBox="0 0 12 12"><rect x="2.5" y="2.5" width="7" height="7" rx="1.5" /></svg>
     </button>
-    <button class="ctl close" aria-label="Закрыть" onclick={() => win.close()}>
+    <button class="ctl close" aria-label="Закрыть" onclick={() => (onclose ? onclose() : win.close())}>
       <svg viewBox="0 0 12 12"><path d="M3 3l6 6M9 3l-6 6" /></svg>
     </button>
   </div>
@@ -82,6 +87,12 @@
     font-weight: 600;
     letter-spacing: 0.02em;
     color: var(--muted);
+  }
+
+  .name {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .status {

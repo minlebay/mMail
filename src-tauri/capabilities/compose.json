@@ -1,0 +1,23 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "compose",
+  "description": "Окна написания письма: отправка, вложения, оформление и своё окно. Читать почту не могут.",
+  "windows": [
+    "compose-*"
+  ],
+  "permissions": [
+    "allow-compose-init",
+    "allow-send-message",
+    "allow-pick-attachments",
+    "allow-get-appearance",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-start-dragging",
+    "core:window:allow-internal-toggle-maximize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-minimize",
+    "core:window:allow-is-maximized",
+    "core:window:allow-close",
+    "core:window:allow-set-title"
+  ]
+}

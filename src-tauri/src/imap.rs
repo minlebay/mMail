@@ -22,7 +22,7 @@ use zeroize::Zeroizing;
 use crate::accounts::{self, Account};
 use crate::config::ConfigStore;
 use crate::fake;
-use crate::store::{Auth, Folder, Message, Store};
+use crate::store::{Auth, Folder, Message, Opened, Store};
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 type Session = async_imap::Session<TlsStream<TcpStream>>;
@@ -125,6 +125,8 @@ fn to_message(fetch: &Fetch, account: &str, folder: Folder) -> Option<Message> {
         // Проверка отправителя — по полным заголовкам, когда письмо открывают.
         auth: Auth::Unknown,
         html: None,
+        message_id: None,
+        references: Vec::new(),
     })
 }
 
@@ -438,7 +440,7 @@ pub async fn remove_account(app: AppHandle, email: String) -> std::result::Resul
 
 impl Imap {
     /// Исходный HTML письма и проверка отправителя (BODY.PEEK — письмо не помечается прочитанным).
-    pub async fn open(&self, email: &str, folder: Folder, uid: u32) -> Result<(String, Auth)> {
+    pub async fn open(&self, email: &str, folder: Folder, uid: u32) -> Result<Opened> {
         let conn = self.connection(email).ok_or("ящик ещё подключается")?;
         let name = conn.folders.get(&folder).ok_or("папка не найдена на сервере")?;
         let mut reader = conn.reader.lock().await;
@@ -459,7 +461,13 @@ impl Imap {
                         .map(|h| String::from_utf8_lossy(&raw[h.offset_start as usize..h.offset_end as usize]).into_owned());
                     let auth = auth_verdict(auth_results, conn.account.provider.trusted_authserv);
                     let html = parsed.body_html(0).map(|h| h.into_owned()).unwrap_or_default();
-                    return Ok((html, auth));
+                    let references = match parsed.references() {
+                        mail_parser::HeaderValue::Text(id) => vec![id.to_string()],
+                        mail_parser::HeaderValue::TextList(ids) => ids.iter().map(|id| id.to_string()).collect(),
+                        _ => Vec::new(),
+                    };
+                    let message_id = parsed.message_id().map(str::to_string);
+                    return Ok(Opened { html, auth, message_id, references });
                 }
                 Err(e) if attempt == 0 => {
                     eprintln!("mMail: IMAP-сессия {email} сброшена ({e}), переподключаюсь");

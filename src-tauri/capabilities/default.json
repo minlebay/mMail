@@ -16,7 +16,7 @@
     "allow-list-accounts",
     "allow-add-account",
     "allow-remove-account",
-    "allow-send-message",
+    "allow-open-compose",
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "core:window:allow-start-dragging",

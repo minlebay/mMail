@@ -21,6 +21,8 @@ pub fn generate(count: usize) -> Vec<Message> {
             timestamp: now - minutes_ago * 60,
             auth,
             html: Some(html),
+            message_id: None,
+            references: Vec::new(),
         });
     };
 

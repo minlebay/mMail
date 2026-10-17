@@ -115,9 +115,10 @@ pub async fn get_message(
     let html = match (m.html.take(), m.account.as_deref(), m.uid) {
         (Some(html), _, _) => html,
         (None, Some(account), Some(uid)) => {
-            let (html, auth) = imap.open(account, m.folder, uid).await.map_err(|e| e.to_string())?;
-            store.set_opened(id, html.clone(), auth);
-            m.auth = auth;
+            let opened = imap.open(account, m.folder, uid).await.map_err(|e| e.to_string())?;
+            let html = opened.html.clone();
+            m.auth = opened.auth;
+            store.set_opened(id, opened);
             html
         }
         _ => String::new(),
@@ -189,7 +190,7 @@ pub fn set_sender_trusted(config: State<'_, ConfigStore>, address: String, trust
     })
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Appearance {
     theme: String,
@@ -217,6 +218,7 @@ pub fn get_appearance(config: State<'_, ConfigStore>) -> Appearance {
 
 #[tauri::command]
 pub fn set_appearance(
+    app: tauri::AppHandle,
     config: State<'_, ConfigStore>,
     theme: String,
     opacity: f32,
@@ -236,7 +238,10 @@ pub fn set_appearance(
         c.middle_click_minimize = Some(middle_click_minimize);
         c.zoom = Some(zoom.clamp(ZOOM_MIN, ZOOM_MAX));
         c.poll_seconds = Some(poll_seconds);
-    })
+    })?;
+    // Окна писем подхватывают тему сразу, без переоткрытия.
+    let _ = tauri::Emitter::emit(&app, "appearance-changed", get_appearance(config));
+    Ok(())
 }
 
 /// Текущий масштаб окна (быстрый ползунок в шапке и Ctrl +/−/0).

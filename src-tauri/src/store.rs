@@ -4,7 +4,7 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::RwLock;
 
-use chrono::{Datelike, Local, TimeZone};
+use chrono::{Local, TimeZone};
 use serde::Serialize;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -40,6 +40,9 @@ pub struct Message {
     pub auth: Auth,
     /// Исходный (ещё не очищенный) HTML; у IMAP-писем загружается при открытии.
     pub html: Option<String>,
+    /// Message-ID и References — для цепочки при ответе; известны после открытия.
+    pub message_id: Option<String>,
+    pub references: Vec<String>,
 }
 
 struct Entry {
@@ -73,6 +76,17 @@ pub struct Details {
     pub auth: Auth,
     pub html: Option<String>,
     pub unread: bool,
+    pub timestamp: i64,
+    pub message_id: Option<String>,
+    pub references: Vec<String>,
+}
+
+/// Письмо, загруженное с сервера целиком.
+pub struct Opened {
+    pub html: String,
+    pub auth: Auth,
+    pub message_id: Option<String>,
+    pub references: Vec<String>,
 }
 
 #[derive(Default)]
@@ -160,6 +174,9 @@ impl Store {
             auth: e.msg.auth,
             html: e.msg.html.clone(),
             unread: e.msg.unread,
+            timestamp: e.msg.timestamp,
+            message_id: e.msg.message_id.clone(),
+            references: e.msg.references.clone(),
         })
     }
 
@@ -199,11 +216,13 @@ impl Store {
         changed
     }
 
-    /// Запоминает загруженное с сервера тело письма и результат проверки отправителя.
-    pub fn set_opened(&self, id: u32, html: String, auth: Auth) {
+    /// Запоминает загруженное с сервера письмо: тело, проверку отправителя, идентификаторы цепочки.
+    pub fn set_opened(&self, id: u32, opened: Opened) {
         if let Some(e) = self.entries.write().unwrap().iter_mut().find(|e| e.id == id) {
-            e.msg.html = Some(html);
-            e.msg.auth = auth;
+            e.msg.html = Some(opened.html);
+            e.msg.auth = opened.auth;
+            e.msg.message_id = opened.message_id;
+            e.msg.references = opened.references;
         }
     }
 }
@@ -246,19 +265,7 @@ fn folder_filter(folder: &str) -> Option<fn(&Message) -> bool> {
     })
 }
 
-const MONTHS: [&str; 12] = ["янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
-
-fn date_label(timestamp: i64) -> String {
-    let Some(at) = Local.timestamp_opt(timestamp, 0).single() else { return String::new() };
-    let today = Local::now().date_naive();
-    let day = at.date_naive();
-    if day == today {
-        at.format("%H:%M").to_string()
-    } else if today.pred_opt() == Some(day) {
-        "вчера".into()
-    } else if day.year() == today.year() {
-        format!("{} {}", day.day(), MONTHS[day.month0() as usize])
-    } else {
-        day.format("%d.%m.%Y").to_string()
-    }
+/// Всегда дата и время в местном часовом поясе: «17.10.2026 13:28».
+pub fn date_label(timestamp: i64) -> String {
+    Local.timestamp_opt(timestamp, 0).single().map(|at| at.format("%d.%m.%Y %H:%M").to_string()).unwrap_or_default()
 }
