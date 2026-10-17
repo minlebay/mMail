@@ -1,23 +1,43 @@
 <script>
   import Icon from './Icon.svelte';
-  import { getMessage } from './api.js';
+  import { getMessage, setSenderTrusted } from './api.js';
 
   let { id } = $props();
 
   let msg = $state(null);
   let error = $state('');
+  let loadingRemote = $state(false);
+  let request = 0;
 
   $effect(() => {
     const current = id;
     msg = null;
     error = '';
-    if (current == null) return;
-    let alive = true;
-    getMessage(current)
-      .then((m) => alive && (msg = m))
-      .catch((e) => alive && (error = String(e)));
-    return () => (alive = false);
+    if (current != null) load(current, false);
   });
+
+  async function load(current, showRemote) {
+    const mine = ++request;
+    try {
+      const m = await getMessage(current, showRemote);
+      if (mine === request) msg = m;
+    } catch (e) {
+      if (mine === request) error = String(e);
+    }
+  }
+
+  async function showRemote() {
+    loadingRemote = true;
+    await load(msg.id, true);
+    loadingRemote = false;
+  }
+
+  async function trust(trusted) {
+    await setSenderTrusted(msg.fromAddr, trusted);
+    loadingRemote = trusted;
+    await load(msg.id, trusted);
+    loadingRemote = false;
+  }
 
   const initial = (name) => name.trim().charAt(0).toUpperCase();
 </script>
@@ -43,8 +63,29 @@
       {#each msg.warnings as w}
         <div class="banner danger"><Icon name="alert" size={15} />{w}</div>
       {/each}
-      {#if msg.blockedRemote}
-        <div class="banner"><Icon name="imageOff" size={15} />Заблокировано внешних ресурсов: {msg.blockedRemote}</div>
+      {#if msg.blockedRemote && !msg.remoteShown}
+        <div class="banner">
+          <Icon name="imageOff" size={15} />
+          <span class="text">Внешние картинки скрыты: {msg.blockedRemote}</span>
+          <button class="chip" disabled={loadingRemote} onclick={showRemote}>
+            {loadingRemote ? 'Загрузка…' : 'Показать'}
+          </button>
+          {#if msg.canTrust}
+            <button class="chip" disabled={loadingRemote} onclick={() => trust(true)}>Всегда для {msg.fromAddr}</button>
+          {/if}
+        </div>
+      {:else if msg.remoteShown}
+        <div class="banner">
+          <Icon name="image" size={15} />
+          <span class="text">
+            {msg.trusted ? `Внешнее содержимое показывается: ${msg.fromAddr} в доверенных` : 'Внешнее содержимое показано'}
+          </span>
+          {#if msg.trusted}
+            <button class="chip" onclick={() => trust(false)}>Больше не доверять</button>
+          {:else if msg.canTrust}
+            <button class="chip" onclick={() => trust(true)}>Всегда для {msg.fromAddr}</button>
+          {/if}
+        </div>
       {/if}
     </header>
 
@@ -126,6 +167,29 @@
     border-radius: 9px;
     background: rgba(255, 255, 255, 0.08);
     font-size: 13px;
+  }
+  .banner .text {
+    flex: 1;
+    min-width: 0;
+  }
+  .chip {
+    flex: none;
+    max-width: 260px;
+    height: 26px;
+    padding: 0 12px;
+    border-radius: 13px;
+    background: rgba(255, 255, 255, 0.14);
+    font-size: 12.5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .chip:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.24);
+  }
+  .chip:disabled {
+    opacity: 0.6;
+    cursor: default;
   }
   .banner.danger {
     background: rgba(255, 79, 120, 0.18);

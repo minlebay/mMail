@@ -1,7 +1,7 @@
 fn main() {
     // Явный список команд: UI может вызвать только то, что разрешено в capabilities/.
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(
-        tauri_build::AppManifest::new().commands(&["list_folders", "list_messages", "get_message", "open_link", "sync_status"]),
+        tauri_build::AppManifest::new().commands(&["list_folders", "list_messages", "get_message", "set_sender_trusted", "open_link", "sync_status"]),
     ))
     .expect("failed to run tauri-build");
 }

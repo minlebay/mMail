@@ -120,9 +120,9 @@ async fn fetch_batch(session: &mut Session, cursor: &mut Cursor) -> Result<Vec<M
     session.examine(&cursor.name).await?;
     let first = cursor.next.saturating_sub(BATCH - 1).max(1);
     let started = std::time::Instant::now();
-    // ENVELOPE сервер берёт из индекса; полные заголовки Яндекс отдаёт заметно медленнее.
+    // Только нужные поля заголовка — так же синхронизирует Thunderbird.
     let fetches: Vec<Fetch> = session
-        .fetch(format!("{first}:{}", cursor.next), "(UID FLAGS INTERNALDATE ENVELOPE)")
+        .fetch(format!("{first}:{}", cursor.next), "(UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])")
         .await?
         .try_collect()
         .await?;
@@ -132,33 +132,7 @@ async fn fetch_batch(session: &mut Session, cursor: &mut Cursor) -> Result<Vec<M
 }
 
 fn to_message(fetch: &Fetch, folder: Folder) -> Option<Message> {
-    let env = fetch.envelope()?;
-    // Поля ENVELOPE приходят как есть (RFC 2047, «=?utf-8?B?…?=»): собираем мини-заголовок
-    // и отдаём его mail-parser, чтобы он раскодировал так же, как полное письмо.
-    let mut block = Vec::new();
-    let mut line = |name: &[u8], value: &[u8]| {
-        block.extend_from_slice(name);
-        block.extend_from_slice(value);
-        block.extend_from_slice(b"\r\n");
-    };
-    if let Some(subject) = &env.subject {
-        line(b"Subject: ", subject);
-    }
-    if let Some(date) = &env.date {
-        line(b"Date: ", date);
-    }
-    if let Some(addr) = env.from.as_ref().and_then(|list| list.first()) {
-        let mut value = addr.name.as_deref().unwrap_or_default().to_vec();
-        value.extend_from_slice(b" <");
-        value.extend_from_slice(addr.mailbox.as_deref().unwrap_or_default());
-        value.push(b'@');
-        value.extend_from_slice(addr.host.as_deref().unwrap_or_default());
-        value.push(b'>');
-        line(b"From: ", &value);
-    }
-    block.extend_from_slice(b"\r\n");
-    let parsed = MessageParser::default().parse_headers(&block)?;
-
+    let parsed = MessageParser::default().parse_headers(fetch.header()?)?;
     let from = parsed.from().and_then(|a| a.first());
     let from_addr = from.and_then(|a| a.address()).unwrap_or_default().to_string();
     let from_name = from.and_then(|a| a.name()).map(str::to_string).unwrap_or_else(|| from_addr.clone());

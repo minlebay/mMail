@@ -33,7 +33,8 @@ pub struct Clean {
     pub blocked_remote: usize,
 }
 
-pub fn clean_html(dirty: &str) -> Clean {
+/// `allow_remote`: оставить http(s)-картинки, чтобы ядро скачало их и встроило (remote.rs).
+pub fn clean_html(dirty: &str, allow_remote: bool) -> Clean {
     let blocked = Arc::new(AtomicUsize::new(0));
     let counter = Arc::clone(&blocked);
     let relative_counter = Arc::clone(&blocked);
@@ -47,7 +48,7 @@ pub fn clean_html(dirty: &str) -> Clean {
         .link_rel(Some("noopener noreferrer nofollow"))
         .set_tag_attribute_value("a", "target", "_blank")
         .attribute_filter(move |element, attribute, value| {
-            filter_attribute(&counter, element, attribute, value)
+            filter_attribute(&counter, allow_remote, element, attribute, value)
         })
         .clean(dirty)
         .to_string();
@@ -67,6 +68,7 @@ impl UrlRelativeEvaluate<'_> for DropRelative {
 
 fn filter_attribute<'u>(
     blocked: &AtomicUsize,
+    allow_remote: bool,
     element: &str,
     attribute: &str,
     value: &'u str,
@@ -77,22 +79,23 @@ fn filter_attribute<'u>(
             if lower.starts_with("data:image/") && !lower.starts_with("data:image/svg") {
                 return Some(value.into());
             }
-            if lower.starts_with("http") || lower.starts_with("//") {
+            let remote = lower.starts_with("https://") || lower.starts_with("http://");
+            if remote || lower.starts_with("//") {
                 blocked.fetch_add(1, Ordering::Relaxed);
             }
-            None
+            (remote && allow_remote).then(|| value.into())
         }
         ("a", "href") => {
             let ok = ["https://", "http://", "mailto:"].iter().any(|p| lower.starts_with(p));
             ok.then(|| value.into())
         }
         (_, "style") => {
-            if lower.contains("url(") || lower.contains("image-set(") {
-                blocked.fetch_add(1, Ordering::Relaxed);
-                None
-            } else if lower.contains('\\') || lower.contains("expression(") || lower.contains("@import") {
+            if lower.contains('\\') || lower.contains("expression(") || lower.contains("@import") {
                 // Экранирование в CSS (`u\72l(`) — классический обход фильтров; такой стиль выкидываем целиком.
                 None
+            } else if lower.contains("url(") || lower.contains("image-set(") {
+                blocked.fetch_add(1, Ordering::Relaxed);
+                (allow_remote && !lower.contains("image-set(")).then(|| value.into())
             } else {
                 Some(value.into())
             }
@@ -115,9 +118,24 @@ pub fn wrap(body: &str) -> String {
 mod tests {
     use super::*;
 
+    fn clean_html_blocked(dirty: &str) -> Clean {
+        clean_html(dirty, false)
+    }
+
+    #[test]
+    fn allow_remote_keeps_only_http_images() {
+        let c = clean_html(
+            r#"<img src="https://a.example/1.png"><img src="javascript:x"><div style="background:url(https://a.example/bg.png)">a</div><div style="background:u\72l(https://t.example/x)">b</div>"#,
+            true,
+        );
+        assert!(c.html.contains(r#"src="https://a.example/1.png""#));
+        assert!(c.html.contains("url(https://a.example/bg.png)"));
+        assert!(!c.html.contains("javascript") && !c.html.contains("t.example"), "{}", c.html);
+    }
+
     #[test]
     fn strips_active_content() {
-        let c = clean_html(
+        let c = clean_html_blocked(
             r#"<script>alert(1)</script><img src="x" onerror="alert(2)">
 <svg onload="alert(3)"></svg><iframe src="https://evil.example"></iframe>
 <form action="https://evil.example"><input name="p"></form>
@@ -131,7 +149,7 @@ mod tests {
 
     #[test]
     fn blocks_remote_resources() {
-        let c = clean_html(
+        let c = clean_html_blocked(
             r#"<img src="https://t.example/p.gif"><img src="//t.example/q.gif">
 <div style="background:url(https://t.example/bg.png)">a</div>
 <div style="background:u\72l(https://t.example/x)">b</div>"#,
@@ -142,7 +160,7 @@ mod tests {
 
     #[test]
     fn keeps_safe_formatting() {
-        let c = clean_html(
+        let c = clean_html_blocked(
             r#"<p style="color:red">hi</p><a href="https://github.com">gh</a><img src="data:image/png;base64,AAAA">"#,
         );
         assert!(c.html.contains(r#"style="color:red""#));

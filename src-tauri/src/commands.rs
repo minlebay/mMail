@@ -1,9 +1,10 @@
 use serde::Serialize;
 use tauri::State;
 
+use crate::config::ConfigStore;
 use crate::imap::Imap;
 use crate::store::{Auth, Store, Summary};
-use crate::{links, sanitize};
+use crate::{links, remote, sanitize};
 
 const FOLDERS: [(&str, &str); 5] = [
     ("inbox", "Входящие"),
@@ -39,6 +40,12 @@ pub struct MessageView {
     auth: Auth,
     warnings: Vec<String>,
     blocked_remote: usize,
+    /// Внешние картинки загружены и встроены.
+    remote_shown: bool,
+    /// Отправитель в списке доверенных.
+    trusted: bool,
+    /// Можно ли доверять: не для провалившихся проверку и не для доменов с омоглифами.
+    can_trust: bool,
     srcdoc: String,
 }
 
@@ -61,7 +68,13 @@ pub fn list_messages(
 }
 
 #[tauri::command]
-pub async fn get_message(store: State<'_, Store>, imap: State<'_, Imap>, id: u32) -> Result<MessageView, String> {
+pub async fn get_message(
+    store: State<'_, Store>,
+    imap: State<'_, Imap>,
+    config: State<'_, ConfigStore>,
+    id: u32,
+    show_remote: bool,
+) -> Result<MessageView, String> {
     let mut m = store.details(id).ok_or("no such message")?;
     let html = match (m.html.take(), m.uid) {
         (Some(html), _) => html,
@@ -73,7 +86,16 @@ pub async fn get_message(store: State<'_, Store>, imap: State<'_, Imap>, id: u32
         }
         (None, None) => String::new(),
     };
-    let clean = sanitize::clean_html(&html);
+    let sender = m.from_addr.to_lowercase();
+    let lookalike = sender.rsplit_once('@').is_some_and(|(_, domain)| !domain.is_ascii());
+    let can_trust = m.auth != Auth::Fail && !lookalike && !sender.is_empty();
+    let trusted = can_trust && config.get().trusted_senders.contains(&sender);
+    let remote_shown = show_remote || trusted;
+
+    let mut clean = sanitize::clean_html(&html, remote_shown);
+    if remote_shown && clean.blocked_remote > 0 {
+        clean.html = remote::inline(clean.html).await;
+    }
 
     let mut warnings = Vec::new();
     if m.auth == Auth::Fail {
@@ -99,6 +121,25 @@ pub async fn get_message(store: State<'_, Store>, imap: State<'_, Imap>, id: u32
         auth: m.auth,
         warnings,
         blocked_remote: clean.blocked_remote,
+        remote_shown,
+        trusted,
+        can_trust,
         srcdoc: sanitize::wrap(&clean.html),
+    })
+}
+
+/// «Всегда показывать внешнее содержимое от этого отправителя» и обратно.
+#[tauri::command]
+pub fn set_sender_trusted(config: State<'_, ConfigStore>, address: String, trusted: bool) -> Result<(), String> {
+    let address = address.trim().to_lowercase();
+    if !address.contains('@') {
+        return Err("некорректный адрес".into());
+    }
+    config.update(|c| {
+        if trusted {
+            c.trusted_senders.insert(address);
+        } else {
+            c.trusted_senders.remove(&address);
+        }
     })
 }

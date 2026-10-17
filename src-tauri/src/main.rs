@@ -1,8 +1,10 @@
 mod blur;
 mod commands;
+mod config;
 mod fake;
 mod imap;
 mod links;
+mod remote;
 mod sanitize;
 mod store;
 
@@ -22,10 +24,12 @@ fn main() {
             commands::list_folders,
             commands::list_messages,
             commands::get_message,
+            commands::set_sender_trusted,
             links::open_link,
             imap::sync_status,
         ])
         .setup(|app| {
+            app.manage(config::ConfigStore::load(app.path().app_config_dir()?));
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::default())
                 .title("mMail")
                 .inner_size(1200.0, 780.0)
