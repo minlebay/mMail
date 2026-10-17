@@ -28,6 +28,9 @@ pub struct Config {
     pub tray_mode: Option<String>,
     /// Крестик прячет окно в трей, а не закрывает приложение; `None` — прячет.
     pub close_to_tray: Option<bool>,
+    /// За сколько дней хранить на диске содержимое писем (заголовки — всегда);
+    /// `None` — всё, `Some(0)` — только до следующего запуска.
+    pub body_days: Option<u32>,
     /// Отправители, у которых внешнее содержимое показывается сразу (адреса в нижнем регистре).
     pub trusted_senders: BTreeSet<String>,
 }
@@ -38,6 +41,7 @@ pub struct ConfigStore {
 }
 
 pub const POLL_CHOICES: [u64; 5] = [5, 10, 30, 60, 300];
+pub const BODY_DAYS_CHOICES: [u32; 5] = [0, 30, 90, 180, 365];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum TrayMode {
@@ -72,6 +76,12 @@ impl TrayMode {
 impl Config {
     pub fn tray_mode(&self) -> TrayMode {
         self.tray_mode.as_deref().and_then(TrayMode::parse).unwrap_or(TrayMode::PanelTray)
+    }
+
+    /// Письма старше этого Unix-времени хранятся без содержимого; `None` — хранить всё.
+    pub fn body_cutoff(&self) -> Option<i64> {
+        let days = self.body_days.filter(|d| BODY_DAYS_CHOICES.contains(d))?;
+        Some(chrono::Utc::now().timestamp() - i64::from(days) * 86_400)
     }
 
     pub fn poll_seconds(&self) -> u64 {

@@ -130,6 +130,15 @@ async fn open_cache(app: &AppHandle) -> Result<()> {
     let db = tauri::async_runtime::spawn_blocking(move || Db::open(&dir, &key)).await??;
     app.state::<Store>().attach_db(db)?;
     let _ = app.emit("mailbox-changed", ());
+    // Содержимое писем старше срока хранения (его могли открыть в прошлый раз) — убираем.
+    if let Some(cutoff) = app.state::<ConfigStore>().get().body_cutoff() {
+        let handle = app.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            if let Err(e) = handle.state::<Store>().clear_bodies(cutoff) {
+                eprintln!("mMail: очистка кэша не удалась: {e}");
+            }
+        });
+    }
     Ok(())
 }
 
@@ -444,8 +453,9 @@ async fn prefetch_bodies(
     skipped: &mut HashSet<(Folder, u32)>,
 ) -> Result<usize> {
     let store = app.state::<Store>();
+    let since = app.state::<ConfigStore>().get().body_cutoff();
     let pending = |c: &Cursor, skipped: &HashSet<(Folder, u32)>| -> Vec<u32> {
-        store.unopened(&account.email, c.folder).into_iter().filter(|uid| !skipped.contains(&(c.folder, *uid))).collect()
+        store.unopened(&account.email, c.folder, since).into_iter().filter(|uid| !skipped.contains(&(c.folder, *uid))).collect()
     };
     let Some((cursor, uids)) = cursors.iter().map(|c| (c, pending(c, skipped))).find(|(_, uids)| !uids.is_empty()) else {
         return Ok(0);

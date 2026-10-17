@@ -22,6 +22,11 @@ export const getAppearance = () => invoke('get_appearance');
 // a: { theme, opacity, middleClickMinimize, zoom, pollSeconds, trayMode, closeToTray }
 export const setAppearance = (a) => invoke('set_appearance', a);
 
+// Шифрованный кэш писем: { bytes, bodyDays } (bodyDays null — хранить всё).
+export const storageInfo = () => invoke('storage_info');
+export const setBodyDays = (days) => invoke('set_body_days', { days });
+export const clearCache = () => invoke('clear_cache');
+
 export const setZoom = (scale) => invoke('set_zoom', { scale });
 
 export const listAccounts = () => invoke('list_accounts');

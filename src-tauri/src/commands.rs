@@ -1,5 +1,5 @@
 use serde::Serialize;
-use tauri::State;
+use tauri::{Manager, State};
 
 use crate::config::ConfigStore;
 use crate::imap::Imap;
@@ -313,4 +313,46 @@ pub async fn save_attachment(app: tauri::AppHandle, store: State<'_, Store>, ima
     let path = target.into_path().map_err(|e| e.to_string())?;
     std::fs::write(&path, part.contents()).map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(true)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageInfo {
+    /// Размер шифрованного кэша на диске.
+    bytes: u64,
+    /// `None` — хранить содержимое всех писем.
+    body_days: Option<u32>,
+}
+
+#[tauri::command]
+pub fn storage_info(store: State<'_, Store>, config: State<'_, ConfigStore>) -> StorageInfo {
+    StorageInfo { bytes: store.disk_size(), body_days: config.get().body_days }
+}
+
+/// Срок хранения содержимого писем; более старое стирается сразу (заголовки остаются).
+#[tauri::command]
+pub async fn set_body_days(app: tauri::AppHandle, days: Option<u32>) -> Result<StorageInfo, String> {
+    if days.is_some_and(|d| !crate::config::BODY_DAYS_CHOICES.contains(&d)) {
+        return Err("недопустимый срок хранения".into());
+    }
+    app.state::<ConfigStore>().update(|c| c.body_days = days)?;
+    clear_cache(app).await
+}
+
+/// Применяет срок хранения сейчас и ужимает файл кэша.
+#[tauri::command]
+pub async fn clear_cache(app: tauri::AppHandle) -> Result<StorageInfo, String> {
+    let config = app.state::<ConfigStore>().get();
+    let (cutoff, body_days) = (config.body_cutoff(), config.body_days);
+    let handle = app.clone();
+    let bytes = tauri::async_runtime::spawn_blocking(move || {
+        let store = handle.state::<Store>();
+        match cutoff {
+            Some(cutoff) => store.clear_bodies(cutoff).map_err(|e| e.to_string()),
+            None => Ok(store.disk_size()),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    Ok(StorageInfo { bytes, body_days })
 }

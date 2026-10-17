@@ -3,7 +3,7 @@
   import Icon from './Icon.svelte';
   import Select from './Select.svelte';
   import { THEMES, applyTheme } from './themes.js';
-  import { setAppearance, listAccounts, addAccount, removeAccount } from './api.js';
+  import { setAppearance, listAccounts, addAccount, removeAccount, storageInfo, setBodyDays, clearCache } from './api.js';
 
   let { appearance, onzoom, onclose } = $props();
 
@@ -46,6 +46,38 @@
     );
     return () => clearTimeout(t);
   });
+
+  // Select не различает null и «нет значения», поэтому «хранить всё» — строка 'all'.
+  const BODY_DAYS = [
+    ['all', 'всех писем'],
+    [365, 'писем за последний год'],
+    [180, 'писем за полгода'],
+    [90, 'писем за 3 месяца'],
+    [30, 'писем за месяц'],
+    [0, 'только открытых, до перезапуска'],
+  ];
+  let bodyDays = $state(null);
+  let cacheBytes = $state(null);
+  let cleaning = $state(false);
+  const showStorage = (info) => {
+    cacheBytes = info.bytes;
+    bodyDays = info.bodyDays ?? 'all';
+  };
+  storageInfo().then(showStorage);
+  const megabytes = (bytes) => `${(bytes / 1024 / 1024).toFixed(bytes < 10 * 1024 * 1024 ? 1 : 0)} МБ`;
+
+  async function cleanup(change) {
+    cleaning = true;
+    try {
+      showStorage(await change());
+    } finally {
+      cleaning = false;
+    }
+  }
+  function changeBodyDays(value) {
+    bodyDays = value;
+    cleanup(() => setBodyDays(value === 'all' ? null : value));
+  }
 
   let accounts = $state([]);
   let email = $state('');
@@ -175,6 +207,30 @@
             </li>
           {/each}
         </ul>
+
+        <h3>Хранилище на диске</h3>
+        <div class="storage">
+          <span>Хранить содержимое</span>
+          <div class="poll">
+            <Select
+              bind:value={() => bodyDays, changeBodyDays}
+              label="Срок хранения содержимого писем"
+              options={BODY_DAYS.map(([value, label]) => ({ value, label }))}
+            />
+          </div>
+        </div>
+        <div class="storage">
+          <span class="muted">
+            {#if cleaning}Очистка…{:else if cacheBytes != null}Занято: {megabytes(cacheBytes)}, зашифровано{/if}
+          </span>
+          {#if bodyDays !== 'all'}
+            <button class="chip" disabled={cleaning} onclick={() => cleanup(clearCache)}>Очистить сейчас</button>
+          {/if}
+        </div>
+        <p class="hint">
+          Список писем хранится всегда. Содержимое более старых писем стирается с диска и снова скачивается с
+          сервера, когда вы их открываете.
+        </p>
 
         <h3>Проверка новых писем</h3>
         <div class="poll">
@@ -348,6 +404,12 @@
     accent-color: var(--accent);
   }
 
+  .storage {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
   .poll {
     display: flex;
     width: 280px;

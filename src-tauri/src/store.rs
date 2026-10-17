@@ -310,14 +310,33 @@ impl Store {
         !changed.is_empty()
     }
 
-    /// UID писем папки без загруженного тела, от новых к старым.
-    pub fn unopened(&self, account: &str, folder: Folder) -> Vec<u32> {
+    /// UID писем папки без загруженного тела (не старше `since`), от новых к старым.
+    pub fn unopened(&self, account: &str, folder: Folder, since: Option<i64>) -> Vec<u32> {
         let entries = self.entries.read().unwrap();
         entries
             .iter()
             .filter(|e| e.msg.html.is_none() && e.msg.folder == folder && e.msg.account.as_deref() == Some(account))
+            .filter(|e| since.is_none_or(|since| e.msg.timestamp >= since))
             .filter_map(|e| e.msg.uid)
             .collect()
+    }
+
+    /// Забывает содержимое писем ящиков старше `cutoff` (заголовки остаются; при открытии тело скачается снова).
+    /// Возвращает размер кэша на диске.
+    pub fn clear_bodies(&self, cutoff: i64) -> crate::imap::Result<u64> {
+        for e in self.entries.write().unwrap().iter_mut() {
+            if e.msg.account.is_some() && e.msg.timestamp < cutoff {
+                e.msg.html = None;
+            }
+        }
+        match self.db.get() {
+            Some(db) => db.clear_bodies(cutoff),
+            None => Ok(0),
+        }
+    }
+
+    pub fn disk_size(&self) -> u64 {
+        self.db.get().map_or(0, Db::size)
     }
 
     /// Как [`Store::set_opened`], но по UID; возвращает, поменялась ли отметка о вложениях.

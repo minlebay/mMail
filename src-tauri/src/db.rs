@@ -160,6 +160,25 @@ impl Db {
         Ok(())
     }
 
+    /// Стирает содержимое писем старше `cutoff` (или всех) и ужимает файл. Возвращает размер на диске.
+    pub fn clear_bodies(&self, cutoff: i64) -> Result<u64> {
+        let conn = self.0.lock().unwrap();
+        conn.execute("UPDATE messages SET html = NULL WHERE html IS NOT NULL AND timestamp < ?1", [cutoff])?;
+        // Без VACUUM SQLite лишь пометит страницы свободными, и файл не уменьшится.
+        conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE); VACUUM; PRAGMA wal_checkpoint(TRUNCATE);")?;
+        Ok(self.size_of(&conn))
+    }
+
+    /// Сколько кэш занимает на диске (база и журнал).
+    pub fn size(&self) -> u64 {
+        self.size_of(&self.0.lock().unwrap())
+    }
+
+    fn size_of(&self, conn: &Connection) -> u64 {
+        let Some(path) = conn.path() else { return 0 };
+        ["", "-wal"].iter().filter_map(|suffix| fs::metadata(format!("{path}{suffix}")).ok()).map(|m| m.len()).sum()
+    }
+
     /// Письма папки, которых больше нет на сервере.
     pub fn delete(&self, account: &str, folder: Folder, uids: &[u32]) -> Result<()> {
         let mut conn = self.0.lock().unwrap();
@@ -337,6 +356,25 @@ mod tests {
         let second = messages.iter().find(|m| m.uid == Some(2)).unwrap();
         assert!(!second.unread && second.starred);
         assert_eq!(db.validity("me@ya.ru", Folder::Sent), Some(42));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn clearing_keeps_headers_and_drops_old_bodies() {
+        let dir = temp_dir("clear");
+        let db = Db::open(&dir, &[3u8; 32]).unwrap();
+        let mut old = message(1);
+        old.html = Some("старое".into());
+        let mut new = message(2);
+        new.html = Some("новое".into());
+        new.timestamp += 1000;
+        db.insert(&[&old, &new]).unwrap();
+        db.clear_bodies(old.timestamp + 1).unwrap();
+        let (messages, _) = db.load().unwrap();
+        assert_eq!(messages.len(), 2, "заголовки остаются");
+        let html = |uid| messages.iter().find(|m| m.uid == Some(uid)).unwrap().html.clone();
+        assert_eq!(html(1), None);
+        assert_eq!(html(2).as_deref(), Some("новое"));
         let _ = fs::remove_dir_all(&dir);
     }
 
