@@ -143,11 +143,19 @@
       {#if msg.blockedRemote && !msg.remoteShown}
         <div class="banner">
           <Icon name="imageOff" size={15} />
-          <span class="text">{$t("Внешние картинки скрыты:")} {msg.blockedRemote}</span>
+          <span class="text">
+            {$t("Внешние картинки скрыты:")} {msg.blockedRemote}
+            {#if msg.trusted}
+              <!-- Доверенный адрес, но DMARC не подтвердил, что письмо и правда от него: сами не загружаем. -->
+              · <span title={$t("Подлинность письма не подтверждена — внешнее содержимое загружается только по кнопке")}>{$t("Отправитель не подтверждён")}</span>
+            {/if}
+          </span>
           <button class="chip" disabled={loadingRemote} onclick={showRemote}>
             {loadingRemote ? $t("Загрузка…") : $t("Показать")}
           </button>
-          {#if msg.canTrust}
+          {#if msg.trusted}
+            <button class="chip" disabled={loadingRemote} onclick={() => trust(false)}>{$t("Больше не доверять")}</button>
+          {:else if msg.canTrust}
             <button class="chip" title={$t("Всегда показывать от {address}", { address: msg.fromAddr })} disabled={loadingRemote} onclick={() => trust(true)}>
               {$t("Всегда для {address}", { address: msg.fromAddr })}
             </button>

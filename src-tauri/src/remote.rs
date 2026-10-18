@@ -4,11 +4,15 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::net::{IpAddr, ToSocketAddrs};
+use std::net::IpAddr;
 use std::time::Duration;
 
 use base64::Engine;
 use lol_html::{element, HtmlRewriter, Settings};
+use ureq::config::Config;
+use ureq::http::Uri;
+use ureq::unversioned::resolver::{DefaultResolver, ResolvedSocketAddrs, Resolver};
+use ureq::unversioned::transport::{DefaultConnector, NextTimeout};
 use url::Url;
 
 const MAX_IMAGES: usize = 60;
@@ -110,18 +114,40 @@ fn style_urls(style: &str) -> Vec<String> {
     urls
 }
 
-fn fetch_image(url: &str) -> Option<String> {
-    let agent: ureq::Agent = ureq::Agent::config_builder()
+/// Адреса проверяет сам резолвер ureq, и соединение идёт ровно на проверенные IP. Отдельная
+/// проверка до запроса не годится: DNS с TTL 0 ответил бы ей публичным адресом, а при
+/// подключении — 192.168.1.1 (DNS rebinding).
+#[derive(Debug, Default)]
+struct PublicOnly(DefaultResolver);
+
+impl Resolver for PublicOnly {
+    fn resolve(&self, uri: &Uri, config: &Config, timeout: NextTimeout) -> Result<ResolvedSocketAddrs, ureq::Error> {
+        let addrs = self.0.resolve(uri, config, timeout)?;
+        if addrs.iter().all(|a| is_public(a.ip())) {
+            Ok(addrs)
+        } else {
+            Err(ureq::Error::HostNotFound)
+        }
+    }
+}
+
+fn agent() -> ureq::Agent {
+    let config = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(10)))
         .max_redirects(0)
         .http_status_as_error(false)
         .user_agent("Mozilla/5.0")
-        .build()
-        .into();
+        // Через прокси резолвер видел бы адрес прокси, а не сайта — проверка потеряла бы смысл.
+        .proxy(None)
+        .build();
+    ureq::Agent::with_parts(config, DefaultConnector::default(), PublicOnly::default())
+}
 
+fn fetch_image(url: &str) -> Option<String> {
+    let agent = agent();
     let mut current = Url::parse(url).ok()?;
     for _ in 0..=MAX_REDIRECTS {
-        if !public_host(&current) {
+        if !matches!(current.scheme(), "http" | "https") {
             return None;
         }
         let mut response = agent.get(current.as_str()).call().ok()?;
@@ -135,7 +161,7 @@ fn fetch_image(url: &str) -> Option<String> {
             return None;
         }
         let mime = response.headers().get("content-type")?.to_str().ok()?.split(';').next()?.trim().to_ascii_lowercase();
-        if !mime.starts_with("image/") {
+        if !is_image_mime(&mime) {
             return None;
         }
         let bytes = response.body_mut().with_config().limit(MAX_IMAGE_BYTES).read_to_vec().ok()?;
@@ -145,17 +171,14 @@ fn fetch_image(url: &str) -> Option<String> {
     None
 }
 
-/// Не даём письму через ядро стучаться в локальную сеть (роутер, localhost и т.п.).
-fn public_host(url: &Url) -> bool {
-    if !matches!(url.scheme(), "http" | "https") {
-        return false;
-    }
-    let (Some(host), Some(port)) = (url.host_str(), url.port_or_known_default()) else { return false };
-    let Ok(addrs) = (host.trim_matches(['[', ']']), port).to_socket_addrs() else { return false };
-    let addrs: Vec<_> = addrs.collect();
-    !addrs.is_empty() && addrs.iter().all(|a| is_public(a.ip()))
+/// Тип из ответа чужого сервера попадает внутрь `data:` в атрибуте и в `url(…)` стиля — пускаем
+/// только `image/<подтип>` без скобок, кавычек и пробелов, которыми можно дописать свой CSS.
+fn is_image_mime(mime: &str) -> bool {
+    mime.strip_prefix("image/")
+        .is_some_and(|sub| !sub.is_empty() && sub.len() <= 64 && sub.bytes().all(|b| b.is_ascii_alphanumeric() || b"+-.".contains(&b)))
 }
 
+/// Не даём письму через ядро стучаться в локальную сеть (роутер, localhost и т.п.).
 fn is_public(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
@@ -203,9 +226,32 @@ mod tests {
 
     #[test]
     fn refuses_local_network() {
-        for url in ["http://127.0.0.1/x.png", "http://192.168.1.1/x.png", "http://10.0.0.5/", "http://[::1]/", "http://169.254.169.254/latest", "file:///etc/passwd"] {
-            assert!(!public_host(&Url::parse(url).unwrap()), "{url}");
+        for url in ["http://127.0.0.1/x.png", "http://192.168.1.1/x.png", "http://10.0.0.5/", "http://[::1]/", "http://169.254.169.254/latest", "http://localhost/x.png", "file:///etc/passwd"] {
+            assert!(fetch_image(url).is_none(), "{url}");
         }
         assert!(is_public("93.184.216.34".parse().unwrap()));
+    }
+
+    #[test]
+    fn only_plain_image_types() {
+        for ok in ["image/png", "image/jpeg", "image/svg+xml", "image/vnd.microsoft.icon", "image/x-icon"] {
+            assert!(is_image_mime(ok), "{ok}");
+        }
+        for bad in ["image/", "text/html", "image/png),url(https://t.example/x", "image/png\"", "image/x y", "image/png;base64"] {
+            assert!(!is_image_mime(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn resolver_refuses_local_addresses() {
+        // Проверка в резолвере — то есть на тех адресах, куда ureq и подключится.
+        let timeout = NextTimeout { after: ureq::unversioned::transport::time::Duration::NotHappening, reason: ureq::Timeout::Global };
+        let config = Config::default();
+        for uri in ["http://127.0.0.1/", "http://localhost:8080/", "https://[::1]/", "http://192.168.0.1/"] {
+            let uri: Uri = uri.parse().unwrap();
+            assert!(PublicOnly::default().resolve(&uri, &config, timeout).is_err(), "{uri}");
+        }
+        let public: Uri = "http://93.184.216.34/".parse().unwrap();
+        assert!(PublicOnly::default().resolve(&public, &config, timeout).is_ok());
     }
 }

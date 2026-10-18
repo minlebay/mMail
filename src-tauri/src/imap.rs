@@ -232,12 +232,16 @@ fn to_message(fetch: &Fetch, account: &str, folder: Folder) -> Option<Message> {
 /// Заголовки с чужим authserv-id мог вписать сам отправитель — их игнорируем.
 fn auth_verdict(headers: impl Iterator<Item = String>, trusted: &[&str]) -> Auth {
     for header in headers {
-        let value = header.split_whitespace().collect::<Vec<_>>().join(" ").to_ascii_lowercase();
-        let authserv = value.split(';').next().unwrap_or_default().split_whitespace().next().unwrap_or_default();
+        let value = strip_comments_and_quotes(&header).to_ascii_lowercase();
+        let mut segments = value.split(';');
+        let authserv = segments.next().unwrap_or_default().split_whitespace().next().unwrap_or_default();
         if !trusted.iter().any(|t| authserv == t.trim_start_matches('.') || authserv.ends_with(t)) {
             continue;
         }
-        let has = |result: &str| value.split([';', ' ']).any(|token| token == result);
+        // Результат метода — первое слово своего сегмента («dmarc=fail header.from=…»);
+        // остальное (адреса, селекторы) задаёт отправитель, по нему не судим.
+        let results: Vec<&str> = segments.filter_map(|s| s.split_whitespace().next()).collect();
+        let has = |result: &str| results.contains(&result);
         return if has("dmarc=pass") {
             Auth::Pass
         } else if has("dmarc=fail") || (has("spf=fail") && !has("dkim=pass")) {
@@ -247,6 +251,31 @@ fn auth_verdict(headers: impl Iterator<Item = String>, trusted: &[&str]) -> Auth
         };
     }
     Auth::Unknown
+}
+
+/// Убирает комментарии `(…)` и строки в кавычках (RFC 5322 CFWS/quoted-string): туда
+/// отправитель может вписать что угодно, например адрес конверта `"x dmarc=pass"@evil.example`.
+fn strip_comments_and_quotes(header: &str) -> String {
+    let mut out = String::with_capacity(header.len());
+    let (mut depth, mut quoted, mut escaped) = (0u32, false, false);
+    for c in header.chars() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match c {
+            '\\' if quoted || depth > 0 => escaped = true,
+            '"' if depth == 0 => quoted = !quoted,
+            '(' if !quoted => {
+                depth += 1;
+                out.push(' ');
+            }
+            ')' if !quoted && depth > 0 => depth -= 1,
+            _ if quoted || depth > 0 => {}
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 #[derive(Clone, Serialize)]
@@ -1027,5 +1056,15 @@ mod tests {
         assert!(verdict(&["mx.yandex.net; dmarc=fail header.from=paypal.com"]) == Auth::Fail);
         assert!(verdict(&["mx.yandex.net; spf=pass; dkim=pass"]) == Auth::Unknown, "без DMARC не утверждаем pass");
         assert!(verdict(&["mx.yandex.net; dmarc=passive"]) == Auth::Unknown);
+    }
+
+    #[test]
+    fn sender_text_cannot_fake_results() {
+        // Адрес конверта и комментарии задаёт отправитель — «dmarc=pass» внутри них не в счёт.
+        let quoted = "mx.yandex.net; spf=fail (domain of \"x dmarc=pass y\"@paypal.com) smtp.mailfrom=\"x; dmarc=pass\"@paypal.com; dmarc=fail header.from=paypal.com";
+        assert!(verdict(&[quoted]) == Auth::Fail);
+        let comment = "mx.yandex.net; dkim=none (x dmarc=pass) header.d=evil.example; dmarc=none (\\) dmarc=pass) header.from=evil.example";
+        assert!(verdict(&[comment]) == Auth::Unknown);
+        assert!(verdict(&["mx.yandex.net (mx; dmarc=pass); dmarc=fail"]) == Auth::Fail);
     }
 }

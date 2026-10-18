@@ -183,7 +183,10 @@ pub async fn get_message(
     let lookalike = sender.rsplit_once('@').is_some_and(|(_, domain)| !domain.is_ascii());
     let can_trust = m.auth != Auth::Fail && !lookalike && !sender.is_empty();
     let trusted = can_trust && config.get().trusted_senders.contains(&sender);
-    let remote_shown = show_remote || trusted;
+    // Сам, без кнопки — только если подлинность подтверждена: адрес From подделать легко,
+    // а загрузка картинок выдаёт отправителю IP и время прочтения.
+    let auto_remote = trusted && m.auth == Auth::Pass;
+    let remote_shown = show_remote || auto_remote;
 
     let mut clean = sanitize::clean_html(&html, remote_shown);
     if remote_shown && clean.blocked_remote > 0 {

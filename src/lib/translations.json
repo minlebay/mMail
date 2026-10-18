@@ -523,6 +523,14 @@
     "en": "Stop trusting",
     "sr": "Ukini poverenje"
   },
+  "Отправитель не подтверждён": {
+    "en": "Sender not verified",
+    "sr": "Pošiljalac nije potvrđen"
+  },
+  "Подлинность письма не подтверждена — внешнее содержимое загружается только по кнопке": {
+    "en": "The message's authenticity is not verified — external content loads only on request",
+    "sr": "Autentičnost poruke nije potvrđena — spoljni sadržaj se učitava samo na zahtev"
+  },
   "Содержимое письма": {
     "en": "Message content",
     "sr": "Sadržaj poruke"

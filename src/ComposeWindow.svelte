@@ -526,6 +526,8 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
+    /* Цитата чужого письма со стилями вроде position:fixed не должна перекрывать поля окна. */
+    contain: paint;
     padding: 12px 14px;
     border-radius: 10px;
     border: 1px solid var(--glass-border);
