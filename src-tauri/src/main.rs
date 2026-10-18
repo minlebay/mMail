@@ -190,3 +190,18 @@ fn is_app_url(url: &Url) -> bool {
         _ => false,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn windows_navigate_only_inside_the_app() {
+        for ok in ["tauri://localhost/", "tauri://localhost/index.html", "about:blank", "about:srcdoc"] {
+            assert!(is_app_url(&Url::parse(ok).unwrap()), "{ok}");
+        }
+        for bad in ["https://evil.example/", "http://evil.example/", "file:///etc/passwd", "about:config", "data:text/html,x", "javascript:alert(1)"] {
+            assert!(!is_app_url(&Url::parse(bad).unwrap()), "{bad}");
+        }
+    }
+}

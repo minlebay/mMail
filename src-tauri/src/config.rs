@@ -191,6 +191,17 @@ mod language_tests {
     }
 
     #[test]
+    fn config_is_private_to_the_user() {
+        let dir = std::env::temp_dir().join(format!("mmail-config-perms-{}", std::process::id()));
+        let store = ConfigStore::load(dir.clone());
+        store.update(|c| { c.trusted_senders.insert("a@b.example".into()); }).unwrap();
+        let mode = |p: &std::path::Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&dir), 0o700);
+        assert_eq!(mode(&dir.join("config.json")), 0o600, "в настройках — адреса доверенных отправителей и аккаунт Google");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn unknown_language_falls_back_to_russian() {
         assert_eq!(Config { language: "unknown".into(), ..Default::default() }.language(), "ru");
     }

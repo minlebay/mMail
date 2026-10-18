@@ -179,14 +179,8 @@ pub async fn get_message(
         store.set_unread(id, false);
         let _ = tauri::Emitter::emit(&app, "mailbox-changed", ());
     }
-    let sender = m.from_addr.to_lowercase();
-    let lookalike = sender.rsplit_once('@').is_some_and(|(_, domain)| !domain.is_ascii());
-    let can_trust = m.auth != Auth::Fail && !lookalike && !sender.is_empty();
-    let trusted = can_trust && config.get().trusted_senders.contains(&sender);
-    // Сам, без кнопки — только если подлинность подтверждена: адрес From подделать легко,
-    // а загрузка картинок выдаёт отправителю IP и время прочтения.
-    let auto_remote = trusted && m.auth == Auth::Pass;
-    let remote_shown = show_remote || auto_remote;
+    let RemotePolicy { can_trust, trusted, remote_shown } =
+        remote_policy(&m.from_addr, m.auth, &config.get().trusted_senders, show_remote);
 
     let mut clean = sanitize::clean_html(&html, remote_shown);
     if remote_shown && clean.blocked_remote > 0 {
@@ -223,6 +217,27 @@ pub async fn get_message(
         attachments: m.attachments,
         srcdoc: sanitize::wrap(&clean.html),
     })
+}
+
+#[derive(Debug, PartialEq)]
+struct RemotePolicy {
+    /// Можно ли добавить отправителя в доверенные.
+    can_trust: bool,
+    /// Отправитель в списке доверенных.
+    trusted: bool,
+    /// Загружать ли внешнее содержимое.
+    remote_shown: bool,
+}
+
+/// Внешнее содержимое — по кнопке; само, без кнопки — только доверенному отправителю с
+/// подтверждённой подлинностью: адрес From подделать легко, а загрузка картинок выдаёт
+/// отправителю IP и время прочтения. Не доверяем провалившим проверку и доменам с омоглифами.
+fn remote_policy(from_addr: &str, auth: Auth, trusted_senders: &std::collections::BTreeSet<String>, show_remote: bool) -> RemotePolicy {
+    let sender = from_addr.to_lowercase();
+    let lookalike = sender.rsplit_once('@').is_some_and(|(_, domain)| !domain.is_ascii());
+    let can_trust = auth != Auth::Fail && !lookalike && !sender.is_empty();
+    let trusted = can_trust && trusted_senders.contains(&sender);
+    RemotePolicy { can_trust, trusted, remote_shown: show_remote || (trusted && auth == Auth::Pass) }
 }
 
 /// «Всегда показывать внешнее содержимое от этого отправителя» и обратно.
@@ -615,4 +630,24 @@ pub async fn set_message_flags(
     }
     let _ = tauri::Emitter::emit(&app, "mailbox-changed", ());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remote_content_loads_by_itself_only_for_verified_trusted_senders() {
+        let trusted: std::collections::BTreeSet<String> = ["news@github.com".to_string(), "x@пример.рф".to_string()].into();
+        let policy = |from: &str, auth: Auth, show: bool| remote_policy(from, auth, &trusted, show);
+
+        assert!(policy("News@GitHub.com", Auth::Pass, false).remote_shown, "доверенный и подлинный — сразу");
+        let spoofed = policy("news@github.com", Auth::Unknown, false);
+        assert!(spoofed.trusted && !spoofed.remote_shown, "без dmarc=pass адрес мог быть подделан — только по кнопке");
+        let failed = policy("news@github.com", Auth::Fail, false);
+        assert!(!failed.can_trust && !failed.trusted && !failed.remote_shown, "провал проверки отменяет доверие");
+        assert!(!policy("x@пример.рф", Auth::Pass, false).can_trust, "домен с омоглифами не доверяем");
+        assert!(!policy("other@github.com", Auth::Pass, false).remote_shown, "чужой адрес — по кнопке");
+        assert!(policy("other@github.com", Auth::Unknown, true).remote_shown, "кнопка «Показать» работает всегда");
+    }
 }

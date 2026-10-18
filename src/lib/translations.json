@@ -647,6 +647,14 @@
     "en": "sync error: {error}",
     "sr": "greška sinhronizacije: {error}"
   },
+  "ошибка синхронизации, повторю через {seconds} с: {error}": {
+    "en": "sync error, retrying in {seconds} s: {error}",
+    "sr": "greška sinhronizacije, ponovni pokušaj za {seconds} s: {error}"
+  },
+  "нет связи с сервером ({error}), повторю через {seconds} с": {
+    "en": "no connection to the server ({error}), retrying in {seconds} s",
+    "sr": "nema veze sa serverom ({error}), ponovni pokušaj za {seconds} s"
+  },
   "не открылось, письма не сохраняются: {error}": {
     "en": "could not open storage, messages are not being saved: {error}",
     "sr": "skladište nije otvoreno, poruke se ne čuvaju: {error}"

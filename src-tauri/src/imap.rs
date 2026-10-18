@@ -306,6 +306,9 @@ pub struct Imap {
     connections: std::sync::Mutex<HashMap<String, Arc<Connection>>>,
     /// Статус по каждому ящику; в шапку уходит сводка.
     statuses: std::sync::Mutex<BTreeMap<String, SyncStatus>>,
+    /// Номер запуска синхронизации каждого ящика: прежний запуск видит, что его сменили
+    /// (ящик удалили или добавили заново), и перестаёт повторять попытки.
+    runs: std::sync::Mutex<HashMap<String, u64>>,
     demo: AtomicBool,
 }
 
@@ -363,10 +366,23 @@ impl Imap {
     }
 
     fn unregister(&self, email: &str) {
+        self.runs.lock().unwrap().remove(email);
         if let Some(old) = self.connections.lock().unwrap().remove(email) {
             old.cancelled.store(true, Ordering::Relaxed);
         }
         self.statuses.lock().unwrap().remove(email);
+    }
+
+    /// Новый запуск синхронизации ящика; прежний (если ещё повторяет попытки) останавливается.
+    fn begin_run(&self, email: &str) -> u64 {
+        let mut runs = self.runs.lock().unwrap();
+        let run = runs.get(email).map_or(1, |r| r + 1);
+        runs.insert(email.to_string(), run);
+        run
+    }
+
+    fn is_current_run(&self, email: &str, run: u64) -> bool {
+        self.runs.lock().unwrap().get(email) == Some(&run)
     }
 }
 
@@ -417,11 +433,26 @@ pub async fn start(app: AppHandle) {
     }
 }
 
+/// Синхронизация ящика. Ошибка до основного цикла (вход, LIST — например, сервер оборвал
+/// соединение) не останавливает ящик до перезапуска: повторяем с паузой 5 с … 5 мин.
 async fn sync_account(app: AppHandle, account: Account) {
     let email = account.email.clone();
-    match run_sync(&app, account).await {
-        Ok(()) => set_status(&app, &email, "ok", ""),
-        Err(e) => set_status(&app, &email, "error", format!("ошибка синхронизации: {e}")),
+    let run = app.state::<Imap>().begin_run(&email);
+    let mut delay = Duration::from_secs(5);
+    loop {
+        let result = run_sync(&app, account.clone()).await;
+        if !app.state::<Imap>().is_current_run(&email, run) {
+            return;
+        }
+        match result {
+            Ok(()) => return set_status(&app, &email, "ok", ""),
+            Err(e) => set_status(&app, &email, "error", format!("ошибка синхронизации, повторю через {} с: {e}", delay.as_secs())),
+        }
+        tokio::time::sleep(delay).await;
+        if !app.state::<Imap>().is_current_run(&email, run) {
+            return;
+        }
+        delay = (delay * 2).min(Duration::from_secs(300));
     }
 }
 
@@ -1034,6 +1065,17 @@ mod tests {
 
     fn verdict(headers: &[&str]) -> Auth {
         auth_verdict(headers.iter().map(|h| h.to_string()), crate::accounts::YANDEX.trusted_authserv)
+    }
+
+    #[test]
+    fn stale_sync_runs_stop_retrying() {
+        let imap = Imap::default();
+        let first = imap.begin_run("a@ya.ru");
+        assert!(imap.is_current_run("a@ya.ru", first));
+        let second = imap.begin_run("a@ya.ru");
+        assert!(!imap.is_current_run("a@ya.ru", first), "ящик добавили заново — старый запуск не повторяет");
+        imap.unregister("a@ya.ru");
+        assert!(!imap.is_current_run("a@ya.ru", second), "ящик удалён — попытки прекращаются");
     }
 
     #[test]

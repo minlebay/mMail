@@ -31,6 +31,10 @@ test('dynamic UI parameters and backend statuses preserve addresses and details'
   assert.equal(translate('en', 'Всегда для {address}', { address: 'test@example.com' }), 'Always for test@example.com');
   assert.equal(translate('sr', 'не удалось отправить: SMTP 550'), 'slanje nije uspelo: SMTP 550');
   assert.equal(statusText((key) => translate('en', key), 'a@example.com: вход… · Хранилище: открываю…'), 'a@example.com: signing in… · Storage: opening…');
+  assert.equal(
+    statusText((key) => translate('en', key), 'a@example.com: ошибка синхронизации, повторю через 10 с: io: peer closed connection'),
+    'a@example.com: sync error, retrying in 10 s: io: peer closed connection',
+  );
   assert.equal(translate('en', 'Домен «пример.рф» содержит не-латинские символы — возможна подмена адреса'), 'The domain “пример.рф” contains non-Latin characters — possible address spoofing');
 });
 test('components have no untranslated Russian text nodes or missing literal keys', () => {

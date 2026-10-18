@@ -212,3 +212,17 @@ pub fn open_reply(app: &AppHandle, id: u32) -> Result<(), String> {
     open_from_background(app, prefill);
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ui_cannot_attach_files_by_path() {
+        // Путь к файлу знает только ядро: из UI вложение не передать, даже если окно скомпрометировано.
+        let prefill: Prefill = serde_json::from_str(r#"{"to":"a@b.example","attach":["/home/user/.ssh/id_ed25519"]}"#).unwrap();
+        assert_eq!(prefill.to, "a@b.example");
+        assert!(prefill.attach.is_empty());
+        assert!(ComposeState::default().file(1).is_none(), "чужой id файла ничего не даёт");
+    }
+}

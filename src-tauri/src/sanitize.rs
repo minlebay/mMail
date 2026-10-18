@@ -164,6 +164,25 @@ mod tests {
     }
 
     #[test]
+    fn frame_document_forbids_network_and_scripts() {
+        let doc = wrap("<p>x</p>");
+        // Второй слой после санитайзера: даже пропущенный тег не сходит в сеть и не выполнит скрипт.
+        assert!(doc.contains(r#"http-equiv="Content-Security-Policy""#), "{doc}");
+        for rule in ["default-src 'none'", "img-src data:", "base-uri 'none'", "form-action 'none'"] {
+            assert!(FRAME_CSP.contains(rule), "{rule}");
+        }
+        assert!(!FRAME_CSP.contains("script-src") && !FRAME_CSP.contains("http"), "скрипты и сеть не разрешаются: {FRAME_CSP}");
+        assert!(doc.contains(r#"<meta name="referrer" content="no-referrer">"#));
+    }
+
+    #[test]
+    fn links_open_in_new_window_without_referrer() {
+        // target=_blank — чтобы клик дошёл до ядра как запрос окна и прошёл подтверждение.
+        let c = clean_html_blocked(r#"<a href="https://a.example" target="_self" rel="opener">a</a>"#);
+        assert!(c.html.contains(r#"target="_blank""#) && c.html.contains("noreferrer") && !c.html.contains("opener\""), "{}", c.html);
+    }
+
+    #[test]
     fn keeps_safe_formatting() {
         let c = clean_html_blocked(
             r#"<p style="color:red">hi</p><a href="https://github.com">gh</a><img src="data:image/png;base64,AAAA">"#,
