@@ -4,6 +4,11 @@
 размытием KWin, ящики Яндекса и Gmail, Google Календарь. Ядро на Rust, интерфейс на Svelte,
 оболочка — Tauri 2.
 
+<p align="center">
+  <img src="docs/screenshots/settings-dark.png" alt="Настройки: тёмная схема, гамма «Аметист»" width="400">
+  <img src="docs/screenshots/settings-light.png" alt="Настройки: светлая схема, гамма «Океан»" width="400">
+</p>
+
 ## Возможности
 
 - **Почта:** несколько ящиков Яндекса и Gmail (IMAP), все папки сервера, «Все ящики», «Важные»,
