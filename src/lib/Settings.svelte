@@ -267,7 +267,7 @@
 
         <div class="glass-heading">
           <h3>{$t("Прозрачность окна")}</h3>
-          <label class="check"><input type="checkbox" bind:checked={blurEnabled} /> {$t('Блюр')}</label>
+          <label class="toggle"><input type="checkbox" bind:checked={blurEnabled} /> {$t('Блюр')}</label>
         </div>
         <div class="slider">
           <span>{$t("Больше стекла")}</span>
@@ -291,7 +291,7 @@
         </div>
 
         <h3>{$t("Окно")}</h3>
-        <label class="check">
+        <label class="toggle">
           <input type="checkbox" bind:checked={wideLayout} />
           {$t('Календарь справа на широком экране')}
         </label>
@@ -607,11 +607,6 @@
   .toggle.disabled {
     opacity: 0.45;
     cursor: default;
-  }
-  .toggle input {
-    width: 16px;
-    height: 16px;
-    accent-color: var(--accent);
   }
 
   .field {

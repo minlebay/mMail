@@ -283,11 +283,6 @@
     align-items: center;
     gap: 8px;
   }
-  .check input {
-    width: 16px;
-    height: 16px;
-    accent-color: var(--accent);
-  }
   .error {
     margin-top: 8px;
     padding: 8px 12px;

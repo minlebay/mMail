@@ -148,13 +148,6 @@
   .calendar:hover {
     background: rgba(var(--ink), 0.05);
   }
-  .calendar input {
-    width: 15px;
-    height: 15px;
-    margin: 0;
-    accent-color: var(--accent-strong);
-    flex: none;
-  }
   .dot {
     width: 10px;
     height: 10px;

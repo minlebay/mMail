@@ -74,6 +74,40 @@ input {
   color: inherit;
 }
 
+/* Галочки рисуем сами: нативные WebKitGTK берёт из темы GTK, и в тёмной и светлой схеме
+   (и с accent-color и без) они выглядят по-разному. Цвет галочки — как у текста схемы. */
+input[type='checkbox'] {
+  appearance: none;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  border-radius: 4px;
+  border: 1.5px solid rgba(var(--ink), 0.35);
+  background: rgba(var(--ink), 0.06) center / 12px no-repeat;
+  cursor: pointer;
+  transition: background-color 0.12s, border-color 0.12s;
+}
+input[type='checkbox']:hover {
+  border-color: rgba(var(--ink), 0.55);
+}
+input[type='checkbox']:checked {
+  border-color: var(--accent);
+  background-color: var(--accent-soft);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.2l2.4 2.4 4.6-5' fill='none' stroke='%23f1eef8' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+html[data-scheme='light'] input[type='checkbox']:checked {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.2l2.4 2.4 4.6-5' fill='none' stroke='%231d1a26' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+input[type='checkbox']:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+input[type='checkbox']:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .panel {
   min-height: 0;
   overflow: hidden;
