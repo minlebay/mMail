@@ -9,7 +9,7 @@
   import Select from './Select.svelte';
   import TitleBar from './TitleBar.svelte';
   import { THEMES, applyTheme, isDark } from './themes.js';
-  import { setAppearance, listAccounts, addAccount, removeAccount, storageInfo, setBodyDays, clearCache, setShowAllAccounts, googleStatus, googleConnect, googleDisconnect, setNotifications, setTitleButtons, setCalendarView } from './api.js';
+  import { setAppearance, listAccounts, addAccount, removeAccount, storageInfo, setBodyDays, clearCache, setShowAllAccounts, googleStatus, googleConnect, googleDisconnect, setNotifications, setTitleButtons, setCalendarView, setCalendarFullTitles } from './api.js';
 
   let { appearance } = $props();
 
@@ -55,6 +55,8 @@
   let pinButtons = $state(initial.pinButtons ?? true);
   const saveTitleButtons = () => setTitleButtons(windowButtons, pinButtons);
   let calendarView = $state(initial.calendarView ?? 'week');
+  let calendarFullTitles = $state(initial.calendarFullTitles ?? false);
+  const saveCalendarFullTitles = () => setCalendarFullTitles(calendarFullTitles).catch((e) => (saveError = String(e)));
   const CALENDAR_VIEWS = $derived([
     { value: 'month', label: $t('Месяц') },
     { value: 'week', label: $t('Неделя') },
@@ -316,6 +318,11 @@
             <Select bind:value={calendarView} label={$t("Вид календаря при запуске")} options={CALENDAR_VIEWS} />
           </div>
         </div>
+        <label class="toggle">
+          <input type="checkbox" bind:checked={calendarFullTitles} onchange={saveCalendarFullTitles} />
+          {$t("Полные названия событий в месяце")}
+        </label>
+        <p class="hint">{$t("Название переносится на несколько строк, сколько помещается в клетку дня.")}</p>
 
         <h3>{$t("Уведомления")}</h3>
         <label class="toggle">

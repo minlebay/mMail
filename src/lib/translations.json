@@ -519,6 +519,14 @@
     "en": "External content shown",
     "sr": "Spoljni sadržaj je prikazan"
   },
+  "Полные названия событий в месяце": {
+    "en": "Full event titles in month view",
+    "sr": "Puni nazivi događaja u prikazu meseca"
+  },
+  "Название переносится на несколько строк, сколько помещается в клетку дня.": {
+    "en": "Titles wrap onto as many lines as fit in the day cell.",
+    "sr": "Naziv se prelama u onoliko redova koliko staje u ćeliju dana."
+  },
   "Больше не доверять": {
     "en": "Stop trusting",
     "sr": "Ukini poverenje"

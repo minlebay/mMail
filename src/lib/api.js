@@ -40,6 +40,7 @@ export const calendarSaveEvent = (calendarId, eventId, draft) => invoke('calenda
 export const calendarDeleteEvent = (calendarId, eventId) => invoke('calendar_delete_event', { calendarId, eventId });
 export const setNotifications = (mail, events) => invoke('set_notifications', { mail, events });
 export const setCalendarView = (view) => invoke('set_calendar_view', { view });
+export const setCalendarFullTitles = (full) => invoke('set_calendar_full_titles', { full });
 export const setTitleButtons = (windowButtons, pinButtons) => invoke('set_title_buttons', { windowButtons, pinButtons });
 // Поверх других окон / на всех рабочих столах — для окна, которое вызывает.
 export const windowPins = () => invoke('window_pins');

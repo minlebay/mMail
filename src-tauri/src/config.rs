@@ -42,6 +42,8 @@ pub struct Config {
     pub window_pins: std::collections::BTreeMap<String, crate::window_pins::Pins>,
     /// Вид календаря при запуске: `month`, `week`, `day`; `None` — неделя.
     pub calendar_view: Option<String>,
+    /// В клетке месяца названия событий переносятся по строкам, а не обрезаются; `None` — обрезаются.
+    pub calendar_full_titles: Option<bool>,
     /// Кнопки «Свернуть» и «Развернуть» в шапке; `None` — показывать.
     pub window_buttons: Option<bool>,
     /// Кнопки «Поверх других окон» и «На всех рабочих столах» в шапке; `None` — показывать.

@@ -2,10 +2,14 @@
   import { t } from '../i18n.js';
   import Icon from '../Icon.svelte';
   import { fmt } from './locale.js';
-  import { monthGrid, addDays, addMonths, sameDay, startOfWeek, startOfDay, onDay, layoutDay, eventBounds } from './dates.js';
+  import { monthGrid, addDays, addMonths, sameDay, startOfWeek, startOfDay, onDay, layoutDay, eventBounds, titleLines } from './dates.js';
 
   // events: [{ id, calendarId, title, start, end, allDay, ... }]; colors: { calendarId: '#rrggbb' }
-  let { date, ondate, view, onview, events, colors, onopen, oncreate, loading, error, connected, onconnect } = $props();
+  let { date, ondate, view, onview, events, colors, onopen, oncreate, loading, error, connected, onconnect, fullTitles = false } = $props();
+
+  // Полные названия в месяце: высота клетки делится между событиями (см. titleLines).
+  const MAX_SHOWN = 3;
+  let cellHeight = $state(0);
 
   const HOUR = 48;
   let now = $state(new Date());
@@ -76,19 +80,29 @@
         {#each monthGrid(date) as d (d.getTime())}
           {@const list = dayEvents(d)}
           <!-- svelte-ignore a11y_no_static_element_interactions -->
+          {@const shown = list.slice(0, MAX_SHOWN)}
           <div
             class="cell"
             class:other={d.getMonth() !== date.getMonth()}
+            bind:clientHeight={cellHeight}
             ondblclick={(e) => e.target === e.currentTarget && oncreate(new Date(d.getFullYear(), d.getMonth(), d.getDate(), 9), false)}
           >
             <button class="num" class:today={sameDay(d, now)} onclick={() => { ondate(d); onview('day'); }}>{d.getDate()}</button>
-            {#each list.slice(0, 3) as e (e.id + e.calendarId)}
-              <button class="chipev" class:allday={e.allDay} style:--c={color(e)} onclick={() => onopen(e)} title={e.title}>
+            {#each shown as e (e.id + e.calendarId)}
+              <button
+                class="chipev"
+                class:allday={e.allDay}
+                class:full={fullTitles}
+                style:--c={color(e)}
+                style:--lines={fullTitles ? titleLines(cellHeight, shown.length, list.length > MAX_SHOWN) : null}
+                onclick={() => onopen(e)}
+                title={e.title}
+              >
                 {#if !e.allDay}<span class="time">{$fmt.time(eventBounds(e)[0])}</span>{/if}{e.title}
               </button>
             {/each}
-            {#if list.length > 3}
-              <button class="more" onclick={() => { ondate(d); onview('day'); }}>{$t('ещё {count}', { count: list.length - 3 })}</button>
+            {#if list.length > MAX_SHOWN}
+              <button class="more" onclick={() => { ondate(d); onview('day'); }}>{$t('ещё {count}', { count: list.length - MAX_SHOWN })}</button>
             {/if}
           </div>
         {/each}
@@ -289,6 +303,15 @@
     text-overflow: ellipsis;
     border-left: 3px solid var(--c);
     background: color-mix(in srgb, var(--c) 14%, transparent);
+  }
+  .chipev.full {
+    flex: none;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: var(--lines);
+    line-height: 16px;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
   .chipev.allday {
     border-left: 0;

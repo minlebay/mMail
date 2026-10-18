@@ -71,6 +71,7 @@ fn main() {
             commands::set_notifications,
             commands::set_title_buttons,
             commands::set_calendar_view,
+            commands::set_calendar_full_titles,
             window_pins::window_pins,
             window_pins::set_window_pin,
             commands::write_clipboard,

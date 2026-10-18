@@ -280,6 +280,8 @@ pub struct Appearance {
     pin_buttons: bool,
     /// Вид календаря при запуске: month | week | day.
     calendar_view: String,
+    /// Названия событий в месяце — целиком, в несколько строк.
+    calendar_full_titles: bool,
 }
 
 pub const ZOOM_MIN: f64 = 0.5;
@@ -310,6 +312,7 @@ pub fn get_appearance(config: State<'_, ConfigStore>) -> Appearance {
         window_buttons: c.window_buttons.unwrap_or(true),
         pin_buttons: c.pin_buttons.unwrap_or(true),
         calendar_view: c.calendar_view.clone().unwrap_or_else(|| "week".into()),
+        calendar_full_titles: c.calendar_full_titles.unwrap_or(false),
     }
 }
 
@@ -340,6 +343,14 @@ pub fn set_calendar_view(app: tauri::AppHandle, config: State<'_, ConfigStore>, 
         return Err("неизвестный вид календаря".into());
     }
     config.update(|c| c.calendar_view = Some(view))?;
+    let _ = tauri::Emitter::emit(&app, "appearance-changed", get_appearance(config));
+    Ok(())
+}
+
+/// Названия событий в месяце целиком; главное окно перерисовывает сетку по appearance-changed.
+#[tauri::command]
+pub fn set_calendar_full_titles(app: tauri::AppHandle, config: State<'_, ConfigStore>, full: bool) -> Result<(), String> {
+    config.update(|c| c.calendar_full_titles = Some(full))?;
     let _ = tauri::Emitter::emit(&app, "appearance-changed", get_appearance(config));
     Ok(())
 }

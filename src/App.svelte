@@ -43,6 +43,7 @@
       zoom: a.zoom,
       pollSeconds: a.pollSeconds,
       calendarView: a.calendarView,
+      calendarFullTitles: a.calendarFullTitles ?? false,
     };
     zoom = a.zoom;
     calView = a.calendarView ?? 'week';
@@ -256,6 +257,7 @@
         ondate={(d) => (calDate = d)}
         view={calView}
         onview={(v) => (calView = v)}
+        fullTitles={appearance.calendarFullTitles ?? false}
         {events}
         colors={calColors}
         onopen={(event) => (eventDialog = { event })}

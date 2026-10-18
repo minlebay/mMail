@@ -104,3 +104,12 @@ export function layoutDay(events, day) {
   flush();
   return out;
 }
+
+/** Сколько строк названия достаётся каждому из `count` событий в клетке месяца высотой
+ *  `cellHeight` (без рамки): за вычетом отступов клетки (8), номера дня (24), зазоров (2),
+ *  отступов событий (4) и строки «ещё N» (17). Строка названия — 16px, как у .chipev.full. */
+export function titleLines(cellHeight, count, more) {
+  if (count < 1) return 1;
+  const free = cellHeight - 8 - 24 - 2 * count - 4 * count - (more ? 17 : 0);
+  return Math.max(1, Math.floor(free / count / 16));
+}
