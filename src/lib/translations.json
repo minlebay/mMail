@@ -1,4 +1,16 @@
 {
+  "Отмечаю…": {
+    "en": "Marking…",
+    "sr": "Označavanje…"
+  },
+  "Только непрочитанные": {
+    "en": "Unread only",
+    "sr": "Samo nepročitane"
+  },
+  "Непрочитанных писем нет": {
+    "en": "No unread messages",
+    "sr": "Nema nepročitanih poruka"
+  },
   "Настройки": {
     "en": "Settings",
     "sr": "Podešavanja"

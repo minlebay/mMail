@@ -141,9 +141,10 @@ pub fn list_messages(
     query: String,
     offset: usize,
     limit: usize,
+    unread_only: Option<bool>,
 ) -> Result<Page, String> {
     let query = query.trim().to_lowercase();
-    let (total, items) = store.page(Scope::parse(account.as_deref()), &folder, &query, offset, limit.min(MAX_PAGE)).ok_or("unknown folder")?;
+    let (total, items) = store.page(Scope::parse(account.as_deref()), &folder, &query, offset, limit.min(MAX_PAGE), unread_only.unwrap_or(false)).ok_or("unknown folder")?;
     Ok(Page { total, items })
 }
 
@@ -585,8 +586,10 @@ pub async fn mark_folder_read(
     imap: State<'_, Imap>,
     account: Option<String>,
     folder: String,
+    query: Option<String>,
 ) -> Result<usize, String> {
-    let targets = store.unread_in(Scope::parse(account.as_deref()), &folder).ok_or("unknown folder")?;
+    let query = query.unwrap_or_default().trim().to_lowercase();
+    let targets = store.unread_in(Scope::parse(account.as_deref()), &folder, &query).ok_or("unknown folder")?;
     let mut groups: std::collections::HashMap<(Option<String>, Folder), Vec<(u32, Option<u32>)>> = Default::default();
     for (id, account, folder, uid) in targets {
         groups.entry((account, folder)).or_default().push((id, uid));
@@ -608,7 +611,7 @@ pub async fn mark_folder_read(
     }
     let _ = tauri::Emitter::emit(&app, "mailbox-changed", ());
     match error {
-        Some(e) if marked == 0 => Err(e),
+        Some(e) => Err(e),
         _ => Ok(marked),
     }
 }

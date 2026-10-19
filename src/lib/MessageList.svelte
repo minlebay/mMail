@@ -4,7 +4,7 @@
   import { SvelteMap } from 'svelte/reactivity';
   import Icon from './Icon.svelte';
   import { showContextMenu } from './contextMenu.js';
-  import { listMessages, writeClipboard, setMessageFlags, trashMessage } from './api.js';
+  import { listMessages, writeClipboard, setMessageFlags, trashMessage, markFolderRead } from './api.js';
   import { requestTranslation } from './translate.js';
 
   let { account, folder, version, selectedId, onselect, onreply, onerror } = $props();
@@ -15,6 +15,8 @@
   const OVERSCAN = 6;
 
   let query = $state('');
+  let unreadOnly = $state(false);
+  let markingRead = $state(false);
   let debounced = $state('');
   let total = $state(0);
   let loaded = $state(false);
@@ -36,7 +38,7 @@
   });
 
   $effect(() => {
-    const scope = { account, folder };
+    const scope = { account, folder, unreadOnly };
     const q = debounced;
     untrack(() => reset(scope, q));
   });
@@ -83,6 +85,7 @@
 
   function refresh() {
     generation++;
+    if (unreadOnly) selIndex = -1;
     pending.clear();
     for (const p of pages.keys()) stale.add(p);
     const from = Math.floor(first / PAGE);
@@ -90,20 +93,26 @@
     for (let p = from; p <= to; p++) load(p);
   }
 
-  async function load(p, scope = { account, folder }, q = debounced) {
+  async function load(p, scope = { account, folder, unreadOnly }, q = debounced) {
     if ((pages.has(p) && !stale.has(p)) || pending.has(p)) return;
     const gen = generation;
     pending.add(p);
     try {
-      const res = await listMessages(scope.account, scope.folder, q, p * PAGE, PAGE);
+      const res = await listMessages(scope.account, scope.folder, q, p * PAGE, PAGE, scope.unreadOnly);
       if (gen !== generation) return;
       total = res.total;
+      // После прочтения/удаления последней страницы возвращаемся к оставшимся письмам.
+      const maxScroll = Math.max(0, total * ROW - height);
+      if (viewport && scrollTop > maxScroll) viewport.scrollTop = scrollTop = maxScroll;
       loaded = true;
       stale.delete(p);
       pages.set(p, res.items);
       const selected = res.items.findIndex((m) => m.id === selectedId);
       if (selected >= 0) selIndex = p * PAGE + selected;
-      if (p === 0 && selectedId == null && res.items.length) pick(0, res.items[0]);
+      // Открытие помечает письмо прочитанным: в этом режиме выбирает только пользователь.
+      if (!scope.unreadOnly && p === 0 && selectedId == null && res.items.length) pick(0, res.items[0]);
+    } catch (err) {
+      if (gen === generation) onerror?.(String(err));
     } finally {
       if (gen === generation) pending.delete(p);
     }
@@ -112,6 +121,19 @@
   function pick(i, item) {
     selIndex = i;
     onselect(item.id);
+  }
+
+  async function markAllRead() {
+    if (markingRead || !loaded || !total || query.trim() !== debounced) return;
+    markingRead = true;
+    try {
+      await markFolderRead(account, folder, debounced);
+    } catch (err) {
+      onerror?.(String(err));
+    } finally {
+      markingRead = false;
+      refresh();
+    }
   }
 
   function menu(event, item) {
@@ -159,6 +181,22 @@
     <Icon name="search" size={15} />
     <input placeholder={$t("Поиск")} bind:value={query} spellcheck="false" />
   </label>
+  <label class="unread-filter">
+    <input type="checkbox" bind:checked={unreadOnly} />
+    {$t("Только непрочитанные")}
+  </label>
+
+  {#if unreadOnly}
+    <button
+      class="mark-all-read"
+      disabled={markingRead || !loaded || total === 0 || query.trim() !== debounced}
+      aria-busy={markingRead}
+      onclick={markAllRead}
+    >
+      <Icon name="check" size={15} />
+      <span>{markingRead ? $t("Отмечаю…") : $t("Отметить все прочитанными")}</span>
+    </button>
+  {/if}
 
   <div
     class="viewport scroll-gutter"
@@ -206,7 +244,7 @@
         </div>
       {/each}
     </div>
-    {#if loaded && total === 0}<p class="empty">{$t("Писем нет")}</p>{/if}
+    {#if loaded && total === 0}<p class="empty">{unreadOnly ? $t("Непрочитанных писем нет") : $t("Писем нет")}</p>{/if}
   </div>
 </section>
 
@@ -225,6 +263,7 @@
   }
 
   .search {
+    flex: none;
     display: flex;
     align-items: center;
     gap: 10px;
@@ -243,6 +282,39 @@
   }
   .search input::placeholder {
     color: var(--muted);
+  }
+
+  .unread-filter {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 4px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+
+  .mark-all-read {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 9px;
+    background: var(--accent-soft);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+  .mark-all-read:hover:not(:disabled) {
+    filter: brightness(1.15);
+  }
+  .mark-all-read:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+  .mark-all-read:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
 
   .viewport {

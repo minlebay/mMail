@@ -7,8 +7,8 @@ export const syncStatus = () => invoke('sync_status');
 export const unlockStore = () => invoke('unlock_store');
 
 // account: null — все ящики, '' — демо, иначе адрес ящика.
-export const listMessages = (account, folder, query, offset, limit) =>
-  invoke('list_messages', { account, folder, query, offset, limit });
+export const listMessages = (account, folder, query, offset, limit, unreadOnly = false) =>
+  invoke('list_messages', { account, folder, query, offset, limit, unreadOnly });
 
 export const getMessage = (id, showRemote = false) => invoke('get_message', { id, showRemote });
 
@@ -71,7 +71,7 @@ export const saveAttachment = (id, index) => invoke('save_attachment', { id, ind
 export const writeClipboard = (text) => invoke('write_clipboard', { text });
 
 export const markMessageRead = (id) => invoke('mark_message_read', { id });
-export const markFolderRead = (account, folder) => invoke('mark_folder_read', { account, folder });
+export const markFolderRead = (account, folder, query = '') => invoke('mark_folder_read', { account, folder, query });
 export const trashMessage = (id) => invoke('trash_message', { id });
 // flags: { unread?: boolean, starred?: boolean } — «важное» это флаг, письмо остаётся в своей папке.
 export const setMessageFlags = (id, flags) => invoke('set_message_flags', { id, unread: flags.unread ?? null, starred: flags.starred ?? null });
