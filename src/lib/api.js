@@ -82,5 +82,5 @@ export const trashMessage = (id) => invoke('trash_message', { id });
 // flags: { unread?: boolean, starred?: boolean } — «важное» это флаг, письмо остаётся в своей папке.
 export const setMessageFlags = (id, flags) => invoke('set_message_flags', { id, unread: flags.unread ?? null, starred: flags.starred ?? null });
 // Перевод (Google, по явному действию): { text, srcdoc?, sourceLanguage }. srcdoc — для песочницы письма.
-export const translateMessage = (id) => invoke('translate_message', { id });
+export const translateMessage = (id, language = null) => invoke('translate_message', { id, language });
 export const translateText = (text) => invoke('translate_text', { text });

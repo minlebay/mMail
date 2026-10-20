@@ -16,6 +16,12 @@ const CHUNK: usize = 4500;
 /// Больше этого не переводим целиком — письмо-простыня или вложенный архив переписки.
 const MAX_TEXT: usize = 100_000;
 
+/// Языки, на которые можно переводить (коды Google). Код уходит в адрес запроса — только из списка.
+/// Названия для списка в плашке — в src/lib/translate.js.
+pub const LANGUAGES: &[&str] = &[
+    "ru", "en", "sr", "uk", "de", "fr", "es", "it", "pt", "pl", "nl", "cs", "tr", "zh-CN", "ja", "ko",
+];
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Translation {
@@ -25,6 +31,8 @@ pub struct Translation {
     srcdoc: Option<String>,
     /// Язык оригинала, как его определил переводчик (`en`, `sr`, …).
     source_language: Option<String>,
+    /// На какой язык переведено.
+    target_language: &'static str,
 }
 
 /// Перевод письма (тело скачивается с сервера, если письмо ещё не открывали).
@@ -34,7 +42,13 @@ pub async fn translate_message(
     imap: State<'_, Imap>,
     config: State<'_, ConfigStore>,
     id: u32,
+    language: Option<String>,
 ) -> Result<Translation, String> {
+    // Язык выбрали в плашке перевода — запоминаем: на него же пойдут следующие письма и выделенное.
+    if let Some(language) = language {
+        let code = known(&language).ok_or("неизвестный язык перевода")?;
+        config.update(|c| c.translate_to = Some(code.to_string()))?;
+    }
     let mut message = store.details(id).ok_or("письмо пропало")?;
     if message.html.is_none() {
         if let (Some(account), Some(uid)) = (message.account.clone(), message.uid) {
@@ -71,12 +85,18 @@ pub async fn translate_text(config: State<'_, ConfigStore>, text: String) -> Res
     translate(text, target(&config)).await
 }
 
+fn known(code: &str) -> Option<&'static str> {
+    LANGUAGES.iter().copied().find(|l| *l == code)
+}
+
+/// Выбранный в плашке язык, иначе — язык интерфейса.
 fn target(config: &ConfigStore) -> &'static str {
-    match config.get().language() {
+    let config = config.get();
+    config.translate_to.as_deref().and_then(known).unwrap_or(match config.language() {
         "en" => "en",
         "sr" => "sr",
         _ => "ru",
-    }
+    })
 }
 
 async fn translate(text: String, target: &'static str) -> Result<Translation, String> {
@@ -95,7 +115,7 @@ async fn translate(text: String, target: &'static str) -> Result<Translation, St
             out.push_str(&translated);
             source = source.or(lang);
         }
-        Ok(Translation { text: out, srcdoc: None, source_language: source })
+        Ok(Translation { text: out, srcdoc: None, source_language: source, target_language: target })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -207,6 +227,14 @@ mod tests {
     fn live_google() {
         let (text, lang) = google("Hello. How are you?\nSecond line.", "ru").unwrap();
         assert!(text.contains('\n') && lang.as_deref() == Some("en"), "{text:?} {lang:?}");
+    }
+
+    #[test]
+    fn target_languages_are_safe_for_the_url() {
+        // Код подставляется в адрес запроса — только буквы и дефис.
+        assert!(LANGUAGES.iter().all(|l| l.bytes().all(|b| b.is_ascii_alphabetic() || b == b'-')));
+        assert_eq!(known("de"), Some("de"));
+        assert_eq!(known("de&tl=x"), None);
     }
 
     #[test]

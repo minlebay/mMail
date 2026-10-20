@@ -943,6 +943,14 @@
     "en": "Translated by Google from: {language}",
     "sr": "Google prevod sa jezika: {language}"
   },
+  "Переведено Google с {language} на": {
+    "en": "Translated by Google from {language} to",
+    "sr": "Google prevod sa {language} na"
+  },
+  "Язык перевода": {
+    "en": "Translation language",
+    "sr": "Jezik prevoda"
+  },
   "Перевод письма": {
     "en": "Message translation",
     "sr": "Prevod poruke"

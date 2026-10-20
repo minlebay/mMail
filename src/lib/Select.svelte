@@ -1,8 +1,9 @@
 <script>
+  import { covers } from './covers.js';
   // Свой выпадающий список вместо <select>: нативный рисуется попапом GTK,
   // на который не действуют ни тема, ни размытие.
   // options: [{ value, label }]
-  let { value = $bindable(), options, label = '' } = $props();
+  let { value = $bindable(), options, label = '', onchange = null } = $props();
 
   let open = $state(false);
   let highlighted = $state(0);
@@ -30,7 +31,9 @@
   }
 
   function choose(option) {
+    const changed = option.value !== value;
     value = option.value;
+    if (changed) onchange?.(option.value);
     open = false;
     root?.querySelector('button.field')?.focus();
   }
@@ -62,7 +65,7 @@
   {#if open}
     <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
     <div class="backdrop" onclick={() => (open = false)}></div>
-    <ul class="list" class:up role="listbox" style:max-height="{maxHeight}px">
+    <ul class="list" class:up use:covers role="listbox" style:max-height="{maxHeight}px">
       {#each options as option, i (option.value)}
         <!-- svelte-ignore a11y_click_events_have_key_events -->
         <li

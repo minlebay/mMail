@@ -4,7 +4,8 @@
   import { showContextMenu } from './contextMenu.js';
   import { getMessage, writeClipboard, setSenderTrusted, saveAttachment, translateMessage, mailViewLoad, mailViewVisible, mailViewBounds, mailViewZoom } from './api.js';
   import { covered } from './covers.js';
-  import { translateRequest } from './translate.js';
+  import { translateRequest, TARGET_LANGUAGES } from './translate.js';
+  import Select from './Select.svelte';
   import { darkScheme } from './themes.js';
   import { listen } from '@tauri-apps/api/event';
 
@@ -83,12 +84,13 @@
     };
   });
 
-  async function translate() {
+  // target — язык, выбранный в плашке перевода (ядро его запоминает); без него — последний выбранный.
+  async function translate(target = null) {
     const current = id;
     translationError = '';
-    translation = { loading: true };
+    translation = { loading: true, targetLanguage: target ?? translation?.targetLanguage };
     try {
-      const result = await translateMessage(current);
+      const result = await translateMessage(current, target);
       if (current === id) translation = result;
     } catch (e) {
       if (current === id) {
@@ -155,7 +157,7 @@
       { separator: true },
       translation?.srcdoc
         ? { label: 'Показать оригинал', run: () => (translation = null) }
-        : { label: 'Перевести письмо', disabled: !!translation?.loading, run: translate },
+        : { label: 'Перевести письмо', disabled: !!translation?.loading, run: () => translate() },
       { separator: true },
       { label: 'Копировать адрес отправителя', run: () => writeClipboard(msg.fromAddr) },
       { label: 'Копировать тему', run: () => writeClipboard(msg.subject) },
@@ -230,9 +232,14 @@
       {#if translation}
         <div class="banner">
           <Icon name="globe" size={15} />
-          <span class="text">
-            {#if translation.loading}{$t("Перевожу…")}{:else}{$t("Переведено Google с языка: {language}", { language: translation.sourceLanguage ?? '?' })}{/if}
+          <span class="text" class:inline={translation.targetLanguage}>
+            {#if translation.loading}{$t("Перевожу…")}{:else}{$t("Переведено Google с {language} на", { language: translation.sourceLanguage ?? '?' })}{/if}
           </span>
+          {#if translation.targetLanguage}
+            <div class="target">
+              <Select value={translation.targetLanguage} options={TARGET_LANGUAGES} label={$t("Язык перевода")} onchange={(lang) => translate(lang)} />
+            </div>
+          {/if}
           {#if !translation.loading}<button class="chip" onclick={() => (translation = null)}>{$t("Показать оригинал")}</button>{/if}
         </div>
       {/if}
@@ -352,6 +359,20 @@
   .banner .text {
     flex: 1 1 160px;
     min-width: 0;
+  }
+  /* «Переведено Google с en на [Русский ▾]» — список сразу за текстом, кнопка справа. */
+  .banner .text.inline {
+    flex: 0 1 auto;
+  }
+  .target {
+    display: flex;
+    width: 150px;
+    margin-right: auto;
+  }
+  .target :global(.field) {
+    height: 26px;
+    border-radius: 13px;
+    font-size: inherit;
   }
   .chip {
     flex: 0 1 auto;

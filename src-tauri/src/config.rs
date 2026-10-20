@@ -65,6 +65,8 @@ pub struct Config {
     /// За сколько дней хранить на диске содержимое писем (заголовки — всегда);
     /// `None` — всё, `Some(0)` — только до следующего запуска.
     pub body_days: Option<u32>,
+    /// Язык перевода писем (код Google из translation::LANGUAGES); `None` — язык интерфейса.
+    pub translate_to: Option<String>,
     /// Отправители, у которых внешнее содержимое показывается сразу (адреса в нижнем регистре).
     pub trusted_senders: BTreeSet<String>,
 }
