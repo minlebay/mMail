@@ -2,22 +2,36 @@
   import { t } from './i18n.js';
   import Icon from './Icon.svelte';
   import { showContextMenu } from './contextMenu.js';
-  import { getMessage, writeClipboard, setSenderTrusted, saveAttachment, translateMessage } from './api.js';
+  import { getMessage, writeClipboard, setSenderTrusted, saveAttachment, translateMessage, mailViewLoad, mailViewVisible, mailViewBounds, mailViewZoom } from './api.js';
+  import { covered } from './covers.js';
   import { translateRequest } from './translate.js';
   import { darkScheme } from './themes.js';
+  import { listen } from '@tauri-apps/api/event';
 
-  // Документ письма собирает ядро (sanitize::wrap, начинается с его <html>); схему окна
+  // Документ письма собирает ядро (sanitize::wrap_message, начинается с его <html>); схему окна
   // передаём атрибутом — стили обеих схем уже в нём.
-  // iframe отвечает на prefers-color-scheme по теме системы, а не по схеме mMail: тёмные стили
+  // Вид письма отвечает на prefers-color-scheme по теме системы, а не по схеме mMail: тёмные стили
   // письма включились бы на нашем светлом фоне. Запросы схемы переписываем в заведомо
   // истинное или ложное условие.
   const schemeQuery = /prefers-color-scheme\s*:\s*(dark|light)/gi;
-  const withScheme = (doc, dark) => {
+  // data-soft включает свечение вокруг холста письма. У письма с холстом схема — его собственная
+  // (белый холст = светлая), иначе тёмные стили письма легли бы на белый.
+  const withScheme = (doc, dark, soft = false) => {
     const aligned = doc.replace(schemeQuery, (_, s) => ((s.toLowerCase() === 'dark') === dark ? 'min-width:0px' : 'min-width:100000px'));
-    return dark ? aligned : aligned.replace('<html>', '<html data-scheme="light">');
+    return aligned.replace('<html>', `<html${dark ? '' : ' data-scheme="light"'}${soft ? ' data-soft' : ''}>`);
   };
 
-  let { id, onreply } = $props();
+  let { id, onreply, softEdges = true } = $props();
+
+  // Тело письма показывает отдельный WebKit поверх страницы (mailview.rs), как messagepane у
+  // Thunderbird: Ctrl + колёсико там — родной масштаб движка. Страница только говорит, где
+  // место под письмо (.frame), какой документ показать и когда спрятать (диалог поверх).
+  let mailZoom = $state(1);
+  let frame = $state();
+  $effect(() => {
+    const stop = listen('mail-zoom', (e) => (mailZoom = e.payload.zoom));
+    return () => stop.then((f) => f());
+  });
 
   let msg = $state(null);
   let error = $state('');
@@ -36,6 +50,38 @@
   // Перевод: null — оригинал; { loading } — ждём переводчик; { srcdoc, sourceLanguage } — готово.
   let translation = $state(null);
   let translationError = $state('');
+
+  // Что показать в виде письма: перевод (без холста, в схеме окна) или само письмо.
+  const mailDoc = $derived(
+    !msg ? null
+    : translation?.srcdoc ? withScheme(translation.srcdoc, $darkScheme)
+    : withScheme(msg.srcdoc, msg.canvas ? msg.canvas === 'dark' : $darkScheme, softEdges && !!msg.canvas),
+  );
+  $effect(() => {
+    if (mailDoc) mailViewLoad(mailDoc);
+  });
+  // Диалог поверх (use:covers) прячет письмо, не перезагружая: прокрутка сохраняется.
+  $effect(() => {
+    mailViewVisible(!!mailDoc && $covered === 0);
+  });
+  $effect(() => () => mailViewVisible(false));
+  // Место под письмо: при любом изменении размеров страницы, панелей и шапки письма.
+  $effect(() => {
+    if (!frame) return;
+    const send = () => {
+      const r = frame.getBoundingClientRect();
+      mailViewBounds(r.left, r.top, r.width, r.height);
+    };
+    send();
+    const observer = new ResizeObserver(send);
+    observer.observe(frame);
+    observer.observe(document.documentElement);
+    addEventListener('resize', send);
+    return () => {
+      observer.disconnect();
+      removeEventListener('resize', send);
+    };
+  });
 
   async function translate() {
     const current = id;
@@ -195,14 +241,8 @@
       {/if}
     </header>
 
-    {#if translation?.srcdoc}
-      <!-- Перевод — тоже внешнее содержимое: экранирован и очищен ядром, CSP та же, ссылок нет — sandbox пустой. -->
-      <iframe class="body" title={$t("Перевод письма")} sandbox="" referrerpolicy="no-referrer" srcdoc={withScheme(translation.srcdoc, $darkScheme)}></iframe>
-    {:else}
-    <!-- Без скриптов, форм и доступа к origin приложения. allow-popups нужен только чтобы клик по ссылке
-         дошёл до ядра как запрос нового окна: ядро его всегда отклоняет и спрашивает подтверждение. -->
-    <iframe class="body" title={$t("Содержимое письма")} sandbox="allow-popups" referrerpolicy="no-referrer" srcdoc={withScheme(msg.srcdoc, $darkScheme)}></iframe>
-    {/if}
+    <!-- Место под тело письма: его рисует нативный вид письма поверх страницы. -->
+    <div class="frame" bind:this={frame} role="document" aria-label={translation?.srcdoc ? $t("Перевод письма") : $t("Содержимое письма")}></div>
 
     {#if msg.attachments.length}
       <div class="attachments">
@@ -222,6 +262,9 @@
     <footer>
       <button class="action" onclick={() => onreply(msg, 'reply')}><Icon name="reply" />{$t("Ответить")}</button>
       <button class="action" onclick={() => onreply(msg, 'forward')}><Icon name="forward" />{$t("Переслать")}</button>
+      {#if mailZoom !== 1}
+        <button class="zoom-reset" title={$t("Вернуть масштаб письма")} onclick={() => mailViewZoom(1)}>{Math.round(mailZoom * 100)}%</button>
+      {/if}
     </footer>
   {:else if error}
     <div class="placeholder">{$t("Не удалось открыть письмо:")} {$t(error)}</div>
@@ -335,13 +378,13 @@
     color: var(--danger-text);
   }
 
-  .body {
+  /* Место под вид письма (mailview.rs). Шире панели на полосу прокрутки: она уходит в правый
+     отступ панели. Мягкие края и маска — внутри документа письма (sanitize.rs). */
+  .frame {
     flex: 1;
     min-height: 0;
     width: calc(100% + var(--scrollbar-size));
     margin-top: 16px;
-    border: 0;
-    background: transparent;
   }
 
   .attachments {
@@ -389,8 +432,21 @@
 
   footer {
     display: flex;
+    align-items: center;
     gap: 10px;
     padding-top: 12px;
+  }
+  .zoom-reset {
+    margin-left: auto;
+    height: 26px;
+    padding: 0 10px;
+    border-radius: 13px;
+    background: rgba(var(--ink), 0.1);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+  .zoom-reset:hover {
+    background: rgba(var(--ink), 0.22);
   }
 
   .action {

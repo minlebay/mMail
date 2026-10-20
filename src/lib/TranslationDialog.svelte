@@ -1,4 +1,5 @@
 <script>
+  import { covers } from './covers.js';
   import { t } from './i18n.js';
   import { listen } from '@tauri-apps/api/event';
   import { translateText, writeClipboard } from './api.js';
@@ -32,7 +33,7 @@
 <svelte:window {onkeydown} />
 
 {#if state}
-  <div class="overlay" role="presentation" onclick={(e) => e.target === e.currentTarget && (state = null)}>
+  <div class="overlay" use:covers role="presentation" onclick={(e) => e.target === e.currentTarget && (state = null)}>
     <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="translation-title">
       <h2 id="translation-title">
         {$t('Перевод')}{#if state.sourceLanguage}<span class="lang"> · {state.sourceLanguage}</span>{/if}

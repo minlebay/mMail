@@ -5,9 +5,13 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use ammonia::{Builder, UrlRelative, UrlRelativeEvaluate};
+use std::cell::{Cell, RefCell};
 
-/// Политика внутри iframe письма: никаких сетевых запросов, только inline-стили и data:-картинки.
+use ammonia::{Builder, UrlRelative, UrlRelativeEvaluate};
+use lol_html::{element, rewrite_str, Settings};
+
+/// Политика документа письма: никаких сетевых запросов и скриптов, только inline-стили и
+/// data:-картинки. Сам вид письма (mailview.rs) и так без JavaScript — это второй слой.
 const FRAME_CSP: &str =
     "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'";
 
@@ -23,9 +27,25 @@ blockquote{margin:0 0 0 .6em;padding-left:.8em;border-left:2px solid rgba(255,25
 html[data-scheme=light]{--ink:24,20,40}\
 html[data-scheme=light],html[data-scheme=light] body{color:#1d1a26}\
 html[data-scheme=light] a{color:#5a49d6}\
-html[data-scheme=light] blockquote{border-left-color:rgba(24,20,40,.2);color:#5b5768}";
+html[data-scheme=light] blockquote{border-left-color:rgba(24,20,40,.2);color:#5b5768}\
+html:has([data-mmail-scroll]),html:has([data-mmail-scroll]) body{background:transparent!important;\
+overflow:hidden!important;height:100%;padding:0}\
+[data-mmail-scroll]{position:fixed;inset:0;overflow:auto;overflow-y:scroll}\
+[data-mmail-canvas]{background:var(--canvas);padding:8px;box-sizing:border-box;width:fit-content;min-width:100%}\
+html[data-soft] [data-mmail-frame]{padding:calc(20px / var(--z)) calc(28px / var(--z)) calc(24px / var(--z))}\
+html[data-soft] [data-mmail-canvas]{box-shadow:0 0 calc(20px / var(--z)) calc(7px / var(--z)) var(--canvas)}\
+html[data-soft] [data-mmail-scroll]{--fade:calc(16px / var(--z));\
+mask-image:linear-gradient(#000,#000),\
+linear-gradient(to right,transparent,#000 var(--fade),#000 calc(100% - var(--fade)),transparent),\
+linear-gradient(transparent,#000 var(--fade),#000 calc(100% - var(--fade)),transparent);\
+mask-size:var(--scrollbar-size) 100%,calc(100% - var(--scrollbar-size)) 100%,calc(100% - var(--scrollbar-size)) 100%;\
+mask-position:right top,left top,left top;mask-repeat:no-repeat;mask-composite:add,intersect,add}";
 
 const SCROLLBAR_CSS: &str = include_str!("../../src/scrollbars.css");
+
+/// После SCROLLBAR_CSS: `--mmail-z` — масштаб письма из пользовательской таблицы вида письма
+/// (mailview.rs). Полоса прокрутки и наши отступы делятся на него — на экране не растут с масштабом.
+const ZOOM_CSS: &str = "html:root{--z:var(--mmail-z,1);--scrollbar-size:calc(10px / var(--z))}";
 
 const GENERIC_ATTRS: &[&str] = &[
     "style", "align", "valign", "width", "height", "bgcolor", "color", "border",
@@ -162,13 +182,143 @@ fn filter_attribute<'u>(
     }
 }
 
-/// Полный документ для `<iframe srcdoc>`.
+/// Холст HTML-письма. Почтовые программы рисуют письмо на белом, и рассылки на это рассчитывают:
+/// где цвет не задан, подразумевается чёрный на белом. Поэтому «богатое» письмо (таблицы,
+/// картинки, фон) кладём на холст: фон `<body>` письма, иначе фон первого блока на всю ширину
+/// (обёртка рассылки), иначе белый. Простой текст и короткие письма людей остаются на стекле.
+pub struct Canvas {
+    pub color: String,
+    pub dark: bool,
+}
+
+/// `dirty` — исходный HTML (санитайзер выбрасывает `<body>` вместе с его фоном), `clean` — очищенный.
+pub fn canvas(dirty: &str, clean: &str) -> Option<Canvas> {
+    let body = RefCell::new(None);
+    let _ = rewrite_str(dirty, Settings::new().append_element_content_handler(element!("body", |el| {
+        *body.borrow_mut() = background(el);
+        Ok(())
+    })));
+
+    // Первый блок с фоном и на всю ли он ширину. Дальше смотреть незачем: внутренние блоки
+    // (карточка 600 px, плашки) лежат уже на холсте.
+    let first = RefCell::new(None::<(String, bool)>);
+    let rich = Cell::new(false);
+    let settings = Settings::new()
+        .append_element_content_handler(element!("table, td, th, div, center, img", |el| {
+            let tag = el.tag_name();
+            rich.set(rich.get() || tag == "img" || tag == "table");
+            if tag != "img" && first.borrow().is_none() {
+                if let Some(color) = background(el) {
+                    *first.borrow_mut() = Some((color, full_width(el)));
+                }
+            }
+            Ok(())
+        }))
+        // Письмо само красит текст или фон (серый подвал, кнопка-ссылка) — значит, свёрстано под
+        // белый фон: на стекле такой текст пропадает.
+        .append_element_content_handler(element!("[style], [bgcolor], font[color]", |el| {
+            let style = el.get_attribute("style").unwrap_or_default();
+            if el.has_attribute("bgcolor") || el.has_attribute("color") || background(el).is_some() || sets_text_color(&style) {
+                rich.set(true);
+            }
+            Ok(())
+        }));
+    let _ = rewrite_str(clean, settings);
+
+    let (body, first) = (body.into_inner(), first.into_inner());
+    if body.is_none() && first.is_none() && !rich.get() {
+        return None;
+    }
+    let color = body.or(first.and_then(|(c, full)| full.then_some(c))).unwrap_or_else(|| "#ffffff".into());
+    Some(Canvas { dark: is_dark(&color), color })
+}
+
+fn background(el: &lol_html::html_content::Element) -> Option<String> {
+    el.get_attribute("style")
+        .and_then(|s| style_background(&s))
+        .or_else(|| el.get_attribute("bgcolor").filter(|c| is_plain_color(c)).map(|c| c.trim().to_string()))
+}
+
+/// Есть ли во встроенном стиле объявление `color:` (не `background-color`, не `border-color`).
+fn sets_text_color(style: &str) -> bool {
+    style.split(';').any(|decl| decl.split_once(':').is_some_and(|(name, value)| name.trim().eq_ignore_ascii_case("color") && !value.trim().is_empty()))
+}
+
+/// Блок на всю ширину: `width="100%"`, `width:100%` в стиле или `div` без заданной ширины.
+fn full_width(el: &lol_html::html_content::Element) -> bool {
+    let style = el.get_attribute("style").unwrap_or_default().to_ascii_lowercase().replace(' ', "");
+    match el.get_attribute("width") {
+        Some(w) => w.trim() == "100%",
+        None if style.contains("width:100%") => true,
+        None => matches!(el.tag_name().as_str(), "div" | "center") && !style.contains("width"),
+    }
+}
+
+/// Тёмный ли холст: по яркости для `#hex`, для имён — по короткому списку тёмных.
+fn is_dark(color: &str) -> bool {
+    let lower = color.trim().to_ascii_lowercase();
+    let Some(hex) = lower.strip_prefix('#') else {
+        return ["black", "navy", "darkblue", "midnightblue", "maroon", "purple", "indigo", "darkgreen", "darkslategray", "darkslategrey", "dimgray", "dimgrey"].contains(&lower.as_str());
+    };
+    let hex: String = if hex.len() == 3 { hex.chars().flat_map(|c| [c, c]).collect() } else { hex.to_string() };
+    let channel = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).map_or(255.0, f64::from);
+    0.2126 * channel(0) + 0.7152 * channel(2) + 0.0722 * channel(4) < 128.0
+}
+
+/// Цвет из `background-color:` или первого слова `background:` во встроенном стиле.
+/// lol_html отдаёт атрибут с сущностями, но в цвете их не бывает — такой просто не пройдёт проверку.
+fn style_background(style: &str) -> Option<String> {
+    style.split(';').rev().find_map(|decl| {
+        let (name, value) = decl.split_once(':')?;
+        let name = name.trim().to_ascii_lowercase();
+        let value = value.trim().trim_end_matches("!important").trim();
+        let color = match name.as_str() {
+            "background-color" => value,
+            "background" => value.split_whitespace().next()?,
+            _ => return None,
+        };
+        is_plain_color(color).then(|| color.to_string())
+    })
+}
+
+/// Цвет попадает в наш CSS — пускаем только `#hex` и имена из букв. `transparent` и
+/// служебные слова не дают сплошного фона.
+fn is_plain_color(c: &str) -> bool {
+    let c = c.trim();
+    let lower = c.to_ascii_lowercase();
+    if ["transparent", "none", "inherit", "initial", "unset", "currentcolor"].contains(&lower.as_str()) {
+        return false;
+    }
+    match c.strip_prefix('#') {
+        Some(hex) => [3, 6].contains(&hex.len()) && hex.bytes().all(|b| b.is_ascii_hexdigit()),
+        None => !c.is_empty() && c.len() <= 20 && c.bytes().all(|b| b.is_ascii_alphabetic()),
+    }
+}
+
+/// Документ без холста (перевод письма).
 pub fn wrap(body: &str) -> String {
+    wrap_message(body, None)
+}
+
+/// Документ письма; с холстом письмо лежит на его цвете.
+pub fn wrap_message(body: &str, canvas: Option<&Canvas>) -> String {
+    // Цвет прошёл is_plain_color: только `#hex` или буквы, дописать свой CSS через него нельзя.
+    let body = match canvas {
+        // Прокрутка и маска краёв — на своём блоке, а не на <body>: стили письма часто красят body,
+        // а его фон уходит на весь холст страницы мимо маски. Холст шире окна, если письмо не
+        // ужимается (таблица 600 px при 300%), — тогда появляется горизонтальная прокрутка.
+        // Свечение (до 27 px) уже бокового отступа (28 px) и в полосу прокрутки не попадает.
+        Some(c) => format!(
+            "<div data-mmail-scroll><div data-mmail-frame><div data-mmail-canvas style=\"--canvas:{}\">{body}</div></div></div>",
+            c.color
+        ),
+        None => body.to_string(),
+    };
     format!(
         "<!doctype html><html><head><meta charset=\"utf-8\">\
 <meta http-equiv=\"Content-Security-Policy\" content=\"{FRAME_CSP}\">\
 <meta name=\"referrer\" content=\"no-referrer\">\
-<style>{BASE_CSS}{SCROLLBAR_CSS}</style></head><body>{body}</body></html>"
+<style>{BASE_CSS}{SCROLLBAR_CSS}{ZOOM_CSS}</style></head><body>{body}</body></html>"
     )
 }
 
@@ -218,7 +368,7 @@ mod tests {
 
     #[test]
     fn frame_document_forbids_network_and_scripts() {
-        let doc = wrap("<p>x</p>");
+        let doc = wrap_message("<p>x</p>", None);
         // Второй слой после санитайзера: даже пропущенный тег не сходит в сеть и не выполнит скрипт.
         assert!(doc.contains(r#"http-equiv="Content-Security-Policy""#), "{doc}");
         for rule in ["default-src 'none'", "img-src data:", "base-uri 'none'", "form-action 'none'"] {
@@ -226,6 +376,8 @@ mod tests {
         }
         assert!(!FRAME_CSP.contains("script-src") && !FRAME_CSP.contains("http"), "скрипты и сеть не разрешаются: {FRAME_CSP}");
         assert!(doc.contains(r#"<meta name="referrer" content="no-referrer">"#));
+
+        assert!(!doc.contains("<script"), "в документе письма скриптов нет: {doc}");
     }
 
     #[test]
@@ -250,6 +402,34 @@ mod tests {
         }
         let c = clean_message("<style>p{}</style><script>alert(1)</script></style><img src=x onerror=alert(2)>", false);
         assert!(!c.html.contains("<script") && !c.html.contains("onerror"), "{}", c.html);
+    }
+
+    #[test]
+    fn canvas_follows_the_letter() {
+        let color = |dirty: &str| canvas(dirty, &clean_message(dirty, false).html).map(|c| (c.color, c.dark));
+        // Простой текст (так его отдаёт mail-parser) и короткое письмо человека — без холста.
+        assert!(color("<html><body>Привет<br/>как дела</body></html>").is_none());
+        assert!(color(r#"<div dir="ltr">Hi <b>there</b></div>"#).is_none());
+        assert!(color(r#"<p style="margin:0;border-color:red">x</p>"#).is_none());
+        // Свой цвет текста или кнопка-ссылка с фоном — свёрстано под белый.
+        assert_eq!(color(r#"<p style="font-size:12px; color: #999">footer</p>"#), Some(("#ffffff".into(), false)));
+        assert_eq!(color(r#"<p><a href="https://a.example" style="background:#00e38c">Go</a></p>"#), Some(("#ffffff".into(), false)));
+        assert_eq!(color(r#"<font color="gray">x</font>"#), Some(("#ffffff".into(), false)));
+        // Карточка 600 px на прозрачном — белый холст, как в Thunderbird.
+        let card = r##"<table width="100%"><tr><td><table width="600" bgcolor="#FFFFFF"><tr><td>x</td></tr></table></td></tr></table>"##;
+        assert_eq!(color(card), Some(("#ffffff".into(), false)));
+        // Обёртка на всю ширину задаёт цвет холста.
+        assert_eq!(color(r##"<div style="background-color:#ddd6f3"><table width="600"><tr><td>x</td></tr></table></div>"##), Some(("#ddd6f3".into(), false)));
+        // Фон <body> — даже если санитайзер его выбросил.
+        assert_eq!(color(r##"<html><body bgcolor="#111111"><p>x</p></body></html>"##), Some(("#111111".into(), true)));
+        // Попытка дописать CSS через цвет не проходит — остаётся белый.
+        assert_eq!(color(r#"<body bgcolor="red;background:url(x)"><img src="data:image/png;base64,AA"></body>"#), Some(("#ffffff".into(), false)));
+    }
+
+    #[test]
+    fn frame_wraps_canvas() {
+        let doc = wrap_message("<p>x</p>", Some(&Canvas { color: "#ddd6f3".into(), dark: false }));
+        assert!(doc.contains(r##"<body><div data-mmail-scroll><div data-mmail-frame><div data-mmail-canvas style="--canvas:#ddd6f3"><p>x</p></div></div></div></body>"##), "{doc}");
     }
 
     #[test]

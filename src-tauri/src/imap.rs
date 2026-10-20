@@ -43,6 +43,8 @@ const TIMEOUT: Duration = Duration::from_secs(20);
 /// Как часто сверять флаги (прочитано/важное), изменённые в других клиентах.
 /// Новые письма проверяются чаще — интервал в настройках.
 const FLAGS_EVERY: Duration = Duration::from_secs(60);
+/// Сколько кнопка «Проверить почту» ждёт ящики.
+const CHECK_TIMEOUT: Duration = Duration::from_secs(15);
 /// У скольких последних писем папки сверять флаги.
 const FLAGS_WINDOW: u32 = 500;
 /// Тела писем до этого размера сохраняются в кэш заранее, в фоне; крупные — при открытии.
@@ -292,6 +294,11 @@ struct Connection {
     reader: Mutex<Option<Session>>,
     /// Ящик удалён или добавлен заново — фоновая синхронизация должна остановиться.
     cancelled: AtomicBool,
+    /// Кнопка «Проверить почту»: `check` — просьба, `wake` прерывает IDLE или паузу между опросами,
+    /// `checked` — сигнал, что проверка прошла (успешно или нет).
+    check: AtomicBool,
+    wake: tokio::sync::Notify,
+    checked: tokio::sync::Notify,
 }
 
 impl Connection {
@@ -352,6 +359,19 @@ impl Imap {
     /// Папки подключённого ящика для дерева; `None`, пока ящик не подключился.
     pub fn folders(&self, email: &str) -> Option<Vec<ServerFolder>> {
         self.connection(email).map(|c| c.list.lock().unwrap().clone())
+    }
+
+    /// «Проверить почту»: будит синхронизацию всех ящиков и ждёт, пока они проверят папки
+    /// (не дольше `CHECK_TIMEOUT` — ящик может как раз переподключаться).
+    pub async fn check_now(&self) {
+        let conns: Vec<Arc<Connection>> = self.connections.lock().unwrap().values().cloned().collect();
+        // Ожидание создаём до сигнала: notify_waiters будит и ещё не опрошенные Notified.
+        let done: Vec<_> = conns.iter().map(|c| c.checked.notified()).collect();
+        for c in &conns {
+            c.check.store(true, Ordering::Relaxed);
+            c.wake.notify_one();
+        }
+        let _ = tokio::time::timeout(CHECK_TIMEOUT, futures::future::join_all(done)).await;
     }
 
     fn connection(&self, email: &str) -> Option<Arc<Connection>> {
@@ -485,7 +505,15 @@ async fn run_sync(app: &AppHandle, account: Account) -> Result<()> {
         eprintln!("mMail: {email}: папки {gone:?} больше нет на сервере");
         store.remove_folder(&email, gone);
     }
-    let conn = Arc::new(Connection { account, list: std::sync::Mutex::new(list), reader: Mutex::new(Some(reader)), cancelled: AtomicBool::new(false) });
+    let conn = Arc::new(Connection {
+        account,
+        list: std::sync::Mutex::new(list),
+        reader: Mutex::new(Some(reader)),
+        cancelled: AtomicBool::new(false),
+        check: AtomicBool::new(false),
+        wake: tokio::sync::Notify::new(),
+        checked: tokio::sync::Notify::new(),
+    });
     app.state::<Imap>().register(conn.clone());
     // Список папок с сервера готов — дерево должно перестроиться, даже если новых писем нет.
     let _ = app.emit("mailbox-changed", ());
@@ -557,10 +585,12 @@ async fn run_sync(app: &AppHandle, account: Account) -> Result<()> {
             }
             let inbox = conn.server_name(Folder::Inbox).unwrap_or_else(|| "INBOX".into());
             let limit = FLAGS_EVERY.saturating_sub(last_flags.elapsed()).max(Duration::from_secs(1));
-            let outcome = match idle_wait(session, &inbox, limit).await {
+            let mut forced = false;
+            let outcome = match idle_wait(session, &inbox, limit, &conn.wake).await {
                 Ok((back, news)) => {
                     session = back;
-                    if news { refresh(app, &mut session, &email, &cursors, true).await } else { Ok(()) }
+                    forced = conn.check.swap(false, Ordering::Relaxed);
+                    if news || forced { refresh(app, &mut session, &email, &cursors, true).await } else { Ok(()) }
                 }
                 Err(e) => {
                     // Сессия ушла в idle_wait и не вернулась — нужна новая.
@@ -573,6 +603,9 @@ async fn run_sync(app: &AppHandle, account: Account) -> Result<()> {
                 eprintln!("mMail: {email}: {e} — переподключаюсь");
                 session = reconnect(app, &conn).await?;
                 last_flags = std::time::Instant::now() - FLAGS_EVERY;
+            }
+            if forced {
+                conn.checked.notify_waiters();
             }
             continue;
         }
@@ -601,17 +634,27 @@ async fn run_sync(app: &AppHandle, account: Account) -> Result<()> {
                     set_status(app, &email, "ok", "");
                     idle_ok = true;
                 }
-                tokio::time::sleep(Duration::from_millis(500)).await;
+                tokio::select! {
+                    () = tokio::time::sleep(Duration::from_millis(500)) => {}
+                    () = conn.wake.notified() => {}
+                }
             }
-            // Пока идёт история или подкачка тел — новые письма проверяем по интервалу.
-            if last_poll.elapsed() >= poll() {
-                refresh(app, &mut session, &email, &cursors, false).await?;
+            // Пока идёт история или подкачка тел — новые письма проверяем по интервалу
+            // или сразу, если попросили кнопкой (тогда и свои папки).
+            let forced = conn.check.swap(false, Ordering::Relaxed);
+            if forced || last_poll.elapsed() >= poll() {
+                refresh(app, &mut session, &email, &cursors, forced).await?;
                 last_poll = std::time::Instant::now();
+            }
+            if forced {
+                conn.checked.notify_waiters();
             }
             Ok(())
         }
         .await;
         if let Err(e) = result {
+            // Кнопка не должна крутиться до таймаута, если проверка упала.
+            conn.checked.notify_waiters();
             eprintln!("mMail: {email}: {e} — переподключаюсь");
             session = reconnect(app, &conn).await?;
             idle_ok = false;
@@ -733,13 +776,26 @@ async fn reconnect(app: &AppHandle, conn: &Connection) -> Result<Session> {
 
 /// IDLE (RFC 2177) на «Входящих»: ждём, пока сервер сообщит об изменениях, но не дольше `limit`.
 /// Возвращает сессию и признак, что что-то пришло (иначе — просто истёк срок).
-async fn idle_wait(mut session: Session, inbox: &str, limit: Duration) -> Result<(Session, bool)> {
+async fn idle_wait(mut session: Session, inbox: &str, limit: Duration, wake: &tokio::sync::Notify) -> Result<(Session, bool)> {
     // EXAMINE, а не SELECT: только читаем, флаги \Recent не трогаем.
     session.examine(inbox).await?;
     let mut handle = session.idle();
     handle.init().await?;
     let news = {
-        let (wait, _stop) = handle.wait_with_timeout(limit);
+        let (wait, stop) = handle.wait_with_timeout(limit);
+        // «Проверить почту»: сброс StopSource штатно прерывает IDLE (ManualInterrupt), и сессия
+        // остаётся в порядке для DONE — в отличие от брошенного на полпути ожидания.
+        let interrupt = async move {
+            wake.notified().await;
+            drop(stop);
+            std::future::pending::<()>().await
+        };
+        let wait = async {
+            tokio::select! {
+                response = wait => response,
+                () = interrupt => unreachable!(),
+            }
+        };
         // Сервер может продлевать ожидание «* OK Still here» — ограничиваем снаружи.
         match tokio::time::timeout(limit + Duration::from_secs(5), wait).await {
             Ok(response) => matches!(response?, async_imap::extensions::idle::IdleResponse::NewData(_)),

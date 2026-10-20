@@ -6,7 +6,7 @@
   import ModeSwitch from './ModeSwitch.svelte';
 
   // groups: [{ account: null | '' | email, title, folders: [{ id, name, unread }] }]
-  let { mode, onmode, groups, active, onpick, oncompose, onrefresh, onerror } = $props();
+  let { mode, onmode, groups, active, onpick, oncompose, onrefresh, onerror, footer = null } = $props();
 
   const ICONS = { inbox: 'inbox', starred: 'star', sent: 'send', drafts: 'file', trash: 'trash', junk: 'spam', archive: 'archive' };
   // Свои папки приходят с путём «Работа / Проекты»: в дереве — последняя часть с отступом.
@@ -89,6 +89,7 @@
       </section>
     {/each}
   </div>
+  {@render footer?.()}
 </nav>
 
 <style>

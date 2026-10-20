@@ -41,6 +41,12 @@ export const calendarDeleteEvent = (calendarId, eventId) => invoke('calendar_del
 export const setNotifications = (mail, events) => invoke('set_notifications', { mail, events });
 export const setCalendarView = (view) => invoke('set_calendar_view', { view });
 export const setCalendarFullTitles = (full) => invoke('set_calendar_full_titles', { full });
+export const setSoftMailEdges = (soft) => invoke('set_soft_mail_edges', { soft });
+export const checkMail = () => invoke('check_mail');
+export const mailViewLoad = (html) => invoke('mail_view_load', { html });
+export const mailViewVisible = (visible) => invoke('mail_view_visible', { visible });
+export const mailViewBounds = (x, y, width, height) => invoke('mail_view_bounds', { x, y, width, height });
+export const mailViewZoom = (zoom) => invoke('mail_view_zoom', { zoom });
 export const setTitleButtons = (windowButtons, pinButtons) => invoke('set_title_buttons', { windowButtons, pinButtons });
 // Поверх других окон / на всех рабочих столах — для окна, которое вызывает.
 export const windowPins = () => invoke('window_pins');

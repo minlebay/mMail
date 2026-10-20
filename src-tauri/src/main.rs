@@ -14,6 +14,7 @@ mod folders;
 mod imap;
 mod i18n;
 mod links;
+mod mailview;
 mod memory;
 mod notify;
 mod remote;
@@ -72,6 +73,12 @@ fn main() {
             commands::set_title_buttons,
             commands::set_calendar_view,
             commands::set_calendar_full_titles,
+            commands::set_soft_mail_edges,
+            commands::check_mail,
+            mailview::mail_view_load,
+            mailview::mail_view_visible,
+            mailview::mail_view_bounds,
+            mailview::mail_view_zoom,
             window_pins::window_pins,
             window_pins::set_window_pin,
             commands::write_clipboard,
@@ -165,11 +172,16 @@ pub(crate) fn glass_window<'a>(app: &'a AppHandle, label: &str, title: &str) -> 
 /// Общее для всех окон: масштаб из настроек, меню редактирования, размытие KWin.
 pub(crate) fn finish_window(app: &AppHandle, window: &WebviewWindow) -> tauri::Result<()> {
     let zoom = app.state::<config::ConfigStore>().get().zoom.unwrap_or(1.0);
-    let _ = window.set_zoom(zoom.clamp(commands::ZOOM_MIN, commands::ZOOM_MAX));
+    let zoom = zoom.clamp(commands::ZOOM_MIN, commands::ZOOM_MAX);
+    let _ = window.set_zoom(zoom);
 
     // Редактирование и копирование доступны, навигация WebKit остаётся запрещена.
     let (handle, label) = (app.clone(), window.label().to_string());
     window.with_webview(move |webview| {
+        // Письма показывает только главное окно — тело письма в своём WebKit поверх страницы.
+        if label == "main" {
+            crate::mailview::install(&webview.inner(), handle.clone(), zoom);
+        }
         crate::context_menu::install(&webview.inner(), handle, label);
     })?;
 

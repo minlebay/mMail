@@ -1,4 +1,5 @@
 <script>
+  import { covers } from './covers.js';
   import { t } from './i18n.js';
   import { listen } from '@tauri-apps/api/event';
   import { openLink } from './api.js';
@@ -28,7 +29,7 @@
 <svelte:window {onkeydown} />
 
 {#if request}
-  <div class="overlay" role="presentation" onclick={(e) => e.target === e.currentTarget && (request = null)}>
+  <div class="overlay" use:covers role="presentation" onclick={(e) => e.target === e.currentTarget && (request = null)}>
     <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="link-title">
       <h2 id="link-title">{$t("Открыть ссылку?")}</h2>
       <div class="host">{request.host || request.url}</div>

@@ -9,7 +9,7 @@
   import Select from './Select.svelte';
   import TitleBar from './TitleBar.svelte';
   import { THEMES, applyTheme, isDark } from './themes.js';
-  import { setAppearance, listAccounts, addAccount, removeAccount, storageInfo, setBodyDays, clearCache, setShowAllAccounts, googleStatus, googleConnect, googleDisconnect, setNotifications, setTitleButtons, setCalendarView, setCalendarFullTitles } from './api.js';
+  import { setAppearance, listAccounts, addAccount, removeAccount, storageInfo, setBodyDays, clearCache, setShowAllAccounts, googleStatus, googleConnect, googleDisconnect, setNotifications, setTitleButtons, setCalendarView, setCalendarFullTitles, setSoftMailEdges } from './api.js';
 
   let { appearance } = $props();
 
@@ -57,6 +57,8 @@
   let calendarView = $state(initial.calendarView ?? 'week');
   let calendarFullTitles = $state(initial.calendarFullTitles ?? false);
   const saveCalendarFullTitles = () => setCalendarFullTitles(calendarFullTitles).catch((e) => (saveError = String(e)));
+  let softMailEdges = $state(initial.softMailEdges ?? true);
+  const saveSoftMailEdges = () => setSoftMailEdges(softMailEdges).catch((e) => (saveError = String(e)));
   const CALENDAR_VIEWS = $derived([
     { value: 'month', label: $t('Месяц') },
     { value: 'week', label: $t('Неделя') },
@@ -276,6 +278,11 @@
           <input type="range" min="0.15" max="0.85" step="0.01" bind:value={opacity} disabled={!blurEnabled} />
           <span>{$t("Плотнее")}</span>
         </div>
+        <label class="toggle">
+          <input type="checkbox" bind:checked={softMailEdges} onchange={saveSoftMailEdges} />
+          {$t("Мягкий переход к письму")}
+        </label>
+        <p class="hint">{$t("Лист письма плавно растворяется в стекле окна, а не обрывается резким краем.")}</p>
 
         <h3>{$t("Масштаб по умолчанию")}</h3>
         <div class="slider">

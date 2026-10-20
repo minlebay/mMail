@@ -198,7 +198,8 @@ fn popup(app: &AppHandle, window_label: &str, click: Click, page: Option<PageMen
                 menu.append(&entry);
             }
             // Окно перевода выделенного есть только в главном окне (письма читают там).
-            if click.has_selection && window_label == "main" {
+            // "mail" — тело письма в своём WebKit (mailview.rs), перевод показывает главное окно.
+            if click.has_selection && (window_label == "main" || window_label == "mail") {
                 menu.append(&gtk::SeparatorMenuItem::new());
                 let entry = gtk::MenuItem::with_label(&crate::i18n::text(app, "Перевести выделенное"));
                 let (app, label) = (app.clone(), window_label.to_string());

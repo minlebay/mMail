@@ -5,6 +5,7 @@
   import Sidebar from './lib/Sidebar.svelte';
   import MessageList from './lib/MessageList.svelte';
   import Reader from './lib/Reader.svelte';
+  import AppControls from './lib/AppControls.svelte';
   import LinkDialog from './lib/LinkDialog.svelte';
   import TranslationDialog from './lib/TranslationDialog.svelte';
   import Splitter from './lib/Splitter.svelte';
@@ -15,7 +16,7 @@
   import { applyTheme, isDark, DEFAULT_THEME, DEFAULT_OPACITY } from './lib/themes.js';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { listen } from '@tauri-apps/api/event';
-  import { listFolders, syncStatus, getAppearance, setZoom, openSettings, openCompose as openComposeWindow } from './lib/api.js';
+  import { listFolders, syncStatus, getAppearance, setZoom, openSettings, checkMail, openCompose as openComposeWindow } from './lib/api.js';
   import { googleStatus, calendarList, calendarSetVisible, calendarEvents, calendarSaveEvent, calendarDeleteEvent } from './lib/api.js';
   import { setMenuErrorHandler } from './lib/contextMenu.js';
 
@@ -44,6 +45,7 @@
       pollSeconds: a.pollSeconds,
       calendarView: a.calendarView,
       calendarFullTitles: a.calendarFullTitles ?? false,
+      softMailEdges: a.softMailEdges ?? true,
     };
     zoom = a.zoom;
     calView = a.calendarView ?? 'week';
@@ -269,6 +271,10 @@
       />
 {/snippet}
 
+{#snippet appControls()}
+  <AppControls {zoom} onzoom={changeZoom} oncheck={() => checkMail().catch((e) => showToast(String(e)))} onsettings={openSettings} />
+{/snippet}
+
 {#snippet calendarSidebar()}
       <CalendarSidebar
         {mode}
@@ -279,19 +285,14 @@
         ontoggle={toggleCalendar}
         oncreate={() => (eventDialog = { preset: { start: new Date(calDate.getFullYear(), calDate.getMonth(), calDate.getDate(), new Date().getHours() + 1) } })}
         connected={!!googleAccount}
+        footer={appControls}
       />
 {/snippet}
 
 <svelte:window {onkeydown} bind:innerWidth={viewportWidth} />
 
 <div class="window" class:maximized>
-  <TitleBar
-    {sync}
-    {zoom}
-    onzoom={changeZoom}
-    middleClickMinimize={appearance.middleClickMinimize}
-    onsettings={openSettings}
-  />
+  <TitleBar {sync} middleClickMinimize={appearance.middleClickMinimize} />
 
   {#if mode === 'calendar' && !wide}
     <main class="layout" style:grid-template-columns="minmax(150px, {sizes.sidebar}px) 12px minmax(400px, 1fr)">
@@ -304,12 +305,12 @@
     {#if wide && mode === 'calendar'}
       {@render calendarSidebar()}
     {:else}
-    <Sidebar {mode} onmode={setMode} {groups} {active} onpick={pickFolder} oncompose={(from) => openCompose(from ? { from } : {})} onrefresh={() => { version++; refreshFolders(); }} onerror={showToast} />
+    <Sidebar {mode} onmode={setMode} {groups} {active} onpick={pickFolder} oncompose={(from) => openCompose(from ? { from } : {})} onrefresh={() => { version++; refreshFolders(); }} onerror={showToast} footer={appControls} />
     {/if}
     <Splitter value={sizes.sidebar} min={150} max={380} initial={SIZES.sidebar} onchange={(px) => resize('sidebar', px)} />
     <MessageList onreply={replyTo} onerror={showToast} account={active.account} folder={active.folder} {version} {selectedId} onselect={(id) => (selectedId = id)} />
     <Splitter value={sizes.list} min={220} max={640} initial={SIZES.list} onchange={(px) => resize('list', px)} />
-    <Reader id={selectedId} onreply={replyTo} />
+    <Reader id={selectedId} onreply={replyTo} softEdges={appearance.softMailEdges ?? true} />
     {#if wide}
       <Splitter value={calendarWidth} min={560} max={calendarMax} initial={SIZES.calendar} reverse onchange={(px) => resize('calendar', px)} />
       {@render calendarPane()}

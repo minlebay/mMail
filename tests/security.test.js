@@ -38,17 +38,18 @@ test('only the main window can read mail', () => {
   }
 });
 
-test('message frames are sandboxed without scripts or same origin', () => {
+// Письмо не попадает в страницу приложения: его показывает отдельный WebKit (mailview.rs)
+// со своим эфемерным контекстом, без JavaScript и без навигации — ссылки только через подтверждение.
+test('mail body lives in an isolated native view without scripts', () => {
   const reader = read('src/lib/Reader.svelte');
-  const frames = [...reader.matchAll(/<iframe\b[^>]*>/g)].map((m) => m[0]);
-  assert.ok(frames.length >= 2, 'письмо и перевод');
-  for (const frame of frames) {
-    const sandbox = frame.match(/sandbox="([^"]*)"/);
-    assert.ok(sandbox, `iframe без sandbox: ${frame}`);
-    assert.ok(!/allow-(scripts|same-origin|forms|top-navigation|modals|downloads)/.test(sandbox[1]), frame);
-    assert.match(frame, /referrerpolicy="no-referrer"/);
-    assert.match(frame, /srcdoc=/, 'содержимое — из ядра, не по адресу');
-  }
+  assert.ok(!/<iframe\b/.test(reader), 'письмо не встраивается в страницу приложения');
+  assert.ok(!/\{@html/.test(reader), 'и не вставляется как разметка');
+  const view = read('src-tauri/src/mailview.rs');
+  assert.match(view, /set_enable_javascript\(false\)/);
+  assert.match(view, /WebContext::new_ephemeral\(\)/);
+  assert.match(view, /connect_decide_policy/);
+  assert.match(view, /decision\.ignore\(\)/);
+  assert.ok(!/allow-scripts|nonce/.test(read('src-tauri/src/sanitize.rs')), 'в документе письма скриптов нет');
 });
 
 test('quoted mail in the compose editor cannot cover the window', () => {

@@ -6,7 +6,7 @@
   import { monthGrid, addMonths, sameDay } from './dates.js';
 
   // calendars: [{ id, name, color, primary, writable, visible }]
-  let { mode, onmode, date, onpick, calendars, ontoggle, oncreate, connected } = $props();
+  let { mode, onmode, date, onpick, calendars, ontoggle, oncreate, connected, footer = null } = $props();
 
   // Мини-календарь листается сам по себе; выбор дня меняет основной вид.
   let shown = $state(new Date());
@@ -53,6 +53,7 @@
       {/each}
     </div>
   {/if}
+  {@render footer?.()}
 </nav>
 
 <style>

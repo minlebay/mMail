@@ -1,4 +1,5 @@
 <script>
+  import { covers } from '../covers.js';
   import { untrack } from 'svelte';
   import { t } from '../i18n.js';
   import Icon from '../Icon.svelte';
@@ -109,7 +110,7 @@
 
 <svelte:window {onkeydown} />
 
-<div class="overlay" role="presentation" onclick={(e) => e.target === e.currentTarget && onclose()}>
+<div class="overlay" use:covers role="presentation" onclick={(e) => e.target === e.currentTarget && onclose()}>
   <div class="dialog" role="dialog" aria-modal="true" aria-label={$t('Событие')}>
     {#if !editing && event}
       <div class="title">

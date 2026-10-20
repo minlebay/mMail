@@ -44,6 +44,8 @@ pub struct Config {
     pub calendar_view: Option<String>,
     /// В клетке месяца названия событий переносятся по строкам, а не обрезаются; `None` — обрезаются.
     pub calendar_full_titles: Option<bool>,
+    /// Мягкое свечение вокруг листа письма вместо резкого края на стекле; `None` — включено.
+    pub soft_mail_edges: Option<bool>,
     /// Кнопки «Свернуть» и «Развернуть» в шапке; `None` — показывать.
     pub window_buttons: Option<bool>,
     /// Кнопки «Поверх других окон» и «На всех рабочих столах» в шапке; `None` — показывать.

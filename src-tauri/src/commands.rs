@@ -62,6 +62,9 @@ pub struct MessageView {
     can_trust: bool,
     attachments: Vec<crate::attachments::AttachmentMeta>,
     srcdoc: String,
+    /// Холст письма: `light`/`dark` — письмо рисуется в этой схеме и UI может мягко растворить
+    /// его края; `None` — простой текст на стекле в схеме приложения.
+    canvas: Option<&'static str>,
 }
 
 #[tauri::command]
@@ -200,6 +203,7 @@ pub async fn get_message(
         }
     }
     warnings.extend(deceptive_warnings(links::find_deceptive(&clean.html)));
+    let canvas = sanitize::canvas(&html, &clean.html);
 
     Ok(MessageView {
         id: m.id,
@@ -216,7 +220,8 @@ pub async fn get_message(
         trusted,
         can_trust,
         attachments: m.attachments,
-        srcdoc: sanitize::wrap(&clean.html),
+        srcdoc: sanitize::wrap_message(&clean.html, canvas.as_ref()),
+        canvas: canvas.map(|c| if c.dark { "dark" } else { "light" }),
     })
 }
 
@@ -283,6 +288,8 @@ pub struct Appearance {
     calendar_view: String,
     /// Названия событий в месяце — целиком, в несколько строк.
     calendar_full_titles: bool,
+    /// Мягкий переход от стекла окна к листу письма.
+    soft_mail_edges: bool,
 }
 
 pub const ZOOM_MIN: f64 = 0.5;
@@ -314,6 +321,7 @@ pub fn get_appearance(config: State<'_, ConfigStore>) -> Appearance {
         pin_buttons: c.pin_buttons.unwrap_or(true),
         calendar_view: c.calendar_view.clone().unwrap_or_else(|| "week".into()),
         calendar_full_titles: c.calendar_full_titles.unwrap_or(false),
+        soft_mail_edges: c.soft_mail_edges.unwrap_or(true),
     }
 }
 
@@ -352,6 +360,21 @@ pub fn set_calendar_view(app: tauri::AppHandle, config: State<'_, ConfigStore>, 
 #[tauri::command]
 pub fn set_calendar_full_titles(app: tauri::AppHandle, config: State<'_, ConfigStore>, full: bool) -> Result<(), String> {
     config.update(|c| c.calendar_full_titles = Some(full))?;
+    let _ = tauri::Emitter::emit(&app, "appearance-changed", get_appearance(config));
+    Ok(())
+}
+
+/// «Проверить почту» в шапке: не ждать следующего опроса, а спросить серверы сейчас.
+#[tauri::command]
+pub async fn check_mail(imap: State<'_, Imap>) -> Result<(), String> {
+    imap.check_now().await;
+    Ok(())
+}
+
+/// Свечение вокруг листа письма; главное окно перерисовывает письмо по appearance-changed.
+#[tauri::command]
+pub fn set_soft_mail_edges(app: tauri::AppHandle, config: State<'_, ConfigStore>, soft: bool) -> Result<(), String> {
+    config.update(|c| c.soft_mail_edges = Some(soft))?;
     let _ = tauri::Emitter::emit(&app, "appearance-changed", get_appearance(config));
     Ok(())
 }
@@ -432,7 +455,11 @@ pub fn set_zoom(window: tauri::WebviewWindow, scale: f64) -> Result<(), String> 
     if !scale.is_finite() {
         return Err("некорректный масштаб".into());
     }
-    window.set_zoom(scale.clamp(ZOOM_MIN, ZOOM_MAX)).map_err(|e| e.to_string())
+    let scale = scale.clamp(ZOOM_MIN, ZOOM_MAX);
+    if window.label() == "main" {
+        crate::mailview::set_app_zoom(window.app_handle(), scale);
+    }
+    window.set_zoom(scale).map_err(|e| e.to_string())
 }
 
 /// Одно предупреждение на каждый реальный адрес, а не на каждую ссылку.

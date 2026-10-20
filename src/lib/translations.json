@@ -531,6 +531,22 @@
     "en": "External content shown",
     "sr": "Spoljni sadržaj je prikazan"
   },
+  "Вернуть масштаб письма": {
+    "en": "Reset message zoom",
+    "sr": "Vrati uvećanje poruke"
+  },
+  "Проверить почту": {
+    "en": "Check mail",
+    "sr": "Proveri poštu"
+  },
+  "Мягкий переход к письму": {
+    "en": "Soft transition to the message",
+    "sr": "Blag prelaz ka poruci"
+  },
+  "Лист письма плавно растворяется в стекле окна, а не обрывается резким краем.": {
+    "en": "The message sheet fades softly into the window glass instead of ending in a hard edge.",
+    "sr": "List poruke se blago stapa sa staklom prozora umesto da se završava oštrom ivicom."
+  },
   "Полные названия событий в месяце": {
     "en": "Full event titles in month view",
     "sr": "Puni nazivi događaja u prikazu meseca"

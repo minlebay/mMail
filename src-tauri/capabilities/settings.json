@@ -8,6 +8,7 @@
   "permissions": [
     "allow-set-calendar-view",
     "allow-set-calendar-full-titles",
+    "allow-set-soft-mail-edges",
     "allow-set-title-buttons",
     "allow-set-window-pin",
     "allow-window-pins",
