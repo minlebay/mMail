@@ -8,7 +8,14 @@
 
   // Документ письма собирает ядро (sanitize::wrap, начинается с его <html>); схему окна
   // передаём атрибутом — стили обеих схем уже в нём.
-  const withScheme = (doc, dark) => (dark ? doc : doc.replace('<html>', '<html data-scheme="light">'));
+  // iframe отвечает на prefers-color-scheme по теме системы, а не по схеме mMail: тёмные стили
+  // письма включились бы на нашем светлом фоне. Запросы схемы переписываем в заведомо
+  // истинное или ложное условие.
+  const schemeQuery = /prefers-color-scheme\s*:\s*(dark|light)/gi;
+  const withScheme = (doc, dark) => {
+    const aligned = doc.replace(schemeQuery, (_, s) => ((s.toLowerCase() === 'dark') === dark ? 'min-width:0px' : 'min-width:100000px'));
+    return dark ? aligned : aligned.replace('<html>', '<html data-scheme="light">');
+  };
 
   let { id, onreply } = $props();
 

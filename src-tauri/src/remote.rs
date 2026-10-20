@@ -52,13 +52,13 @@ fn collect(html: &str) -> Vec<String> {
     let settings = Settings::new()
         .append_element_content_handler(element!("img[src]", |el| {
             if !is_pixel(el.get_attribute("width"), el.get_attribute("height")) {
-                add(el.get_attribute("src").unwrap_or_default());
+                add(unescape(&el.get_attribute("src").unwrap_or_default()));
             }
             Ok(())
         }))
         .append_element_content_handler(element!("[style]", |el| {
             for url in style_urls(&el.get_attribute("style").unwrap_or_default()) {
-                add(url);
+                add(unescape(&url));
             }
             Ok(())
         }));
@@ -70,7 +70,7 @@ fn collect(html: &str) -> Vec<String> {
 fn rewrite(html: &str, fetched: &HashMap<String, String>) -> String {
     let settings = Settings::new()
         .append_element_content_handler(element!("img[src]", |el| {
-            match fetched.get(&el.get_attribute("src").unwrap_or_default()) {
+            match fetched.get(&unescape(&el.get_attribute("src").unwrap_or_default())) {
                 Some(data) => el.set_attribute("src", data)?,
                 None => el.remove_attribute("src"),
             }
@@ -79,7 +79,7 @@ fn rewrite(html: &str, fetched: &HashMap<String, String>) -> String {
         .append_element_content_handler(element!("[style]", |el| {
             let mut style = el.get_attribute("style").unwrap_or_default();
             for url in style_urls(&style) {
-                let replacement = fetched.get(&url).map_or("none", String::as_str);
+                let replacement = fetched.get(&unescape(&url)).map_or("none", String::as_str);
                 style = style.replace(&url, replacement);
             }
             el.set_attribute("style", &style)?;
@@ -91,6 +91,13 @@ fn rewrite(html: &str, fetched: &HashMap<String, String>) -> String {
         return String::new();
     }
     String::from_utf8(out).unwrap_or_default()
+}
+
+/// lol_html отдаёт атрибуты как есть, с сущностями: без этого `?e=1&amp;t=…` уходит на сервер
+/// буквально, и подписанные ссылки (логотипы на media.licdn.com) отвечают 403. После ammonia
+/// в атрибутах бывают только эти три сущности.
+fn unescape(value: &str) -> String {
+    value.replace("&quot;", "\"").replace("&nbsp;", "\u{a0}").replace("&amp;", "&")
 }
 
 fn is_pixel(width: Option<String>, height: Option<String>) -> bool {
@@ -222,6 +229,18 @@ mod tests {
         let out = rewrite(html, &fetched);
         assert!(out.contains(r#"src="data:image/png;base64,AA""#));
         assert!(!out.contains("b.example") && !out.contains("c.example"), "{out}");
+    }
+
+    #[test]
+    fn decodes_entities_in_urls() {
+        let html = r#"<img src="https://a.example/1.png?e=1&amp;t=2"><div style="background:url(https://a.example/b.png?x=1&amp;y=2)">x</div>"#;
+        assert_eq!(collect(html), ["https://a.example/1.png?e=1&t=2", "https://a.example/b.png?x=1&y=2"]);
+        let fetched = HashMap::from([
+            ("https://a.example/1.png?e=1&t=2".to_string(), "data:image/png;base64,AA".to_string()),
+            ("https://a.example/b.png?x=1&y=2".to_string(), "data:image/png;base64,BB".to_string()),
+        ]);
+        let out = rewrite(html, &fetched);
+        assert!(out.contains(r#"src="data:image/png;base64,AA""#) && out.contains("url(data:image/png;base64,BB)"), "{out}");
     }
 
     #[test]

@@ -40,13 +40,27 @@ pub struct Clean {
 
 /// `allow_remote`: оставить http(s)-картинки, чтобы ядро скачало их и встроило (remote.rs).
 pub fn clean_html(dirty: &str, allow_remote: bool) -> Clean {
+    clean(dirty, allow_remote, false)
+}
+
+/// Как `clean_html`, но с `<style>` и `class`: письма вроде LinkedIn задают цвета классами, без них
+/// текст наследует цвет нашей темы и сливается с фоном. Только для iframe письма — там стили
+/// никуда не выходят за пределы документа, а CSP не даёт им ходить в сеть. В редактор (цитата
+/// в ответе) такое пускать нельзя: `<style>` там перекрасил бы всё окно.
+pub fn clean_message(dirty: &str, allow_remote: bool) -> Clean {
+    clean(dirty, allow_remote, true)
+}
+
+fn clean(dirty: &str, allow_remote: bool, styles: bool) -> Clean {
     let blocked = Arc::new(AtomicUsize::new(0));
     let counter = Arc::clone(&blocked);
     let relative_counter = Arc::clone(&blocked);
-    let html = Builder::default()
-        .add_tags(&["font"])
-        .add_tag_attributes("font", &["face", "size"])
-        .add_generic_attributes(GENERIC_ATTRS)
+    let mut builder = Builder::default();
+    builder.add_tags(&["font"]).add_tag_attributes("font", &["face", "size"]).add_generic_attributes(GENERIC_ATTRS);
+    if styles {
+        builder.add_tags(&["style"]).rm_clean_content_tags(&["style"]).add_generic_attributes(&["class"]);
+    }
+    let html = builder
         .url_schemes(HashSet::from(["http", "https", "mailto", "data"]))
         // Относительные URL выкидываются до attribute_filter; `//host/…` — это внешний ресурс, считаем его.
         .url_relative(UrlRelative::Custom(Box::new(DropRelative(relative_counter))))
@@ -57,7 +71,46 @@ pub fn clean_html(dirty: &str, allow_remote: bool) -> Clean {
         })
         .clean(dirty)
         .to_string();
+    let html = if styles { clean_style_blocks(&html) } else { html };
     Clean { html, blocked_remote: blocked.load(Ordering::Relaxed) }
+}
+
+/// Содержимое `<style>` после ammonia: атрибутов у тега нет, а `</style` внутри быть не может —
+/// парсер закончил бы на нём элемент. Поэтому блоки находятся простым поиском.
+fn clean_style_blocks(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut rest = html;
+    while let Some(start) = rest.find("<style>").map(|i| i + "<style>".len()) {
+        let Some(end) = rest[start..].find("</style>").map(|i| start + i) else { break };
+        out.push_str(&rest[..start]);
+        out.push_str(&clean_css(&rest[start..end]));
+        rest = &rest[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Внешние ресурсы из таблиц стилей не грузим (их и CSP не пустит): `url(…)` превращается в
+/// неизвестную функцию, и браузер отбрасывает только это объявление. Экранирование и `@import`
+/// — признак обхода фильтров, такой блок выкидываем целиком.
+fn clean_css(css: &str) -> String {
+    let lower = css.to_ascii_lowercase();
+    if lower.contains('\\') || lower.contains("@import") || lower.contains("expression(") {
+        return String::new();
+    }
+    let mut out = String::with_capacity(css.len());
+    let mut from = 0;
+    while let Some(at) = ["url(", "image-set("].iter().filter_map(|f| lower[from..].find(f)).min().map(|i| from + i) {
+        out.push_str(&css[from..at]);
+        out.push_str("blocked-");
+        from = at;
+        // Следующий поиск начинается после имени функции, иначе цикл найдёт её снова.
+        let name = if lower[at..].starts_with("url(") { 4 } else { 10 };
+        out.push_str(&css[at..at + name]);
+        from += name;
+    }
+    out.push_str(&css[from..]);
+    out
 }
 
 struct DropRelative(Arc<AtomicUsize>);
@@ -180,6 +233,30 @@ mod tests {
         // target=_blank — чтобы клик дошёл до ядра как запрос окна и прошёл подтверждение.
         let c = clean_html_blocked(r#"<a href="https://a.example" target="_self" rel="opener">a</a>"#);
         assert!(c.html.contains(r#"target="_blank""#) && c.html.contains("noreferrer") && !c.html.contains("opener\""), "{}", c.html);
+    }
+
+    #[test]
+    fn message_keeps_styles_without_resources() {
+        let c = clean_message(
+            r#"<style>.f{color:#000}.b{background:url(https://t.example/b.png)}</style><p class="f" onclick="x()">a</p>"#,
+            true,
+        );
+        assert!(c.html.contains(".f{color:#000}") && c.html.contains(r#"class="f""#), "{}", c.html);
+        assert!(c.html.contains("blocked-url(") && !c.html.contains(":url("), "{}", c.html);
+        assert!(!c.html.contains("onclick"));
+        for evil in ["<style>@import 'https://t.example/x.css';p{}</style>", r"<style>p{background:u\72l(https://t.example/x)}</style>"] {
+            let c = clean_message(evil, true);
+            assert!(!c.html.contains("t.example"), "{}", c.html);
+        }
+        let c = clean_message("<style>p{}</style><script>alert(1)</script></style><img src=x onerror=alert(2)>", false);
+        assert!(!c.html.contains("<script") && !c.html.contains("onerror"), "{}", c.html);
+    }
+
+    #[test]
+    fn quotes_keep_no_styles() {
+        // Цитата в редакторе ответа: <style> там действовал бы на всё окно.
+        let c = clean_html("<style>body{display:none}</style><p class=\"x\">a</p>", false);
+        assert!(!c.html.contains("display") && !c.html.contains("class"), "{}", c.html);
     }
 
     #[test]

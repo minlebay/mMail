@@ -183,7 +183,7 @@ pub async fn get_message(
     let RemotePolicy { can_trust, trusted, remote_shown } =
         remote_policy(&m.from_addr, m.auth, &config.get().trusted_senders, show_remote);
 
-    let mut clean = sanitize::clean_html(&html, remote_shown);
+    let mut clean = sanitize::clean_message(&html, remote_shown);
     if remote_shown && clean.blocked_remote > 0 {
         clean.html = remote::inline(clean.html).await;
     }
