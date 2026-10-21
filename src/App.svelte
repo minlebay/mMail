@@ -200,12 +200,14 @@
   let eventDialog = $state(null); // { event } | { preset }
   let calVersion = $state(0);
   const calColors = $derived(Object.fromEntries(calendars.map((c) => [c.id, c.color])));
+  // Список календарей получен; без него события не запросить.
+  let calListed = $state(false);
 
   const refreshGoogle = () =>
     googleStatus().then((s) => {
       googleAccount = s.account;
-      if (googleAccount) calendarList().then((list) => (calendars = list), (e) => (calError = String(e)));
-      else {
+      calListed = false;
+      if (!googleAccount) {
         calendars = [];
         events = [];
       }
@@ -220,15 +222,22 @@
     let cancelled = false;
     calLoading = true;
     calError = '';
-    calendarEvents(visible, toRfc3339(from), toRfc3339(to))
-      .then((list) => !cancelled && (events = list))
-      .catch((e) => !cancelled && (calError = String(e)))
-      .finally(() => !cancelled && (calLoading = false));
+    // Запуск без сети: список не пришёл — пробуем снова по таймеру и при появлении сети.
+    const request = calListed
+      ? calendarEvents(visible, toRfc3339(from), toRfc3339(to)).then((list) => !cancelled && (events = list))
+      : calendarList().then((list) => {
+          calendars = list;
+          calListed = true;
+        });
+    request.catch((e) => !cancelled && (calError = String(e))).finally(() => !cancelled && (calLoading = false));
     // Изменения из других клиентов — раз в 5 минут, пока календарь на экране.
     const timer = setInterval(() => calVersion++, 5 * 60 * 1000);
+    const online = () => calVersion++;
+    window.addEventListener('online', online);
     return () => {
       cancelled = true;
       clearInterval(timer);
+      window.removeEventListener('online', online);
     };
   });
 

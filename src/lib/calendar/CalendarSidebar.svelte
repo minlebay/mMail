@@ -13,7 +13,12 @@
   $effect(() => {
     shown = new Date(date.getFullYear(), date.getMonth(), 1);
   });
-  const today = new Date();
+  // Окно живёт днями — «сегодня» переходит через полночь.
+  let today = $state(new Date());
+  $effect(() => {
+    const timer = setInterval(() => (today = new Date()), 60_000);
+    return () => clearInterval(timer);
+  });
   const days = $derived(monthGrid(shown));
   const weekdays = $derived(days.slice(0, 7).map((d) => $fmt.weekday(d).slice(0, 2)));
 </script>
@@ -122,13 +127,18 @@
     color: var(--muted);
     opacity: 0.6;
   }
-  .day.today {
-    color: var(--accent);
-    font-weight: 700;
-  }
   .day.selected {
     background: var(--accent-soft);
     color: var(--text);
+  }
+  /* Как в месячном виде: сегодня — залитый круг; выбранный сегодня — ещё и с кольцом. */
+  .day.today {
+    background: var(--accent-strong);
+    color: #fff;
+    font-weight: 700;
+  }
+  .day.today.selected {
+    box-shadow: 0 0 0 2px rgba(var(--ink), 0.5);
   }
   .calendars {
     flex: 1;

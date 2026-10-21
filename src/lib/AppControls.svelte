@@ -2,7 +2,7 @@
   import { t } from './i18n.js';
   import Icon from './Icon.svelte';
 
-  // Низ боковой панели (почта и календарь): проверить почту, масштаб интерфейса, настройки.
+  // Низ боковой панели (почта и календарь): настройки, проверить почту; масштаб интерфейса — у правого края.
   let { zoom, onzoom, oncheck, onsettings } = $props();
 
   let zoomOpen = $state(false);
@@ -45,13 +45,13 @@
       <button class="step" aria-label={$t("Увеличить")} onclick={() => onzoom(zoom + 0.1)}>+</button>
     </div>
   {/if}
+  <button class="ctl" aria-label={$t("Настройки")} title={$t("Настройки")} onclick={onsettings}>
+    <Icon name="settings" size={14} />
+  </button>
   <button class="ctl" class:spinning={checking} aria-label={$t("Проверить почту")} title={$t("Проверить почту")} disabled={checking} onclick={check}>
     <Icon name="refresh" size={14} />
   </button>
   <button class="pill" class:active={zoomOpen} title={$t("Масштаб (Ctrl +/−/0)")} onclick={() => (zoomOpen = !zoomOpen)}>{percent(zoom)}</button>
-  <button class="ctl" aria-label={$t("Настройки")} title={$t("Настройки")} onclick={onsettings}>
-    <Icon name="settings" size={14} />
-  </button>
 </div>
 
 <style>
@@ -88,6 +88,7 @@
   }
 
   .pill {
+    margin-left: auto;
     height: 28px;
     padding: 0 10px;
     border-radius: 14px;

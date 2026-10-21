@@ -15,6 +15,7 @@
   const OVERSCAN = 6;
 
   let query = $state('');
+  let searchInput = $state();
   let unreadOnly = $state(false);
   let markingRead = $state(false);
   let debounced = $state('');
@@ -179,7 +180,21 @@
 <section class="panel list">
   <label class="search">
     <Icon name="search" size={15} />
-    <input placeholder={$t("Поиск")} bind:value={query} spellcheck="false" />
+    <input placeholder={$t("Поиск")} bind:value={query} bind:this={searchInput} spellcheck="false" />
+    {#if query}
+      <button
+        class="clear"
+        aria-label={$t("Очистить поиск")}
+        title={$t("Очистить поиск")}
+        onclick={(e) => {
+          e.preventDefault();
+          query = '';
+          searchInput.focus();
+        }}
+      >
+        <Icon name="x" size={14} />
+      </button>
+    {/if}
   </label>
   <label class="unread-filter">
     <input type="checkbox" bind:checked={unreadOnly} />
@@ -282,6 +297,20 @@
   }
   .search input::placeholder {
     color: var(--muted);
+  }
+  .search .clear {
+    flex: none;
+    width: 22px;
+    height: 22px;
+    margin-right: -6px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    color: var(--muted);
+  }
+  .search .clear:hover {
+    background: rgba(var(--ink), 0.14);
+    color: inherit;
   }
 
   .unread-filter {

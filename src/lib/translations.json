@@ -331,6 +331,10 @@
     "en": "Search",
     "sr": "Pretraga"
   },
+  "Очистить поиск": {
+    "en": "Clear search",
+    "sr": "Obriši pretragu"
+  },
   "Письма": {
     "en": "Messages",
     "sr": "Poruke"
