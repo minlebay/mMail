@@ -3,7 +3,7 @@
 
 use chrono::Local;
 
-use crate::store::{Auth, Folder, Message};
+use crate::store::{Auth, Folder, Mailbox, Message, Recipients};
 
 pub fn generate(count: usize) -> Vec<Message> {
     let now = Local::now().timestamp();
@@ -26,6 +26,7 @@ pub fn generate(count: usize) -> Vec<Message> {
             has_attachments: false,
             attachments: Vec::new(),
             unavailable: false,
+            recipients: Some(Recipients { to: vec![Mailbox { name: "Ильшат".into(), addr: "me@example.com".into() }], cc: Vec::new() }),
         });
     };
 

@@ -11,9 +11,9 @@ use rusqlite::{params, Connection, OptionalExtension};
 use zeroize::Zeroizing;
 
 use crate::imap::Result;
-use crate::store::{Auth, Folder, Message, Opened};
+use crate::store::{Auth, Folder, Message, Opened, Recipients};
 
-const SCHEMA_VERSION: i32 = 3;
+const SCHEMA_VERSION: i32 = 4;
 
 pub struct Db(Mutex<Connection>);
 
@@ -65,7 +65,7 @@ impl Db {
         let conn = self.0.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT account, folder, uid, unread, starred, from_name, from_addr, subject, timestamp, auth,
-                    has_attachments, html IS NOT NULL, message_id, refs, attachments, unavailable FROM messages",
+                    has_attachments, html IS NOT NULL, message_id, refs, attachments, unavailable, recipients FROM messages",
         )?;
         let messages = stmt
             .query_map([], |r| {
@@ -86,6 +86,8 @@ impl Db {
                     references: serde_json::from_str(&r.get::<_, String>(13)?).unwrap_or_default(),
                     attachments: serde_json::from_str(&r.get::<_, String>(14)?).unwrap_or_default(),
                     unavailable: r.get(15)?,
+                    // JSON; не JSON (строка имён из сборки 0.1.9) — неизвестно, дозапросим.
+                    recipients: r.get::<_, Option<String>>(16)?.and_then(|j| serde_json::from_str(&j).ok()),
                 };
                 Ok((message, r.get(11)?))
             })?
@@ -104,8 +106,8 @@ impl Db {
         {
             let mut stmt = tx.prepare(
                 "INSERT OR IGNORE INTO messages (account, folder, uid, unread, starred, from_name, from_addr, subject,
-                    timestamp, auth, has_attachments, html, message_id, refs, attachments, unavailable)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+                    timestamp, auth, has_attachments, html, message_id, refs, attachments, unavailable, recipients)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             )?;
             for m in messages {
                 let (Some(account), Some(uid)) = (&m.account, m.uid) else { continue };
@@ -126,6 +128,7 @@ impl Db {
                     serde_json::to_string(&m.references)?,
                     serde_json::to_string(&m.attachments)?,
                     m.unavailable,
+                    recipients_to(&m.recipients)?,
                 ])?;
             }
         }
@@ -133,14 +136,14 @@ impl Db {
         Ok(())
     }
 
-    /// Заголовок, который сервер наконец отдал, — вместо заглушки.
+    /// Заголовок, который сервер наконец отдал, — вместо заглушки (или с получателями).
     pub fn replace_headers(&self, m: &Message) -> Result<()> {
         let (Some(account), Some(uid)) = (&m.account, m.uid) else { return Ok(()) };
         self.0.lock().unwrap().execute(
             "UPDATE messages SET from_name = ?4, from_addr = ?5, subject = ?6, timestamp = ?7, has_attachments = ?8,
-                unread = ?9, starred = ?10, unavailable = 0
+                unread = ?9, starred = ?10, unavailable = 0, recipients = ?11
              WHERE account = ?1 AND folder = ?2 AND uid = ?3",
-            params![account, folder_to(m.folder), uid, m.from_name, m.from_addr, m.subject, m.timestamp, m.has_attachments, m.unread, m.starred],
+            params![account, folder_to(m.folder), uid, m.from_name, m.from_addr, m.subject, m.timestamp, m.has_attachments, m.unread, m.starred, recipients_to(&m.recipients)?],
         )?;
         Ok(())
     }
@@ -161,7 +164,8 @@ impl Db {
 
     pub fn set_opened(&self, account: &str, folder: Folder, uid: u32, opened: &Opened) -> Result<()> {
         self.0.lock().unwrap().execute(
-            "UPDATE messages SET html = ?4, auth = ?5, message_id = ?6, refs = ?7, attachments = ?8, has_attachments = ?9
+            "UPDATE messages SET html = ?4, auth = ?5, message_id = ?6, refs = ?7, attachments = ?8, has_attachments = ?9,
+                recipients = ?10
              WHERE account = ?1 AND folder = ?2 AND uid = ?3",
             params![
                 account,
@@ -173,6 +177,7 @@ impl Db {
                 serde_json::to_string(&opened.references)?,
                 serde_json::to_string(&opened.attachments)?,
                 !opened.attachments.is_empty(),
+                serde_json::to_string(&opened.recipients)?,
             ],
         )?;
         Ok(())
@@ -309,6 +314,16 @@ fn migrate(conn: &Connection) -> Result<()> {
              PRAGMA user_version = 3;
              COMMIT;",
         )?;
+        version = 3;
+    }
+    if version == 3 {
+        // v4: получатели (NULL — письмо из кэша до v4; в отправленных дозапрашиваются).
+        conn.execute_batch(
+            "BEGIN;
+             ALTER TABLE messages ADD COLUMN recipients TEXT;
+             PRAGMA user_version = 4;
+             COMMIT;",
+        )?;
     }
     Ok(())
 }
@@ -332,6 +347,7 @@ fn create_schema(conn: &Connection) -> Result<()> {
             refs TEXT NOT NULL,
             attachments TEXT NOT NULL,
             unavailable INTEGER NOT NULL DEFAULT 0,
+            recipients TEXT,
             PRIMARY KEY (account, folder, uid)
         ) WITHOUT ROWID;
         CREATE TABLE folders (
@@ -340,9 +356,13 @@ fn create_schema(conn: &Connection) -> Result<()> {
             uidvalidity INTEGER NOT NULL,
             PRIMARY KEY (account, folder)
         ) WITHOUT ROWID;
-        PRAGMA user_version = 3;",
+        PRAGMA user_version = 4;",
     )?;
     Ok(())
+}
+
+fn recipients_to(r: &Option<Recipients>) -> serde_json::Result<Option<String>> {
+    r.as_ref().map(serde_json::to_string).transpose()
 }
 
 fn folder_to(folder: Folder) -> String {
@@ -372,6 +392,7 @@ fn auth_from(s: &str) -> Auth {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::store::Mailbox;
 
     fn message(uid: u32) -> Message {
         Message {
@@ -391,6 +412,7 @@ mod tests {
             has_attachments: false,
             attachments: Vec::new(),
             unavailable: false,
+            recipients: Some(Recipients { to: vec![Mailbox { name: "Получатель".into(), addr: "to@b.example".into() }], cc: Vec::new() }),
         }
     }
 
@@ -485,9 +507,10 @@ mod tests {
         let (messages, validity) = db.load().unwrap();
         assert_eq!(messages.len(), 1, "кэш не потерян");
         assert_eq!(messages[0].0.folder, Folder::Sent);
+        assert_eq!(messages[0].0.recipients, None, "получатели старого кэша неизвестны — их дозапросят");
         assert_eq!(validity, vec![("me@ya.ru".to_string(), Folder::Trash, 99)]);
         db.insert(&[&Message { folder: Folder::other("Работа"), ..message(8) }]).unwrap();
-        assert!(db.load().unwrap().0.iter().any(|(m, _)| m.folder == Folder::other("Работа")));
+        assert!(db.load().unwrap().0.iter().any(|(m, _)| m.folder == Folder::other("Работа") && m.recipients == message(8).recipients));
         let _ = fs::remove_dir_all(&dir);
     }
 

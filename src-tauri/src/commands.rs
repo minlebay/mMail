@@ -4,7 +4,7 @@ use tauri::{Manager, State};
 use crate::config::ConfigStore;
 use crate::imap::Imap;
 use crate::folders;
-use crate::store::{Auth, Folder, Scope, Store, Summary};
+use crate::store::{Auth, Folder, Mailbox, Recipients, Scope, Store, Summary};
 use crate::{links, remote, sanitize};
 
 /// Папки, которые показываем всегда, даже пока ящик не подключился (и в «Все ящики»).
@@ -49,6 +49,8 @@ pub struct MessageView {
     account: Option<String>,
     from_name: String,
     from_addr: String,
+    to: Vec<Mailbox>,
+    cc: Vec<Mailbox>,
     subject: String,
     date: String,
     auth: Auth,
@@ -168,11 +170,24 @@ pub async fn get_message(
             let html = opened.html.clone();
             m.auth = opened.auth;
             m.attachments = opened.attachments.clone();
+            m.recipients = Some(opened.recipients.clone());
             store.set_opened(id, opened);
             html
         }
         _ => String::new(),
     };
+    // Тело уже было в кэше, а получателей кэш до v4 не знал — только заголовки, одним запросом.
+    if let (None, Some(account), Some(uid)) = (&m.recipients, m.account.as_deref(), m.uid) {
+        match imap.headers(account, m.folder, uid).await {
+            Ok(Some(fresh)) => {
+                m.recipients = fresh.recipients.clone();
+                store.replace_headers(vec![fresh]);
+            }
+            Ok(None) => {}
+            Err(e) => eprintln!("mMail: получатели письма: {e}"),
+        }
+    }
+    let Recipients { to, cc } = m.recipients.take().unwrap_or_default();
     if m.unread {
         // Открыл — значит прочитал, как в любом почтовом клиенте; демо-письма только локально.
         if let (Some(account), Some(uid)) = (m.account.as_deref(), m.uid) {
@@ -211,6 +226,8 @@ pub async fn get_message(
         account: m.account,
         from_name: m.from_name,
         from_addr: m.from_addr,
+        to,
+        cc,
         subject: m.subject,
         date: m.date,
         auth: m.auth,

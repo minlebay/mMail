@@ -6,6 +6,7 @@
   import { covered } from './covers.js';
   import { translateRequest, TARGET_LANGUAGES } from './translate.js';
   import Select from './Select.svelte';
+  import { addrs, full } from './addresses.js';
   import { darkScheme } from './themes.js';
   import { listen } from '@tauri-apps/api/event';
 
@@ -151,7 +152,11 @@
   function menu(event) {
     // Keep native copying for selected text and editable controls.
     if (!msg || window.getSelection()?.toString() || event.target.closest('input, textarea, [contenteditable]')) return;
+    const recipients = [...msg.to, ...msg.cc];
+    // Щелчок по одному адресу в шапке — сначала он сам.
+    const clicked = event.target.closest('[data-addr]')?.dataset.addr;
     showContextMenu(event, [
+      ...(clicked ? [{ label: 'Копировать адрес', run: () => writeClipboard(clicked) }, { separator: true }] : []),
       { label: 'Ответить', run: () => onreply(msg, 'reply') },
       { label: 'Переслать', run: () => onreply(msg, 'forward') },
       { separator: true },
@@ -160,6 +165,7 @@
         : { label: 'Перевести письмо', disabled: !!translation?.loading, run: () => translate() },
       { separator: true },
       { label: 'Копировать адрес отправителя', run: () => writeClipboard(msg.fromAddr) },
+      ...(recipients.length ? [{ label: 'Копировать адреса получателей', run: () => writeClipboard(addrs(recipients)) }] : []),
       { label: 'Копировать тему', run: () => writeClipboard(msg.subject) },
     ]);
   }
@@ -187,7 +193,14 @@
               <span class="verified" title={$t("SPF, DKIM и DMARC пройдены")}><Icon name="shieldCheck" size={14} /></span>
             {/if}
           </div>
-          <div class="addr clip" title={msg.fromAddr}>{msg.fromAddr}</div>
+          <div class="addr clip"><span class="label">{$t('От')}</span><span data-addr={msg.fromAddr} title={msg.fromAddr}>{msg.fromAddr}</span></div>
+          {#each [['Кому', msg.to], ['Копия', msg.cc]] as [label, list]}
+            {#if list.length}
+              <div class="addr clip" title={list.map(full).join(', ')}>
+                <span class="label">{$t(label)}</span>{#each list as a, i}<span data-addr={a.addr}>{full(a)}</span>{#if i < list.length - 1}, {/if}{/each}
+              </div>
+            {/if}
+          {/each}
         </div>
         <div class="date">{msg.date}</div>
       </div>
@@ -298,7 +311,7 @@
 
   .sender {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 12px;
   }
 
@@ -343,6 +356,12 @@
   .date {
     flex: none;
     white-space: nowrap;
+  }
+  .addr .label {
+    display: inline-block;
+    min-width: 3.5em;
+    margin-right: 6px;
+    opacity: 0.7;
   }
 
   .banner {

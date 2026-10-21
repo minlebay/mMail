@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock, RwLock};
 
 use chrono::{Local, TimeZone};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::attachments::AttachmentMeta;
 use crate::db::Db;
@@ -76,6 +76,18 @@ pub enum Auth {
     Unknown,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Mailbox {
+    pub name: String,
+    pub addr: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Recipients {
+    pub to: Vec<Mailbox>,
+    pub cc: Vec<Mailbox>,
+}
+
 pub struct Message {
     /// Адрес ящика; `None` у демо-писем.
     pub account: Option<String>,
@@ -86,6 +98,9 @@ pub struct Message {
     pub unread: bool,
     pub from_name: String,
     pub from_addr: String,
+    /// Кому и копия. `None` — письмо попало в кэш до того, как их стали запрашивать:
+    /// в отправленных дозапрашиваем сразу, остальные — при открытии.
+    pub recipients: Option<Recipients>,
     pub subject: String,
     /// Unix-время, секунды.
     pub timestamp: i64,
@@ -120,6 +135,7 @@ pub struct Summary {
     account: Option<String>,
     from_addr: String,
     from_name: String,
+    to: Vec<Mailbox>,
     subject: String,
     date: String,
     unread: bool,
@@ -138,6 +154,7 @@ pub struct Details {
     pub uid: Option<u32>,
     pub from_name: String,
     pub from_addr: String,
+    pub recipients: Option<Recipients>,
     pub subject: String,
     pub date: String,
     pub auth: Auth,
@@ -152,6 +169,7 @@ pub struct Details {
 /// Письмо, загруженное с сервера целиком.
 pub struct Opened {
     pub html: String,
+    pub recipients: Recipients,
     pub auth: Auth,
     pub message_id: Option<String>,
     pub references: Vec<String>,
@@ -246,7 +264,20 @@ impl Store {
             .collect()
     }
 
-    /// Сервер отдал заголовки писем, которые были заглушками.
+    /// Отправленные и черновики из кэша до v4: получатели неизвестны.
+    pub fn missing_recipients(&self, account: &str, folder: Folder) -> Vec<u32> {
+        if !matches!(folder, Folder::Sent | Folder::Drafts) {
+            return Vec::new();
+        }
+        let entries = self.entries.read().unwrap();
+        entries
+            .iter()
+            .filter(|e| e.msg.recipients.is_none() && !e.msg.unavailable && e.msg.folder == folder && e.msg.account.as_deref() == Some(account))
+            .filter_map(|e| e.msg.uid)
+            .collect()
+    }
+
+    /// Сервер отдал заголовки писем, которые были заглушками (или без получателей).
     pub fn replace_headers(&self, messages: Vec<Message>) {
         let mut entries = self.entries.write().unwrap();
         for m in messages {
@@ -254,9 +285,10 @@ impl Store {
                 continue;
             };
             self.persist(|db| db.replace_headers(&m));
-            e.haystack = format!("{} {} {}", m.from_name, m.from_addr, m.subject).to_lowercase();
+            e.haystack = haystack(&m);
             e.msg.from_name = m.from_name;
             e.msg.from_addr = m.from_addr;
+            e.msg.recipients = m.recipients;
             e.msg.subject = m.subject;
             e.msg.timestamp = m.timestamp;
             e.msg.has_attachments = m.has_attachments;
@@ -344,7 +376,7 @@ impl Store {
         entries.retain(|e| !drop(&e.msg));
         entries.extend(messages.into_iter().map(|(msg, body_on_disk)| Entry {
             id: self.next_id.fetch_add(1, Ordering::Relaxed),
-            haystack: format!("{} {} {}", msg.from_name, msg.from_addr, msg.subject).to_lowercase(),
+            haystack: haystack(&msg),
             msg,
             body_on_disk,
         }));
@@ -366,6 +398,7 @@ impl Store {
                     account: e.msg.account.clone(),
                     from_addr: e.msg.from_addr.clone(),
                     from_name: e.msg.from_name.clone(),
+                    to: e.msg.recipients.as_ref().map(|r| r.to.clone()).unwrap_or_default(),
                     subject: e.msg.subject.clone(),
                     date: date_label(e.msg.timestamp),
                     unread: e.msg.unread,
@@ -423,6 +456,7 @@ impl Store {
             uid: e.msg.uid,
             from_name: e.msg.from_name.clone(),
             from_addr: e.msg.from_addr.clone(),
+            recipients: e.msg.recipients.clone(),
             subject: e.msg.subject.clone(),
             date: date_label(e.msg.timestamp),
             auth: e.msg.auth,
@@ -551,6 +585,8 @@ impl Store {
             e.msg.references = opened.references;
             e.msg.has_attachments = !opened.attachments.is_empty();
             e.msg.attachments = opened.attachments;
+            e.msg.recipients = Some(opened.recipients);
+            e.haystack = haystack(&e.msg);
         }
     }
 }
@@ -590,6 +626,12 @@ fn folder_filter(folder: &str) -> Option<Box<dyn Fn(&Message) -> bool>> {
     Some(Box::new(move |m| m.folder == folder))
 }
 
+/// Строка для поиска: отправитель, получатели, тема.
+fn haystack(m: &Message) -> String {
+    let to = m.recipients.iter().flat_map(|r| &r.to).map(|a| format!("{} {}", a.name, a.addr)).collect::<Vec<_>>().join(" ");
+    format!("{} {} {to} {}", m.from_name, m.from_addr, m.subject).to_lowercase()
+}
+
 /// Всегда дата и время в местном часовом поясе: «17.10.2026 13:28».
 pub fn date_label(timestamp: i64) -> String {
     Local.timestamp_opt(timestamp, 0).single().map(|at| at.format("%d.%m.%Y %H:%M").to_string()).unwrap_or_default()
@@ -617,6 +659,7 @@ mod tests {
             has_attachments: false,
             attachments: Vec::new(),
             unavailable: false,
+            recipients: None,
         }
     }
 
@@ -717,7 +760,7 @@ mod tests {
         store.attach_db(Db::open(&dir, &key).unwrap()).unwrap();
         store.check_validity("me@ya.ru", Folder::Inbox, 1);
         store.append(vec![message(1), message(2)]);
-        let opened = || Opened { html: "<p>тело</p>".into(), auth: Auth::Unknown, message_id: None, references: Vec::new(), attachments: Vec::new() };
+        let opened = || Opened { html: "<p>тело</p>".into(), recipients: Recipients::default(), auth: Auth::Unknown, message_id: None, references: Vec::new(), attachments: Vec::new() };
         assert!(store.set_opened_uid("me@ya.ru", Folder::Inbox, 1, opened()) == false);
         {
             let entries = store.entries.read().unwrap();
@@ -776,6 +819,7 @@ mod memory_probe {
                     has_attachments: false,
                     attachments: Vec::new(),
                     unavailable: false,
+                    recipients: None,
                 })
                 .collect();
             db.insert(&messages.iter().collect::<Vec<_>>()).unwrap();

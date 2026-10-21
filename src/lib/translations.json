@@ -843,6 +843,10 @@
     "en": "Copy sender address",
     "sr": "Kopiraj adresu pošiljaoca"
   },
+  "Копировать адреса получателей": {
+    "en": "Copy recipient addresses",
+    "sr": "Kopiraj adrese primalaca"
+  },
   "Копировать тему": {
     "en": "Copy subject",
     "sr": "Kopiraj naslov"

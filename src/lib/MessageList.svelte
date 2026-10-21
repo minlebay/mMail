@@ -6,8 +6,10 @@
   import { showContextMenu } from './contextMenu.js';
   import { listMessages, writeClipboard, setMessageFlags, trashMessage, markFolderRead } from './api.js';
   import { requestTranslation } from './translate.js';
+  import { names, addrs } from './addresses.js';
 
   let { account, folder, version, selectedId, onselect, onreply, onerror } = $props();
+  const outgoing = $derived(folder === 'sent' || folder === 'drafts');
 
   // Виртуальный список: в DOM только видимые строки, данные подгружаются страницами из ядра.
   const ROW = 64;
@@ -153,6 +155,7 @@
       { label: 'Перевести письмо', run: () => { onselect(item.id); requestTranslation(item.id); } },
       { separator: true },
       { label: 'Копировать адрес отправителя', run: () => writeClipboard(item.fromAddr) },
+      ...(item.to.length ? [{ label: 'Копировать адреса получателей', run: () => writeClipboard(addrs(item.to)) }] : []),
       { label: 'Копировать тему', run: () => writeClipboard(item.subject) },
       ...(item.inTrash ? [] : [{ separator: true }, { label: 'Удалить', danger: true, run: () => trashMessage(item.id) }]),
     ]);
@@ -244,7 +247,14 @@
         >
           {#if item}
             <div class="line">
-              <span class="from" class:muted={item.unavailable}>{item.unavailable ? $t('Заголовок недоступен') : item.fromName}</span>
+              {#if outgoing && !item.unavailable}
+                <!-- Отправленные: с какого ящика и кому. -->
+                <span class="from" title={item.to.length ? `${item.fromAddr} → ${addrs(item.to)}` : item.fromAddr}>
+                  <span class="mailbox">{item.fromAddr}</span>{#if item.to.length}<span class="arrow">→</span>{names(item.to)}{/if}
+                </span>
+              {:else}
+                <span class="from" class:muted={item.unavailable}>{item.unavailable ? $t('Заголовок недоступен') : item.fromName}</span>
+              {/if}
               {#if item.starred}<span class="star"><Icon name="star" size={12} /></span>{/if}
               <span class="date">{item.date}</span>
             </div>
@@ -395,6 +405,14 @@
   }
   .unread .from {
     font-weight: 700;
+  }
+  .mailbox {
+    color: var(--muted);
+    font-weight: 400;
+  }
+  .arrow {
+    margin: 0 6px;
+    color: var(--muted);
   }
   .subject {
     color: var(--muted);

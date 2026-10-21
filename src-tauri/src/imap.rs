@@ -25,7 +25,7 @@ use crate::config::ConfigStore;
 use crate::db::Db;
 use crate::fake;
 use crate::folders::{self, ServerFolder};
-use crate::store::{Auth, Folder, Message, Opened, Store};
+use crate::store::{Auth, Folder, Mailbox, Message, Opened, Recipients, Store};
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 type Session = async_imap::Session<TlsStream<TcpStream>>;
@@ -51,7 +51,7 @@ const FLAGS_WINDOW: u32 = 500;
 const PREFETCH_MAX_BYTES: u32 = 1024 * 1024;
 /// Писем за один фоновый FETCH тел.
 const PREFETCH_BATCH: usize = 20;
-const HEADER_QUERY: &str = "(UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE CONTENT-TYPE)])";
+const HEADER_QUERY: &str = "(UID FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM TO CC SUBJECT DATE CONTENT-TYPE)])";
 
 async fn connect(account: &Account, password: &str) -> Result<Session> {
     let mut roots = RootCertStore::empty();
@@ -191,6 +191,7 @@ fn placeholder(fetch: &Fetch, account: &str, folder: Folder) -> Option<Message> 
         has_attachments: false,
         attachments: Vec::new(),
         unavailable: true,
+        recipients: None,
     })
 }
 
@@ -214,6 +215,7 @@ fn to_message(fetch: &Fetch, account: &str, folder: Folder) -> Option<Message> {
         unread: !flags.contains(&Flag::Seen),
         from_name,
         from_addr,
+        recipients: Some(recipients(&parsed)),
         subject: parsed.subject().unwrap_or("(без темы)").to_string(),
         timestamp,
         // Проверка отправителя — по полным заголовкам, когда письмо открывают.
@@ -228,6 +230,20 @@ fn to_message(fetch: &Fetch, account: &str, folder: Folder) -> Option<Message> {
         attachments: Vec::new(),
         unavailable: false,
     })
+}
+
+/// Кому и копия; `undisclosed-recipients:;` — пустая группа, список останется пустым.
+fn recipients(parsed: &mail_parser::Message) -> Recipients {
+    let list = |a: Option<&mail_parser::Address>| -> Vec<Mailbox> {
+        a.into_iter()
+            .flat_map(|a| a.iter())
+            .filter_map(|a| {
+                let addr = a.address()?.to_string();
+                Some(Mailbox { name: a.name().map(str::to_string).unwrap_or_default(), addr })
+            })
+            .collect()
+    };
+    Recipients { to: list(parsed.to()), cc: list(parsed.cc()) }
 }
 
 /// Вердикт по самому верхнему Authentication-Results от серверов провайдера.
@@ -566,6 +582,7 @@ async fn run_sync(app: &AppHandle, account: Account) -> Result<()> {
     let mut idle_ok = false;
     // Заглушки (сервер не отдал заголовок) пробуем снова — не чаще раза в полчаса.
     let mut last_retry = std::time::Instant::now();
+    let mut recipients_filled = false;
 
     // Один цикл с приоритетами: история папок → тела писем для офлайна → ожидание новостей.
     // Раз в минуту — LIST (появившиеся и удалённые папки) и флаги. Любая ошибка — переподключение,
@@ -619,6 +636,10 @@ async fn run_sync(app: &AppHandle, account: Account) -> Result<()> {
             if last_retry.elapsed() >= RETRY_UNAVAILABLE && cursors.iter().all(|c| c.missing.is_empty()) {
                 last_retry = std::time::Instant::now();
                 retry_unavailable(app, &mut session, &email, &cursors).await?;
+            }
+            if !recipients_filled && cursors.iter().all(|c| c.missing.is_empty()) {
+                fill_recipients(app, &mut session, &email, &cursors).await?;
+                recipients_filled = true;
             }
             if let Some(cursor) = cursors.iter_mut().find(|c| !c.missing.is_empty()) {
                 let messages = fetch_batch(&mut session, &email, cursor).await?;
@@ -680,6 +701,28 @@ async fn retry_unavailable(app: &AppHandle, session: &mut Session, email: &str, 
             store.replace_headers(found);
             let _ = app.emit("mailbox-changed", ());
         }
+    }
+    Ok(())
+}
+
+/// Отправленные и черновики из кэша до v4 — без получателей: дозапрашиваем заголовки.
+async fn fill_recipients(app: &AppHandle, session: &mut Session, email: &str, cursors: &[Cursor]) -> Result<()> {
+    let store = app.state::<Store>();
+    for cursor in cursors {
+        let uids = store.missing_recipients(email, cursor.folder);
+        if uids.is_empty() {
+            continue;
+        }
+        session.examine(&cursor.name).await?;
+        for chunk in uids.chunks(BATCH as usize) {
+            let fetches: Vec<Fetch> = session.uid_fetch(uid_set(chunk), HEADER_QUERY).await?.try_collect().await?;
+            let found: Vec<Message> = fetches.iter().filter_map(|f| to_message(f, email, cursor.folder)).collect();
+            if !found.is_empty() {
+                store.replace_headers(found);
+                let _ = app.emit("mailbox-changed", ());
+            }
+        }
+        eprintln!("mMail: {email}: {}: получатели — {} писем", cursor.display, uids.len());
     }
     Ok(())
 }
@@ -992,6 +1035,30 @@ impl Imap {
         unreachable!()
     }
 
+    /// Только заголовки списка (для писем из старого кэша, у которых тело уже скачано).
+    pub async fn headers(&self, email: &str, folder: Folder, uid: u32) -> Result<Option<Message>> {
+        let conn = self.connection(email).ok_or("ящик ещё подключается")?;
+        let name = &conn.server_name(folder).ok_or("папка не найдена на сервере")?;
+        let mut reader = conn.reader.lock().await;
+        if reader.is_none() {
+            let password = accounts::password(email).await?;
+            *reader = Some(connect(&conn.account, &password).await?);
+        }
+        let session = reader.as_mut().unwrap();
+        let fetched: Result<Vec<Fetch>> = async {
+            session.examine(name).await?;
+            Ok(session.uid_fetch(uid.to_string(), HEADER_QUERY).await?.try_collect().await?)
+        }
+        .await;
+        match fetched {
+            Ok(fetches) => Ok(fetches.first().and_then(|f| to_message(f, email, folder))),
+            Err(e) => {
+                *reader = None;
+                Err(e)
+            }
+        }
+    }
+
     /// Тело письма, проверка отправителя, идентификаторы цепочки и список вложений.
     pub async fn open(&self, email: &str, folder: Folder, uid: u32) -> Result<Opened> {
         let raw = self.raw(email, folder, uid).await?;
@@ -1017,6 +1084,7 @@ fn parse_opened(raw: &[u8], provider: &accounts::Provider) -> Result<Opened> {
     };
     Ok(Opened {
         html,
+        recipients: recipients(&parsed),
         auth,
         message_id: parsed.message_id().map(str::to_string),
         references,
@@ -1118,6 +1186,18 @@ async fn fetch_raw(session: &mut Session, folder: &str, uid: u32) -> Result<Vec<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_recipients() {
+        let raw = b"To: =?UTF-8?B?0JjQu9GM0YjQsNGC?= <a@x.example>, b@y.example\r\nCc: undisclosed-recipients:;\r\n\r\n";
+        let parsed = MessageParser::default().parse_headers(&raw[..]).unwrap();
+        let r = recipients(&parsed);
+        assert_eq!(
+            r.to,
+            vec![Mailbox { name: "Ильшат".into(), addr: "a@x.example".into() }, Mailbox { name: String::new(), addr: "b@y.example".into() }]
+        );
+        assert!(r.cc.is_empty());
+    }
 
     fn verdict(headers: &[&str]) -> Auth {
         auth_verdict(headers.iter().map(|h| h.to_string()), crate::accounts::YANDEX.trusted_authserv)
