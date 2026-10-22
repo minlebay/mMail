@@ -1234,5 +1234,17 @@
   "Вид календаря при запуске": {
     "en": "Calendar view at startup",
     "sr": "Prikaz kalendara pri pokretanju"
+  },
+  "{minutes} мин": {
+    "en": "{minutes} min",
+    "sr": "{minutes} min"
+  },
+  "{hours} ч": {
+    "en": "{hours} h",
+    "sr": "{hours} h"
+  },
+  "{hours} ч {minutes} мин": {
+    "en": "{hours} h {minutes} min",
+    "sr": "{hours} h {minutes} min"
   }
 }

@@ -4,8 +4,9 @@
   import { t } from '../i18n.js';
   import Icon from '../Icon.svelte';
   import Select from '../Select.svelte';
+  import TimeField from './TimeField.svelte';
   import { fmt } from './locale.js';
-  import { eventBounds, toDateKey, toRfc3339, addDays, fromDateKey } from './dates.js';
+  import { eventBounds, toDateKey, toRfc3339, addDays, fromDateKey, timeOf } from './dates.js';
 
   // event — существующее событие (просмотр) или null (новое: preset { start: Date, allDay }).
   let { event = null, preset = null, calendars, onclose, onsave, ondelete } = $props();
@@ -20,8 +21,6 @@
   let confirmDelete = $state(false);
 
   // Поля формы: даты и время по отдельности (так их показывают поля ввода).
-  const pad = (n) => String(n).padStart(2, '0');
-  const timeOf = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
   function initial() {
     if (event) {
       const [s, e] = eventBounds(event);
@@ -54,6 +53,23 @@
     };
   }
   let form = $state(untrack(initial));
+
+  // Начало сдвинули — конец едет следом, длительность сохраняется (как в Google Календаре).
+  const startOf = () => new Date(`${form.startDate}T${form.startTime}`);
+  let lastStart = untrack(startOf);
+  function startChanged() {
+    const start = startOf();
+    if (Number.isNaN(start.getTime())) return;
+    if (!form.allDay) {
+      const length = new Date(`${form.endDate}T${form.endTime}`) - lastStart;
+      const end = new Date(start.getTime() + (length > 0 ? length : 60 * 60 * 1000));
+      form.endDate = toDateKey(end);
+      form.endTime = timeOf(end);
+    } else if (form.endDate < form.startDate) {
+      form.endDate = form.startDate;
+    }
+    lastStart = start;
+  }
 
   function draft() {
     if (form.allDay) {
@@ -148,13 +164,13 @@
           <label class="check"><input type="checkbox" bind:checked={form.allDay} />{$t('Весь день')}</label>
           <span>{$t('Начало')}</span>
           <div class="when">
-            <input type="date" bind:value={form.startDate} required />
-            {#if !form.allDay}<input type="time" bind:value={form.startTime} required />{/if}
+            <input type="date" bind:value={form.startDate} onchange={startChanged} required />
+            {#if !form.allDay}<TimeField bind:value={form.startTime} label={$t('Начало')} onchange={startChanged} />{/if}
           </div>
           <span>{$t('Конец')}</span>
           <div class="when">
             <input type="date" bind:value={form.endDate} required />
-            {#if !form.allDay}<input type="time" bind:value={form.endTime} required />{/if}
+            {#if !form.allDay}<TimeField bind:value={form.endTime} label={$t('Конец')} from={form.endDate === form.startDate ? form.startTime : null} />{/if}
           </div>
           <span>{$t('Место')}</span>
           <input bind:value={form.location} maxlength="1000" />
@@ -238,7 +254,8 @@
     flex-direction: column;
     gap: 12px;
   }
-  input,
+  /* Чекбокс оформлен глобально (app.css) — общие правила полей его не трогают. */
+  input:not([type='checkbox']),
   textarea {
     height: 34px;
     padding: 0 10px;
@@ -253,12 +270,12 @@
     padding: 8px 10px;
     resize: vertical;
   }
-  input:focus,
+  input:not([type='checkbox']):focus,
   textarea:focus {
     outline: none;
     border-color: var(--accent);
   }
-  .titleinput {
+  input.titleinput {
     height: 40px;
     font-size: 16px;
   }

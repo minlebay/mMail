@@ -113,3 +113,20 @@ export function titleLines(cellHeight, count, more) {
   const free = cellHeight - 8 - 24 - 2 * count - 4 * count - (more ? 17 : 0);
   return Math.max(1, Math.floor(free / count / 16));
 }
+
+/** Время, набранное как угодно («9», «930», «9.30», «14:5»), → «HH:MM» в 24-часовом формате или null. */
+export function parseTime(text) {
+  const m = String(text).trim().match(/^(\d{1,2})(\d{2})$|^(\d{1,2})(?:[:.,\s](\d{1,2}))?$/);
+  if (!m) return null;
+  const h = Number(m[1] ?? m[3]);
+  const min = Number(m[2] ?? m[4] ?? 0);
+  if (h > 23 || min > 59) return null;
+  return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
+}
+
+/** «HH:MM» — местное время Date. */
+export const timeOf = (d) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+
+/** «HH:MM» ↔ минуты от полуночи. */
+export const timeToMinutes = (time) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3, 5));
+export const minutesToTime = (minutes) => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;

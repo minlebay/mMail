@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { monthGrid, startOfWeek, visibleRange, toRfc3339, fromDateKey, toDateKey, onDay, layoutDay, titleLines } from '../src/lib/calendar/dates.js';
+import { monthGrid, startOfWeek, visibleRange, toRfc3339, fromDateKey, toDateKey, onDay, layoutDay, titleLines, parseTime } from '../src/lib/calendar/dates.js';
 
 test('weeks start on Monday and the month grid covers the whole month', () => {
   const oct = new Date(2026, 9, 17); // суббота
@@ -36,4 +36,16 @@ test('full event titles share the day cell', () => {
   assert.ok(titleLines(190, 3, true) <= titleLines(190, 3, false), '«ещё N» забирает место');
   assert.equal(titleLines(60, 3, true), 1, 'в тесной клетке — хотя бы одна строка');
   assert.equal(titleLines(0, 0, false), 1);
+});
+
+test('typed times are read as 24-hour HH:MM', () => {
+  assert.equal(parseTime('9'), '09:00');
+  assert.equal(parseTime('930'), '09:30');
+  assert.equal(parseTime('9.30'), '09:30');
+  assert.equal(parseTime('14:5'), '14:05');
+  assert.equal(parseTime('1430'), '14:30');
+  assert.equal(parseTime(' 23:59 '), '23:59');
+  assert.equal(parseTime('24'), null);
+  assert.equal(parseTime('12:60'), null);
+  assert.equal(parseTime('2 PM'), null);
 });
