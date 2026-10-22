@@ -621,6 +621,39 @@ pub async fn trash_message(app: tauri::AppHandle, store: State<'_, Store>, imap:
     Ok(())
 }
 
+/// Перетаскивание на папку: переносит письма в папку `folder` (ключ `inbox`, `junk`, `f:…`)
+/// их же ящика. `account` — ящик узла дерева, на который бросили (`None` — «Все ящики»).
+#[tauri::command]
+pub async fn move_messages(
+    app: tauri::AppHandle,
+    store: State<'_, Store>,
+    imap: State<'_, Imap>,
+    ids: Vec<u32>,
+    account: Option<String>,
+    folder: String,
+) -> Result<(), String> {
+    let target = Folder::from_key(&folder).ok_or("неизвестная папка")?;
+    let mut failure = None;
+    for id in ids {
+        let Some(message) = store.details(id) else { continue };
+        if message.folder == target { continue; }
+        if account.as_deref().is_some_and(|a| a != message.account.as_deref().unwrap_or("")) {
+            failure = Some("Письма переносятся только между папками одного ящика".to_string());
+            continue;
+        }
+        if let (Some(email), Some(uid)) = (message.account.as_deref(), message.uid) {
+            if let Err(e) = imap.move_message(email, message.folder, uid, target).await {
+                failure = Some(e.to_string());
+                continue;
+            }
+        }
+        store.moved(id, target);
+        let _ = tauri::Emitter::emit(&app, "message-trashed", id);
+    }
+    let _ = tauri::Emitter::emit(&app, "mailbox-changed", ());
+    failure.map_or(Ok(()), Err)
+}
+
 /// «Отметить все прочитанными» для папки (в том числе «Важные» и «Все ящики»):
 /// на сервер — по папкам, локально — только то, что сервер подтвердил.
 #[tauri::command]

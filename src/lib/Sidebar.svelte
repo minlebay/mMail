@@ -3,6 +3,7 @@
   import { showContextMenu } from './contextMenu.js';
   import { writeClipboard, openSettings, markFolderRead } from './api.js';
   import Icon from './Icon.svelte';
+  import { dropTarget } from './dragMessages.js';
   import ModeSwitch from './ModeSwitch.svelte';
 
   // groups: [{ account: null | '' | email, title, folders: [{ id, name, unread }] }]
@@ -76,7 +77,13 @@
             {#each group.folders as f (f.id)}
               {@const isActive = active.account === group.account && active.folder === f.id}
               <li>
-                <button class="folder" class:active={isActive} onclick={() => onpick(group.account, f.id)} oncontextmenu={(event) => menu(event, group, f)}>
+                <button
+                  class="folder"
+                  class:active={isActive}
+                  class:drop={$dropTarget && $dropTarget.account === group.account && $dropTarget.folder === f.id}
+                  data-drop-folder={f.id}
+                  data-drop-account={group.account ?? '*'}
+                  onclick={() => onpick(group.account, f.id)} oncontextmenu={(event) => menu(event, group, f)}>
                   <span class="indent" style:width="{depthOf(f) * 14}px"></span>
                   <Icon name={ICONS[f.id] ?? 'folder'} />
                   <span class="name" title={f.custom ? f.name : undefined}>{labelOf(f)}</span>
@@ -98,6 +105,7 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
+    user-select: none;
   }
 
   .compose {
@@ -185,6 +193,10 @@
   }
   .folder.active {
     background: var(--accent-soft);
+  }
+  .folder.drop {
+    background: var(--accent-soft);
+    box-shadow: inset 0 0 0 1.5px var(--accent);
   }
 
   .name {

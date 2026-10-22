@@ -95,6 +95,7 @@ fn main() {
             commands::mark_folder_read,
             commands::set_message_flags,
             commands::trash_message,
+            commands::move_messages,
             translation::translate_message,
             translation::translate_text,
             links::open_link,

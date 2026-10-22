@@ -79,6 +79,7 @@ export const writeClipboard = (text) => invoke('write_clipboard', { text });
 export const markMessageRead = (id) => invoke('mark_message_read', { id });
 export const markFolderRead = (account, folder, query = '') => invoke('mark_folder_read', { account, folder, query });
 export const trashMessage = (id) => invoke('trash_message', { id });
+export const moveMessages = (ids, account, folder) => invoke('move_messages', { ids, account, folder });
 // flags: { unread?: boolean, starred?: boolean } — «важное» это флаг, письмо остаётся в своей папке.
 export const setMessageFlags = (id, flags) => invoke('set_message_flags', { id, unread: flags.unread ?? null, starred: flags.starred ?? null });
 // Перевод (Google, по явному действию): { text, srcdoc?, sourceLanguage }. srcdoc — для песочницы письма.

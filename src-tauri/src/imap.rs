@@ -1112,10 +1112,18 @@ impl Imap {
     /// Atomic move of one UID; never expunge unrelated messages.
     pub async fn move_to_trash(&self, email: &str, folder: Folder, uid: u32) -> Result<()> {
         if folder == Folder::Trash { return Ok(()); }
+        self.move_message(email, folder, uid, Folder::Trash).await
+    }
+
+    /// Переносит одно письмо в другую папку того же ящика (UID MOVE, RFC 6851).
+    pub async fn move_message(&self, email: &str, folder: Folder, uid: u32, target: Folder) -> Result<()> {
         let conn = self.connection(email).ok_or("ящик ещё подключается")?;
         let source = &conn.server_name(folder).ok_or("папка не найдена на сервере")?;
-        let target = &conn.server_name(Folder::Trash).ok_or("Корзина не найдена на сервере")?;
-        if source == target { return Err("Письмо уже в корзине".into()); }
+        let target_name = match target {
+            Folder::Trash => conn.server_name(target).ok_or("Корзина не найдена на сервере")?,
+            _ => conn.server_name(target).ok_or("папка не найдена на сервере")?,
+        };
+        if *source == target_name { return Err("Письмо уже в этой папке".into()); }
         let mut reader = conn.reader.lock().await;
         if reader.is_none() {
             let password = accounts::password(email).await?;
@@ -1127,7 +1135,7 @@ impl Imap {
                 return Err("Сервер не поддерживает безопасный перенос письма".into());
             }
             session.select(source).await?;
-            session.uid_mv(uid.to_string(), target).await?;
+            session.uid_mv(uid.to_string(), &target_name).await?;
             Ok(())
         }.await;
         if result.is_err() { *reader = None; }

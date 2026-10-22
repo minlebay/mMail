@@ -4,7 +4,8 @@
   import { SvelteMap } from 'svelte/reactivity';
   import Icon from './Icon.svelte';
   import { showContextMenu } from './contextMenu.js';
-  import { listMessages, writeClipboard, setMessageFlags, trashMessage, markFolderRead } from './api.js';
+  import { listMessages, writeClipboard, setMessageFlags, trashMessage, markFolderRead, moveMessages } from './api.js';
+  import { startDrag } from './dragMessages.js';
   import { requestTranslation } from './translate.js';
   import { names, addrs } from './addresses.js';
 
@@ -157,8 +158,28 @@
       { label: 'Копировать адрес отправителя', run: () => writeClipboard(item.fromAddr) },
       ...(item.to.length ? [{ label: 'Копировать адреса получателей', run: () => writeClipboard(addrs(item.to)) }] : []),
       { label: 'Копировать тему', run: () => writeClipboard(item.subject) },
-      ...(item.inTrash ? [] : [{ separator: true }, { label: 'Удалить', danger: true, run: () => trashMessage(item.id) }]),
+      { separator: true },
+      ...(folder === 'junk' || folder === 'trash' ? [{ label: 'Переместить во «Входящие»', run: () => moveTo(item, item.account ?? '', 'inbox') }] : []),
+      ...(folder === 'inbox' ? [{ label: 'Это спам', run: () => moveTo(item, item.account ?? '', 'junk') }] : []),
+      ...(item.inTrash ? [] : [{ label: 'Удалить', danger: true, run: () => trashMessage(item.id) }]),
     ]);
+  }
+
+  function moveTo(item, targetAccount, targetFolder) {
+    moveMessages([item.id], targetAccount, targetFolder).catch((err) => onerror?.(String(err)));
+  }
+
+  // Бросить можно на настоящую папку того же ящика (или «Все ящики» — тогда папка ящика письма).
+  function drag(event, item) {
+    if (!item || item.unavailable) return;
+    startDrag(event, {
+      label: item.subject || item.fromName || item.fromAddr,
+      canDrop: (targetAccount, targetFolder) =>
+        targetFolder !== 'starred' &&
+        targetFolder !== folder &&
+        (targetAccount == null || targetAccount === (item.account ?? '')),
+      ondrop: (targetAccount, targetFolder) => moveTo(item, targetAccount, targetFolder),
+    });
   }
 
   function onkey(e) {
@@ -243,6 +264,7 @@
           class:unread={item?.unread}
           style:transform="translateY({i * ROW}px)"
           onclick={() => item && pick(i, item)}
+          onpointerdown={(event) => drag(event, item)}
           oncontextmenu={(event) => menu(event, item)}
         >
           {#if item}
@@ -379,6 +401,7 @@
     justify-content: center;
     gap: 2px;
     cursor: default;
+    user-select: none;
   }
   .row:hover {
     background: rgba(var(--ink), 0.05);

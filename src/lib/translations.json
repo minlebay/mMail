@@ -1246,5 +1246,25 @@
   "{hours} ч {minutes} мин": {
     "en": "{hours} h {minutes} min",
     "sr": "{hours} h {minutes} min"
+  },
+  "Переместить во «Входящие»": {
+    "en": "Move to Inbox",
+    "sr": "Premesti u „Primljene”"
+  },
+  "Это спам": {
+    "en": "Mark as spam",
+    "sr": "Ovo je spam"
+  },
+  "Письма переносятся только между папками одного ящика": {
+    "en": "Messages can only be moved between folders of the same account",
+    "sr": "Poruke se mogu premeštati samo između fascikli istog naloga"
+  },
+  "Письмо уже в этой папке": {
+    "en": "The message is already in this folder",
+    "sr": "Poruka je već u ovoj fascikli"
+  },
+  "неизвестная папка": {
+    "en": "unknown folder",
+    "sr": "nepoznata fascikla"
   }
 }

@@ -123,3 +123,26 @@ input[type='checkbox']:disabled {
   overflow-y: scroll;
   margin-right: calc(-1 * var(--scrollbar-size));
 }
+
+/* Письмо, которое тащат на папку (src/lib/dragMessages.js). */
+.drag-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 1000;
+  max-width: 280px;
+  padding: 7px 14px;
+  border-radius: 9px;
+  background: var(--surface);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+body.dragging,
+body.dragging * {
+  cursor: grabbing !important;
+  user-select: none;
+}

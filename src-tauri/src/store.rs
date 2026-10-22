@@ -337,10 +337,16 @@ impl Store {
 
     /// Apply only after the server confirmed MOVE. Demo messages move locally.
     pub fn trashed(&self, id: u32) {
+        self.moved(id, Folder::Trash);
+    }
+
+    /// Письмо перенесено в `target`: у настоящих ящиков оно уходит из кэша до синхронизации
+    /// целевой папки (там у него будет новый UID), демо переносится на месте.
+    pub fn moved(&self, id: u32, target: Folder) {
         let mut entries = self.entries.write().unwrap();
         let Some(index) = entries.iter().position(|e| e.id == id) else { return };
         if entries[index].msg.account.is_none() {
-            entries[index].msg.folder = Folder::Trash;
+            entries[index].msg.folder = target;
             return;
         }
         let entry = entries.remove(index);
