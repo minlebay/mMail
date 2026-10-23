@@ -11,6 +11,7 @@ mod db;
 mod fake;
 mod google;
 mod folders;
+mod headless;
 mod imap;
 mod i18n;
 mod links;
@@ -36,6 +37,10 @@ const CORNER_RADIUS: i32 = 12;
 
 fn main() {
     memory::limit_arenas();
+    // Команды чтения обслуживаются до Tauri: без окна, без D-Bus и без второго экземпляра.
+    if let Some(code) = headless::run(&std::env::args().collect::<Vec<_>>()) {
+        std::process::exit(code);
+    }
     tauri::Builder::default()
         .manage(store::Store::default())
         .manage(imap::Imap::default())

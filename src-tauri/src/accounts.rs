@@ -133,6 +133,23 @@ pub async fn db_key() -> Result<Zeroizing<[u8; 32]>> {
     Ok(key)
 }
 
+/// Уже созданный ключ кэша — только чтение, нового не создаём: командам чтения из
+/// командной строки незачем заводить ключ (и тем более новый) для чужого кэша.
+pub async fn existing_db_key() -> Result<Option<Zeroizing<[u8; 32]>>> {
+    let attributes = HashMap::from([("service", SERVICE), ("kind", "db-key")]);
+    let ss = connect().await?;
+    let found = ss.search_items(attributes).await?;
+    let Some(item) = found.unlocked.into_iter().chain(found.locked).next() else { return Ok(None) };
+    item.unlock().await?;
+    let secret = Zeroizing::new(item.get_secret().await?);
+    if secret.len() != 32 {
+        return Err("ключ хранилища в KWallet повреждён".into());
+    }
+    let mut key = Zeroizing::new([0u8; 32]);
+    key.copy_from_slice(&secret);
+    Ok(Some(key))
+}
+
 /// Секреты Google (OAuth): отдельная метка `service`, чтобы они не попадали в список почтовых ящиков.
 const GOOGLE_SERVICE: &str = "mmail-google";
 

@@ -78,6 +78,27 @@ mmail mailto:a@b.c?subject=Тема
 `message` (файл UTF-8), `attachment` (через запятую). Относительные пути считаются от текущей
 папки. Ссылки `mailto:` не могут прикладывать файлы.
 
+### Чтение почты без окна
+
+Эти команды графику не запускают: кэш писем открывается отдельным соединением только на
+чтение (файл не создаётся, схема не мигрирует, при неверном ключе кэш не пересоздаётся,
+ключ берётся готовый из KWallet).
+
+```sh
+mmail accounts
+mmail folders [--account a@b.c]
+mmail list [--account a@b.c] [--folder inbox] [--unread] [--limit 20] [--offset 0]
+mmail search [--account a@b.c] [--folder inbox] [--limit 20] "запрос"
+mmail read 'a@b.c:inbox:20350'          # ID — из list/search
+mmail read 'a@b.c:inbox:20350' --json --html
+```
+
+`--folder` — `inbox`, `sent`, `drafts`, `trash`, `junk`, `archive` или имя папки на сервере.
+`--json` — машиночитаемый вывод (поля в camelCase). Тело письма есть, только если оно уже
+скачано в кэш (письмо открывали в mMail), иначе `body: null`; `--html` отдаёт исходный HTML.
+Список и поиск показывают то, что успел синхронизировать работающий mMail; поиск идёт по
+отправителю, получателям и теме. `mmail --help` печатает эту справку.
+
 ## Разработка
 
 Нужны Rust (stable), Node.js 20+ и пакеты:
