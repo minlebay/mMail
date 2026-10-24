@@ -9,7 +9,7 @@ use lettre::transport::smtp::authentication::Credentials;
 use lettre::transport::smtp::extension::ClientId;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use serde::Deserialize;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, State, WebviewWindow};
 
 use crate::accounts::{self, Account};
 use crate::compose::{ComposeState, MAX_ATTACHMENTS_BYTES};
@@ -130,12 +130,21 @@ fn build(account: &Account, draft: &Draft, files: Vec<File>) -> Result<Message, 
 }
 
 /// Читает выбранные файлы (пути знает только ядро) с проверкой общего размера.
-async fn load_files(compose: &ComposeState, ids: &[u64]) -> Result<Vec<File>, String> {
+/// `window` — метка окна письма: вложение, выбранное в другом черновике, не читается.
+async fn load_files(
+    compose: &ComposeState,
+    window: &str,
+    ids: &[u64],
+) -> Result<Vec<File>, String> {
     let mut files = Vec::new();
     let mut total = 0u64;
     for &id in ids {
-        let path = compose.file(id).ok_or("вложение не найдено — прикрепите файл заново")?;
-        let bytes = tokio::fs::read(&path).await.map_err(|e| format!("{}: {e}", path.display()))?;
+        let path = compose
+            .file(window, id)
+            .ok_or("вложение не найдено — прикрепите файл заново")?;
+        let bytes = tokio::fs::read(&path)
+            .await
+            .map_err(|e| format!("{}: {e}", path.display()))?;
         total += bytes.len() as u64;
         if total > MAX_ATTACHMENTS_BYTES {
             return Err("вложения больше 25 МБ".into());
@@ -152,12 +161,13 @@ async fn load_files(compose: &ComposeState, ids: &[u64]) -> Result<Vec<File>, St
 #[tauri::command]
 pub async fn send_message(
     app: AppHandle,
+    window: WebviewWindow,
     imap: State<'_, Imap>,
     compose: State<'_, ComposeState>,
     draft: Draft,
 ) -> Result<(), String> {
     let account = Account::new(&draft.from).map_err(|e| e.to_string())?;
-    let files = load_files(&compose, &draft.attachments).await?;
+    let files = load_files(&compose, window.label(), &draft.attachments).await?;
     let message = build(&account, &draft, files)?;
     let password = accounts::password(&account.email).await.map_err(|e| e.to_string())?;
 

@@ -58,6 +58,14 @@ test('quoted mail in the compose editor cannot cover the window', () => {
   assert.match(style[1], /contain:\s*paint/, 'position:fixed из цитаты должен оставаться внутри редактора');
 });
 
+test('pasted and dropped HTML in compose goes through the core sanitizer', () => {
+  const compose = read('src/ComposeWindow.svelte');
+  assert.match(compose, /onpaste=\{onPaste\}/, 'paste должен перехватываться');
+  assert.match(compose, /ondrop=\{onDrop\}/, 'drop должен перехватываться');
+  assert.match(compose, /insertSanitized\(html,/, 'HTML должен идти через общий sanitizer');
+  assert.match(compose, /cleanComposeHtml\(html\)/, 'ядро чистит HTML тем же фильтром, что и письма');
+});
+
 test('no secrets in tracked files', () => {
   const patterns = [
     [/AIza[0-9A-Za-z_-]{35}/, 'ключ Google API'],

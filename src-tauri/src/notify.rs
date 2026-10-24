@@ -10,6 +10,7 @@ use notify_rust::{Hint, Notification};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::config::ConfigStore;
+use crate::text::{console_safe, display_safe};
 
 /// Тело уведомления KDE понимает разметку (ссылки, картинки) — а тема письма и название события
 /// это чужой текст. Экранируем всё, чтобы письмом нельзя было подсунуть ссылку или картинку-трекер.
@@ -20,6 +21,7 @@ fn escape(text: &str) -> String {
 /// Заголовок — простой текст по спецификации; убираем переводы строк и ограничиваем длину.
 fn plain(text: &str, limit: usize) -> String {
     let one_line: String = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let one_line = display_safe(&one_line).into_owned();
     if one_line.chars().count() <= limit {
         one_line
     } else {
@@ -63,7 +65,7 @@ fn show(
 
 /// Ошибка в аргументах `mmail -compose …`: вызывающему по D-Bus ответить нечем, показываем человеку.
 pub fn cli_error(app: &AppHandle, error: &str) {
-    eprintln!("mMail: командная строка: {error}");
+    eprintln!("mMail: командная строка: {}", console_safe(error));
     show(app, crate::i18n::text(app, "Письмо не открыто"), escape(&plain(error, 300)), &[], |_, _| {});
 }
 
@@ -215,5 +217,10 @@ mod tests {
         assert!(!body.contains('<') && !body.contains('>'), "{body}");
         assert_eq!(plain("  a\n\n b  ", 80), "a b");
         assert_eq!(plain("абвгд", 3), "абв…");
+        let dirty = plain("тема\u{1b}]0;x\u{7}\u{202e}", 80);
+        assert!(
+            !dirty.contains('\u{1b}') && !dirty.contains('\u{7}') && !dirty.contains('\u{202e}'),
+            "{dirty:?}"
+        );
     }
 }

@@ -10,6 +10,7 @@ use tauri::{AppHandle, State};
 
 use crate::config::ConfigStore;
 use crate::google;
+use crate::text::display_safe;
 
 const API: &str = "https://www.googleapis.com/calendar/v3";
 
@@ -195,12 +196,22 @@ fn to_event(e: &Value, calendar: &str) -> Option<Event> {
     Some(Event {
         id: e.get("id")?.as_str()?.to_string(),
         calendar_id: calendar.to_string(),
-        title: e.get("summary").and_then(Value::as_str).unwrap_or("(без названия)").to_string(),
+        title: display_safe(
+            e.get("summary")
+                .and_then(Value::as_str)
+                .unwrap_or("(без названия)"),
+        )
+        .into_owned(),
         start,
         end,
         all_day,
-        location: e.get("location").and_then(Value::as_str).unwrap_or_default().to_string(),
-        description: html_to_text(description),
+        location: display_safe(
+            e.get("location")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        )
+        .into_owned(),
+        description: display_safe(&html_to_text(description)).into_owned(),
         recurring: e.get("recurringEventId").is_some(),
     })
 }

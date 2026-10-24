@@ -4,7 +4,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 
 use base64::Engine;
@@ -17,6 +17,9 @@ use url::Url;
 
 const MAX_IMAGES: usize = 60;
 const MAX_IMAGE_BYTES: u64 = 5 * 1024 * 1024;
+/// Общий бюджет на все внешние картинки одного письма. 60 картинок по 5 МБ — это
+/// сотни мегабайт в памяти и в HTML, поэтому ограничиваем и сумму.
+const MAX_TOTAL_IMAGE_BYTES: usize = 20 * 1024 * 1024;
 const MAX_REDIRECTS: usize = 3;
 const PARALLEL: usize = 6;
 
@@ -25,6 +28,7 @@ const PARALLEL: usize = 6;
 pub async fn inline(html: String) -> String {
     let urls = collect(&html);
     let mut fetched = HashMap::new();
+    let mut total = 0usize;
     for chunk in urls.chunks(PARALLEL) {
         let tasks: Vec<_> = chunk
             .iter()
@@ -33,11 +37,18 @@ pub async fn inline(html: String) -> String {
             .collect();
         for task in tasks {
             if let Ok((Some(data), url)) = task.await {
-                fetched.insert(url, data);
+                if fits_total(total, data.len()) {
+                    total += data.len();
+                    fetched.insert(url, data);
+                }
             }
         }
     }
     rewrite(&html, &fetched)
+}
+
+fn fits_total(total: usize, data_len: usize) -> bool {
+    total.saturating_add(data_len) <= MAX_TOTAL_IMAGE_BYTES
 }
 
 /// Адреса картинок: `<img src>` и `url(…)` в стилях. Трекинг-пиксели 1×1 пропускаем.
@@ -181,11 +192,20 @@ fn fetch_image(url: &str) -> Option<String> {
 /// Тип из ответа чужого сервера попадает внутрь `data:` в атрибуте и в `url(…)` стиля — пускаем
 /// только `image/<подтип>` без скобок, кавычек и пробелов, которыми можно дописать свой CSS.
 fn is_image_mime(mime: &str) -> bool {
-    mime.strip_prefix("image/")
-        .is_some_and(|sub| !sub.is_empty() && sub.len() <= 64 && sub.bytes().all(|b| b.is_ascii_alphanumeric() || b"+-.".contains(&b)))
+    mime.strip_prefix("image/").is_some_and(|sub| {
+        let sub = sub.to_ascii_lowercase();
+        !sub.is_empty()
+            && !sub.starts_with("svg")
+            && sub.len() <= 64
+            && sub
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"+-.".contains(&b))
+    })
 }
 
 /// Не даём письму через ядро стучаться в локальную сеть (роутер, localhost и т.п.).
+/// Для IPv6 дополнительно разбираем transition-механизмы: в NAT64/6to4-адресе может быть
+/// зашит приватный IPv4, и простая проверка «это не fc00::/7» его пропустит.
 fn is_public(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
@@ -197,11 +217,51 @@ fn is_public(ip: IpAddr) -> bool {
                 || v4.is_broadcast()
                 || v4.is_documentation()
                 || (a == 100 && (64..128).contains(&b)) // CGNAT
+                || (a == 198 && (b == 18 || b == 19)) // benchmark 198.18.0.0/15
                 || a == 0
                 || a >= 224)
         }
         IpAddr::V6(v6) => {
-            let first = v6.segments()[0];
+            let segments = v6.segments();
+            let first = segments[0];
+            // IPv4-mapped ::ffff:a.b.c.d — проверяем вложенный адрес.
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return is_public(IpAddr::V4(v4));
+            }
+            // 6to4 2002:AABB:CCDD::/48 — в AABB:CCDD лежит IPv4.
+            if first == 0x2002 {
+                let v4 = Ipv4Addr::new(
+                    (segments[1] >> 8) as u8,
+                    segments[1] as u8,
+                    (segments[2] >> 8) as u8,
+                    segments[2] as u8,
+                );
+                return is_public(IpAddr::V4(v4));
+            }
+            // NAT64 well-known prefix 64:ff9b::/96 — последние 32 бита IPv4.
+            // 64:ff9b:1::/48 (local-use) и Teredo 2001:0::/32 не разбираем — запрещаем целиком.
+            if first == 0x0064 && segments[1] == 0xff9b {
+                if segments[2] == 0 && segments[3] == 0 && segments[4] == 0 && segments[5] == 0 {
+                    let v4 = Ipv4Addr::new(
+                        (segments[6] >> 8) as u8,
+                        segments[6] as u8,
+                        (segments[7] >> 8) as u8,
+                        segments[7] as u8,
+                    );
+                    return is_public(IpAddr::V4(v4));
+                }
+                return false;
+            }
+            if first == 0x2001 && segments[1] == 0x0000 {
+                return false; // Teredo
+            }
+            if first == 0x2001 && segments[1] == 0x0db8 {
+                return false; // documentation 2001:db8::/32
+            }
+            // multicast ff00::/8
+            if first & 0xff00 == 0xff00 {
+                return false;
+            }
             !(v6.is_loopback()
                 || v6.is_unspecified()
                 || (first & 0xfe00) == 0xfc00 // unique local
@@ -253,12 +313,55 @@ mod tests {
 
     #[test]
     fn only_plain_image_types() {
-        for ok in ["image/png", "image/jpeg", "image/svg+xml", "image/vnd.microsoft.icon", "image/x-icon"] {
+        for ok in [
+            "image/png",
+            "image/jpeg",
+            "image/vnd.microsoft.icon",
+            "image/x-icon",
+        ] {
             assert!(is_image_mime(ok), "{ok}");
         }
-        for bad in ["image/", "text/html", "image/png),url(https://t.example/x", "image/png\"", "image/x y", "image/png;base64"] {
+        for bad in [
+            "image/",
+            "text/html",
+            "image/svg+xml",
+            "image/svg",
+            "image/png),url(https://t.example/x",
+            "image/png\"",
+            "image/x y",
+            "image/png;base64",
+        ] {
             assert!(!is_image_mime(bad), "{bad}");
         }
+    }
+
+    #[test]
+    fn total_image_budget_is_bounded() {
+        assert!(fits_total(0, MAX_TOTAL_IMAGE_BYTES));
+        assert!(!fits_total(MAX_TOTAL_IMAGE_BYTES, 1));
+        assert!(!fits_total(usize::MAX, 1), "переполнение не обходит лимит");
+    }
+
+    #[test]
+    fn refuses_ipv6_transition_addresses_with_private_ipv4() {
+        for ip in [
+            "2002:c0a8:0101::",     // 6to4 -> 192.168.1.1
+            "64:ff9b::c0a8:0101",   // NAT64 -> 192.168.1.1
+            "64:ff9b:1::c0a8:0101", // local-use NAT64
+            "2001:0:4136:e378::",   // Teredo
+            "2001:db8::1",          // documentation
+            "ff02::1",              // multicast
+        ] {
+            assert!(!is_public(ip.parse().unwrap()), "{ip}");
+        }
+        assert!(
+            is_public("2002:5db8:d822::".parse().unwrap()),
+            "6to4 с публичным IPv4"
+        );
+        assert!(
+            is_public("64:ff9b::5db8:d822".parse().unwrap()),
+            "NAT64 с публичным IPv4"
+        );
     }
 
     #[test]

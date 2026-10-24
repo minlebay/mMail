@@ -5,6 +5,7 @@ use crate::config::ConfigStore;
 use crate::imap::Imap;
 use crate::folders;
 use crate::store::{Auth, Folder, Mailbox, Recipients, Scope, Store, Summary};
+use crate::text::{console_safe, display_safe};
 use crate::{links, remote, sanitize};
 
 /// Папки, которые показываем всегда, даже пока ящик не подключился (и в «Все ящики»).
@@ -184,7 +185,7 @@ pub async fn get_message(
                 store.replace_headers(vec![fresh]);
             }
             Ok(None) => {}
-            Err(e) => eprintln!("mMail: получатели письма: {e}"),
+            Err(e) => eprintln!("mMail: получатели письма: {}", console_safe(&e.to_string())),
         }
     }
     let Recipients { to, cc } = m.recipients.take().unwrap_or_default();
@@ -192,7 +193,10 @@ pub async fn get_message(
         // Открыл — значит прочитал, как в любом почтовом клиенте; демо-письма только локально.
         if let (Some(account), Some(uid)) = (m.account.as_deref(), m.uid) {
             if let Err(e) = imap.mark_seen(account, m.folder, uid).await {
-                eprintln!("mMail: не удалось пометить прочитанным: {e}");
+                eprintln!(
+                    "mMail: не удалось пометить прочитанным: {}",
+                    console_safe(&e.to_string())
+                );
             }
         }
         store.set_unread(id, false);
@@ -213,22 +217,43 @@ pub async fn get_message(
     if let Some((_, domain)) = m.from_addr.rsplit_once('@') {
         if !domain.is_ascii() {
             warnings.push(format!(
-                "Домен «{domain}» содержит не-латинские символы — возможна подмена адреса"
+                "Домен «{}» содержит не-латинские символы — возможна подмена адреса",
+                display_safe(domain)
+            ));
+        }
+        if domain.split('.').any(|label| label.starts_with("xn--")) {
+            warnings.push(format!(
+                "Домен «{}» закодирован punycode — проверьте, что это действительно тот сайт",
+                display_safe(domain)
             ));
         }
     }
     warnings.extend(deceptive_warnings(links::find_deceptive(&clean.html)));
     let canvas = sanitize::canvas(&html, &clean.html);
+    let to = to
+        .into_iter()
+        .map(|a| Mailbox {
+            name: display_safe(&a.name).into_owned(),
+            addr: display_safe(&a.addr).into_owned(),
+        })
+        .collect();
+    let cc = cc
+        .into_iter()
+        .map(|a| Mailbox {
+            name: display_safe(&a.name).into_owned(),
+            addr: display_safe(&a.addr).into_owned(),
+        })
+        .collect();
 
     Ok(MessageView {
         id: m.id,
         in_trash: m.folder == crate::store::Folder::Trash,
         account: m.account,
-        from_name: m.from_name,
-        from_addr: m.from_addr,
+        from_name: display_safe(&m.from_name).into_owned(),
+        from_addr: display_safe(&m.from_addr).into_owned(),
         to,
         cc,
-        subject: m.subject,
+        subject: display_safe(&m.subject).into_owned(),
         date: m.date,
         auth: m.auth,
         warnings,
@@ -483,7 +508,7 @@ pub fn set_zoom(window: tauri::WebviewWindow, scale: f64) -> Result<(), String> 
 fn deceptive_warnings(found: Vec<links::Deceptive>) -> Vec<String> {
     let mut by_host: Vec<(String, Vec<String>)> = Vec::new();
     for link in found {
-        let quoted = format!("«{}»", link.text);
+        let quoted = format!("«{}»", display_safe(&link.text));
         match by_host.iter_mut().find(|(host, _)| *host == link.real_host) {
             Some((_, texts)) if !texts.contains(&quoted) => texts.push(quoted),
             Some(_) => {}
@@ -492,10 +517,17 @@ fn deceptive_warnings(found: Vec<links::Deceptive>) -> Vec<String> {
     }
     by_host
         .into_iter()
-        .map(|(host, texts)| match texts.len() {
-            1 => format!("Ссылка {} на самом деле ведёт на {host}", texts[0]),
-            n if n <= 3 => format!("Ссылки {} на самом деле ведут на {host}", texts.join(", ")),
-            n => format!("Ссылки {} и ещё {} на самом деле ведут на {host}", texts[..3].join(", "), n - 3),
+        .map(|(host, texts)| {
+            let host = display_safe(&host);
+            match texts.len() {
+                1 => format!("Ссылка {} на самом деле ведёт на {host}", texts[0]),
+                n if n <= 3 => format!("Ссылки {} на самом деле ведут на {host}", texts.join(", ")),
+                n => format!(
+                    "Ссылки {} и ещё {} на самом деле ведут на {host}",
+                    texts[..3].join(", "),
+                    n - 3
+                ),
+            }
         })
         .collect()
 }
@@ -518,8 +550,26 @@ pub async fn save_attachment(app: tauri::AppHandle, store: State<'_, Store>, ima
         return Ok(false);
     };
     let path = target.into_path().map_err(|e| e.to_string())?;
-    std::fs::write(&path, part.contents()).map_err(|e| format!("{}: {e}", path.display()))?;
+    write_private(&path, part.contents()).map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(true)
+}
+
+/// Запись с правами только владельца и без перехода по symlink: вложение может содержать
+/// чувствительные данные, а имя файла выбирается в том числе в общих каталогах.
+fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
 }
 
 #[derive(Serialize)]
@@ -740,5 +790,39 @@ mod tests {
         assert!(!policy("x@пример.рф", Auth::Pass, false).can_trust, "домен с омоглифами не доверяем");
         assert!(!policy("other@github.com", Auth::Pass, false).remote_shown, "чужой адрес — по кнопке");
         assert!(policy("other@github.com", Auth::Unknown, true).remote_shown, "кнопка «Показать» работает всегда");
+    }
+
+    #[test]
+    fn saved_attachment_is_private_and_does_not_follow_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let dir =
+            std::env::temp_dir().join(format!("mmail-save-attachment-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("target");
+        std::fs::write(&target, b"original").unwrap();
+        let link = dir.join("link.pdf");
+        symlink(&target, &link).unwrap();
+
+        assert!(
+            write_private(&link, b"overwritten").is_err(),
+            "symlink не должен открываться"
+        );
+        assert_eq!(
+            std::fs::read(&target).unwrap(),
+            b"original",
+            "цель symlink не изменена"
+        );
+
+        let file = dir.join("attachment.pdf");
+        write_private(&file, b"secret").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert_eq!(std::fs::read(&file).unwrap(), b"secret");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

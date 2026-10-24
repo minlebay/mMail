@@ -45,8 +45,14 @@ impl Db {
     }
 
     fn connect(path: &Path, key: &[u8; 32]) -> Result<Connection> {
-        // Файл создаём сами с правами 0600, а не SQLite по umask (0644).
-        fs::OpenOptions::new().append(true).create(true).mode(0o600).open(path)?;
+        // Файл создаём сами с правами 0600, а не SQLite по umask (0644). O_NOFOLLOW:
+        // подменённый symlink в каталоге данных не должен увести запись в чужой файл.
+        fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(path)?;
         let conn = Connection::open(path)?;
         let hex = Zeroizing::new(key.iter().map(|b| format!("{b:02x}")).collect::<String>());
         // Сырой ключ (x'…'), без PBKDF2: он и так случайный, а не пароль.
@@ -520,6 +526,20 @@ mod tests {
         Db::open(&dir, &[1u8; 32]).unwrap().insert(&[&message(1)]).unwrap();
         let db = Db::open(&dir, &[2u8; 32]).unwrap();
         assert!(db.load().unwrap().0.is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn symlinked_cache_does_not_overwrite_its_target() {
+        let dir = temp_dir("symlink");
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("target.txt");
+        fs::write(&target, b"keep").unwrap();
+        std::os::unix::fs::symlink(&target, dir.join("mail.db")).unwrap();
+
+        let db = Db::open(&dir, &[7u8; 32]);
+        assert_eq!(fs::read(&target).unwrap(), b"keep", "запись ушла по symlink");
+        drop(db);
         let _ = fs::remove_dir_all(&dir);
     }
 }

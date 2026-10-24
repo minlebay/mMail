@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::attachments::AttachmentMeta;
 use crate::db::Db;
+use crate::text::display_safe;
 
 /// Папка ящика: стандартные — по ролям SPECIAL-USE (RFC 6154), остальные — по имени на сервере.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -402,10 +403,22 @@ impl Store {
                     id: e.id,
                     in_trash: e.msg.folder == Folder::Trash,
                     account: e.msg.account.clone(),
-                    from_addr: e.msg.from_addr.clone(),
-                    from_name: e.msg.from_name.clone(),
-                    to: e.msg.recipients.as_ref().map(|r| r.to.clone()).unwrap_or_default(),
-                    subject: e.msg.subject.clone(),
+                    from_addr: display_safe(&e.msg.from_addr).into_owned(),
+                    from_name: display_safe(&e.msg.from_name).into_owned(),
+                    to: e
+                        .msg
+                        .recipients
+                        .as_ref()
+                        .map(|r| {
+                            r.to.iter()
+                                .map(|a| Mailbox {
+                                    name: display_safe(&a.name).into_owned(),
+                                    addr: display_safe(&a.addr).into_owned(),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    subject: display_safe(&e.msg.subject).into_owned(),
                     date: date_label(e.msg.timestamp),
                     unread: e.msg.unread,
                     starred: e.msg.starred,

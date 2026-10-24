@@ -21,6 +21,7 @@ use zeroize::Zeroizing;
 
 use crate::accounts;
 use crate::store::{date_label, Folder, Mailbox, Recipients};
+use crate::text::console_safe;
 
 /// Идентификатор приложения Tauri: от него Tauri строит каталог данных
 /// (`app.path().app_data_dir()`), а в headless-режиме AppHandle недоступен.
@@ -38,6 +39,7 @@ const USAGE: &str = "\
 ПАПКА — inbox, sent, drafts, trash, junk, archive или имя папки на сервере.
 ID — как в list/search: ящик:папка:uid (копируется целиком). Тело письма есть в кэше
 только у писем, которые уже открывали в mMail; у остальных в ответе будет body: null.
+--html отдаёт исходный HTML без очистки — не открывайте его в браузере.
 ";
 
 /// Разобранные аргументы команд чтения.
@@ -119,7 +121,7 @@ pub fn run(argv: &[String]) -> Option<i32> {
 }
 
 fn fail(message: &str) -> i32 {
-    eprintln!("mmail: {message}");
+    eprintln!("mmail: {}", console_safe(message));
     2
 }
 
@@ -129,7 +131,7 @@ fn cmd_accounts(o: &Opts) -> Result<(), String> {
         return print_json(&accounts);
     }
     for account in accounts {
-        println!("{account}");
+        println!("{}", console_safe(&account));
     }
     Ok(())
 }
@@ -175,7 +177,14 @@ fn cmd_folders(o: &Opts) -> Result<(), String> {
         return print_json(&rows);
     }
     for row in rows {
-        println!("{}\t{}\t{}\t{}\t{}", row.account, row.folder, row.name, row.messages, row.unread);
+        println!(
+            "{}\t{}\t{}\t{}\t{}",
+            console_safe(&row.account),
+            console_safe(&row.folder),
+            console_safe(&row.name),
+            row.messages,
+            row.unread
+        );
     }
     Ok(())
 }
@@ -236,7 +245,14 @@ fn print_rows(o: &Opts, rows: &[Row]) -> Result<(), String> {
             format!("{} <{}>", row.from_name, row.from_addr)
         };
         let mark = if row.unread { '•' } else { ' ' };
-        println!("{mark}{}\t{}\t{}\t{}\t{}", row.id, row.date, row.folder, from, row.subject);
+        println!(
+            "{mark}{}\t{}\t{}\t{}\t{}",
+            console_safe(&row.id),
+            console_safe(&row.date),
+            console_safe(&row.folder),
+            console_safe(&from),
+            console_safe(&row.subject)
+        );
     }
     Ok(())
 }
@@ -367,17 +383,37 @@ fn cmd_read(o: &Opts) -> Result<(), String> {
     if o.json {
         return print_json(&row);
     }
-    println!("ID: {}", row.id);
-    println!("Ящик: {} / {}", row.account, folder_name(&row.folder));
-    println!("От: {} <{}>", row.from_name, row.from_addr);
+    println!("ID: {}", console_safe(&row.id));
+    println!(
+        "Ящик: {} / {}",
+        console_safe(&row.account),
+        console_safe(&folder_name(&row.folder))
+    );
+    println!(
+        "От: {} <{}>",
+        console_safe(&row.from_name),
+        console_safe(&row.from_addr)
+    );
     if !row.to.is_empty() {
-        println!("Кому: {}", row.to.iter().map(|a| format!("{} <{}>", a.name, a.addr)).collect::<Vec<_>>().join(", "));
+        let list = row
+            .to
+            .iter()
+            .map(|a| format!("{} <{}>", a.name, a.addr))
+            .collect::<Vec<_>>()
+            .join(", ");
+        println!("Кому: {}", console_safe(&list));
     }
     if !row.cc.is_empty() {
-        println!("Копия: {}", row.cc.iter().map(|a| format!("{} <{}>", a.name, a.addr)).collect::<Vec<_>>().join(", "));
+        let list = row
+            .cc
+            .iter()
+            .map(|a| format!("{} <{}>", a.name, a.addr))
+            .collect::<Vec<_>>()
+            .join(", ");
+        println!("Копия: {}", console_safe(&list));
     }
-    println!("Дата: {}", row.date);
-    println!("Тема: {}", row.subject);
+    println!("Дата: {}", console_safe(&row.date));
+    println!("Тема: {}", console_safe(&row.subject));
     if let Some(items) = row.attachments.as_array() {
         if !items.is_empty() {
             let names = items
@@ -385,12 +421,12 @@ fn cmd_read(o: &Opts) -> Result<(), String> {
                 .filter_map(|a| a.get("name").and_then(|n| n.as_str()).map(|n| n.to_string()))
                 .collect::<Vec<_>>()
                 .join(", ");
-            println!("Вложения: {names}");
+            println!("Вложения: {}", console_safe(&names));
         }
     }
     println!();
     match &row.body {
-        Some(body) if !body.is_empty() => println!("{body}"),
+        Some(body) if !body.is_empty() => println!("{}", console_safe(body)),
         _ => println!("(тела нет в кэше — открой письмо в mMail)"),
     }
     Ok(())
@@ -428,21 +464,13 @@ fn open_cache() -> Result<Connection, String> {
 }
 
 /// Отдельное соединение с кэшем: сначала строго READ_ONLY, без CREATE и без миграций.
+/// Только чтение, без исключений: если SQLite не может открыть WAL-базу read-only
+/// (например, нет готового `-shm` после аварийного завершения), лучше попросить закрыть
+/// mMail, чем открывать файл на запись и незаметно менять кэш.
 fn open_read_only(path: &Path, key: &[u8; 32]) -> Result<Connection, String> {
-    match connect(path, key, OpenFlags::SQLITE_OPEN_READ_ONLY) {
-        Ok(conn) => Ok(conn),
-        Err(read_only) => {
-            // WAL: соединению только на чтение нужен готовый -shm. Если приложение закрыто
-            // и журнал свёрнут, открываем тот же файл без CREATE и запрещаем запись на
-            // уровне SQLite — данные не меняются, файл не пересоздаётся.
-            connect(path, key, OpenFlags::SQLITE_OPEN_READ_WRITE)
-                .and_then(|conn| {
-                    conn.execute_batch("PRAGMA query_only = ON;")?;
-                    Ok(conn)
-                })
-                .map_err(|read_write| format!("кэш не открывается на чтение ({read_only}); и без записи ({read_write})"))
-        }
-    }
+    connect(path, key, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|e| {
+        format!("кэш не открывается только на чтение ({e}); проверьте ключ KWallet или закройте mMail")
+    })
 }
 
 fn connect(path: &Path, key: &[u8; 32], flags: OpenFlags) -> rusqlite::Result<Connection> {
@@ -570,7 +598,7 @@ fn html_to_text(html: &str) -> String {
     if skip.is_none() {
         push_text(&mut out, rest);
     }
-    out.trim_end().to_string()
+    console_safe(out.trim_end()).into_owned()
 }
 
 fn push_text(out: &mut String, text: &str) {
@@ -705,6 +733,25 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// CLI должен работать и при запущенном mMail: WAL и -shm уже существуют. Но если
+    /// read-only открыть нельзя, никакого read-write fallback быть не должно.
+    #[test]
+    fn read_only_works_while_the_gui_writer_is_open() {
+        let dir = temp_dir("read-only-live");
+        let key = [7u8; 32];
+        let db = crate::db::Db::open(&dir, &key).unwrap();
+        db.insert(&[&sample_message()]).unwrap();
+        let conn =
+            open_read_only(&dir.join("mail.db"), &key).expect("read-only при живом писателе");
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM messages", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 1);
+        drop(conn);
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Неверный ключ — ошибка, а не «создам кэш заново», как сделал бы GUI.
     #[test]
     fn wrong_key_does_not_touch_the_cache() {
@@ -753,6 +800,15 @@ mod tests {
         assert_eq!(html_to_text("<style>p{color:red}</style><script>x()</script>ок"), "ок");
         assert_eq!(html_to_text("a&nbsp;b &amp; c &#8212; всё"), "a b & c — всё");
         assert_eq!(html_to_text("<div>строчка<br>другая</div>"), "строчка\nдругая");
+    }
+
+    #[test]
+    fn terminal_text_cannot_carry_control_sequences() {
+        let text = html_to_text("<p>Тема&#27;]52;c;ZXZpbA==&#7; и \u{202e}evil</p>");
+        for bad in ['\u{1b}', '\u{7}', '\u{202e}'] {
+            assert!(!text.contains(bad), "{bad:?} остался в {text:?}");
+        }
+        assert!(text.contains("Тема") && text.contains("evil"));
     }
 
     #[test]

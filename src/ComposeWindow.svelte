@@ -132,6 +132,55 @@
     sel.addRange(range);
   }
 
+  // HTML из буфера или чужой страницы проходит через санитайзер ядра: убираем <style>,
+  // обработчики и внешние картинки, которые WebKit мог бы сохранить при вставке. Обычный
+  // текст не трогаем — его вставляет сам браузер.
+  function currentRange() {
+    const sel = window.getSelection();
+    return sel?.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
+  }
+
+  async function insertSanitized(html, plain) {
+    const range = currentRange();
+    try {
+      const clean = await cleanComposeHtml(html);
+      editor.focus();
+      if (range && editor.contains(range.commonAncestorContainer)) {
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+      if (!clean && plain) {
+        document.execCommand('insertText', false, plain);
+      } else {
+        document.execCommand('insertHTML', false, clean);
+      }
+      touched = true;
+    } catch (e) {
+      if (plain) {
+        editor.focus();
+        document.execCommand('insertText', false, plain);
+        touched = true;
+      } else {
+        error = String(e);
+      }
+    }
+  }
+
+  function onPaste(event) {
+    const html = event.clipboardData?.getData('text/html');
+    if (!html) return; // обычная вставка текста — браузер сделает сам
+    event.preventDefault();
+    insertSanitized(html, event.clipboardData.getData('text/plain'));
+  }
+
+  function onDrop(event) {
+    const html = event.dataTransfer?.getData('text/html');
+    if (!html) return; // файлы и текст — поведение по умолчанию
+    event.preventDefault();
+    insertSanitized(html, event.dataTransfer.getData('text/plain'));
+  }
+
   const currentHtml = () => (mode === 'html' ? editor.innerHTML : mode === 'code' ? code : textToHtml(text));
 
   async function switchMode(next) {
@@ -360,6 +409,8 @@
       tabindex="0"
       bind:this={editor}
       oninput={() => (touched = true)}
+      onpaste={onPaste}
+      ondrop={onDrop}
     ></div>
     {#if mode === 'text'}
       <textarea class="editor" bind:value={text} oninput={() => (touched = true)} placeholder={$t("Текст письма")}></textarea>

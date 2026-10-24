@@ -12,6 +12,7 @@ use tauri_plugin_dialog::DialogExt;
 
 use crate::imap::Imap;
 use crate::store::{date_label, Store};
+use crate::text::display_safe;
 use crate::{accounts, sanitize};
 
 /// Лимит вложений на письмо — как у Gmail.
@@ -71,21 +72,37 @@ pub struct ComposeState {
     next_window: AtomicU32,
     next_file: AtomicU64,
     prefills: Mutex<HashMap<String, Prefill>>,
-    files: Mutex<HashMap<u64, PathBuf>>,
+    /// Ключ — (метка окна, id файла): вложение, выбранное в одном черновике, недоступно
+    /// другому окну, даже если оно угадает последовательный id.
+    files: Mutex<HashMap<(String, u64), PathBuf>>,
 }
 
 impl ComposeState {
     /// Запомнить выбранный файл; в UI уходят только id, имя и размер.
-    fn register(&self, path: &Path) -> Option<AttachmentInfo> {
+    fn register(&self, window: &str, path: &Path) -> Option<AttachmentInfo> {
         let meta = std::fs::metadata(path).ok().filter(|m| m.is_file())?;
         let id = self.next_file.fetch_add(1, Ordering::Relaxed) + 1;
-        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "file".into());
-        self.files.lock().unwrap().insert(id, path.to_path_buf());
-        Some(AttachmentInfo { id, name, size: meta.len() })
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "file".into());
+        self.files
+            .lock()
+            .unwrap()
+            .insert((window.to_string(), id), path.to_path_buf());
+        Some(AttachmentInfo {
+            id,
+            name,
+            size: meta.len(),
+        })
     }
 
-    pub fn file(&self, id: u64) -> Option<PathBuf> {
-        self.files.lock().unwrap().get(&id).cloned()
+    pub fn file(&self, window: &str, id: u64) -> Option<PathBuf> {
+        self.files
+            .lock()
+            .unwrap()
+            .get(&(window.to_string(), id))
+            .cloned()
     }
 }
 
@@ -112,8 +129,19 @@ pub async fn compose_init(
     store: State<'_, Store>,
     imap: State<'_, Imap>,
 ) -> Result<ComposeInit, String> {
-    let prefill = state.prefills.lock().unwrap().remove(window.label()).unwrap_or_default();
-    let accounts = accounts::list().await.map_err(|e| e.to_string())?;
+    let prefill = state
+        .prefills
+        .lock()
+        .unwrap()
+        .remove(window.label())
+        .unwrap_or_default();
+    let window_label = window.label().to_string();
+    let accounts: Vec<String> = accounts::list()
+        .await
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(|a| display_safe(&a).into_owned())
+        .collect();
     let from = prefill
         .from
         .filter(|f| accounts.contains(f))
@@ -123,12 +151,16 @@ pub async fn compose_init(
     let mut init = ComposeInit {
         from,
         accounts,
-        to: prefill.to,
-        cc: prefill.cc,
-        bcc: prefill.bcc,
-        subject: prefill.subject,
+        to: display_safe(&prefill.to).into_owned(),
+        cc: display_safe(&prefill.cc).into_owned(),
+        bcc: display_safe(&prefill.bcc).into_owned(),
+        subject: display_safe(&prefill.subject).into_owned(),
         body: prefill.body,
-        attachments: prefill.attach.iter().filter_map(|path| state.register(path)).collect(),
+        attachments: prefill
+            .attach
+            .iter()
+            .filter_map(|path| state.register(&window_label, path))
+            .collect(),
         kind: prefill.kind.clone(),
         quote_header: None,
         quote_html: None,
@@ -147,9 +179,16 @@ pub async fn compose_init(
     }
 
     let when = date_label(source.timestamp);
-    let sender = format!("{} <{}>", source.from_name, source.from_addr);
+    let sender = format!(
+        "{} <{}>",
+        display_safe(&source.from_name),
+        display_safe(&source.from_addr)
+    );
     init.quote_header = Some(if prefill.kind == "forward" {
-        format!("---------- Пересылаемое сообщение ----------\nОт: {sender}\nДата: {when}\nТема: {}", source.subject)
+        format!(
+            "---------- Пересылаемое сообщение ----------\nОт: {sender}\nДата: {when}\nТема: {}",
+            display_safe(&source.subject)
+        )
     } else {
         format!("{when}, {sender} пишет:")
     });
@@ -176,14 +215,24 @@ pub fn clean_compose_html(html: String) -> Result<String, String> {
 
 /// Системный диалог выбора файлов открывает ядро; в UI уходят только id, имя и размер.
 #[tauri::command]
-pub async fn pick_attachments(app: AppHandle, state: State<'_, ComposeState>) -> Result<Vec<AttachmentInfo>, String> {
-    let Some(picked) = app.dialog().file().set_title(crate::i18n::text(&app, "Прикрепить файлы")).blocking_pick_files() else {
+pub async fn pick_attachments(
+    window: WebviewWindow,
+    app: AppHandle,
+    state: State<'_, ComposeState>,
+) -> Result<Vec<AttachmentInfo>, String> {
+    let Some(picked) = app
+        .dialog()
+        .file()
+        .set_title(crate::i18n::text(&app, "Прикрепить файлы"))
+        .blocking_pick_files()
+    else {
         return Ok(Vec::new());
     };
     let mut infos = Vec::new();
+    let label = window.label().to_string();
     for file in picked {
         let Ok(path) = file.into_path() else { continue };
-        infos.extend(state.register(&path));
+        infos.extend(state.register(&label, &path));
     }
     Ok(infos)
 }
@@ -207,8 +256,20 @@ pub fn open_reply(app: &AppHandle, id: u32) -> Result<(), String> {
     let store = tauri::Manager::state::<Store>(app);
     let m = store.details(id).ok_or("письмо пропало")?;
     let lower = m.subject.to_lowercase();
-    let subject = if lower.starts_with("re:") || lower.starts_with("fw:") || lower.starts_with("fwd:") { m.subject.clone() } else { format!("Re: {}", m.subject) };
-    let prefill = Prefill { from: m.account.clone(), to: m.from_addr.clone(), subject, source: Some(id), kind: "reply".into(), ..Default::default() };
+    let subject =
+        if lower.starts_with("re:") || lower.starts_with("fw:") || lower.starts_with("fwd:") {
+            m.subject.clone()
+        } else {
+            format!("Re: {}", m.subject)
+        };
+    let prefill = Prefill {
+        from: m.account.clone(),
+        to: display_safe(&m.from_addr).into_owned(),
+        subject: display_safe(&subject).into_owned(),
+        source: Some(id),
+        kind: "reply".into(),
+        ..Default::default()
+    };
     open_from_background(app, prefill);
     Ok(())
 }
@@ -223,6 +284,26 @@ mod tests {
         let prefill: Prefill = serde_json::from_str(r#"{"to":"a@b.example","attach":["/home/user/.ssh/id_ed25519"]}"#).unwrap();
         assert_eq!(prefill.to, "a@b.example");
         assert!(prefill.attach.is_empty());
-        assert!(ComposeState::default().file(1).is_none(), "чужой id файла ничего не даёт");
+        assert!(
+            ComposeState::default().file("compose-1", 1).is_none(),
+            "чужой id файла ничего не даёт"
+        );
+    }
+
+    #[test]
+    fn attachments_are_scoped_to_their_window() {
+        let dir = std::env::temp_dir().join(format!("mmail-attach-scope-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("secret.bin");
+        std::fs::write(&path, b"x").unwrap();
+        let state = ComposeState::default();
+        let attachment = state.register("compose-1", &path).unwrap();
+        assert!(state.file("compose-1", attachment.id).is_some());
+        assert!(
+            state.file("compose-2", attachment.id).is_none(),
+            "вложение одного окна не видно другому"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
