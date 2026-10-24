@@ -26,6 +26,7 @@ use crate::db::Db;
 use crate::fake;
 use crate::folders::{self, ServerFolder};
 use crate::store::{Auth, Folder, Mailbox, Message, Opened, Recipients, Store};
+use crate::text::{console_safe, display_safe};
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 type Session = async_imap::Session<TlsStream<TcpStream>>;
@@ -116,17 +117,36 @@ async fn fetch_batch(session: &mut Session, account: &str, cursor: &mut Cursor) 
     // Только нужные поля заголовка — так же синхронизирует Thunderbird.
     let fetches: Vec<Fetch> = session.uid_fetch(&set, HEADER_QUERY).await?.try_collect().await?;
     let took = started.elapsed();
-    let mut parsed: Vec<Message> = fetches.iter().filter_map(|f| to_message(f, account, cursor.folder)).collect();
-    eprintln!("mMail: {}: {} из {} писем за {took:?}", cursor.display, parsed.len(), batch.len());
+    let mut parsed: Vec<Message> = fetches
+        .iter()
+        .filter_map(|f| to_message(f, account, cursor.folder))
+        .collect();
+    eprintln!(
+        "mMail: {}: {} из {} писем за {took:?}",
+        console_safe(&cursor.display),
+        parsed.len(),
+        batch.len()
+    );
     // Сервер может отказать в заголовках (Яндекс отвечает «NO [UNAVAILABLE]» на старые письма),
     // а библиотека превращает отказ в пустой ответ. Таким письмам — заглушки с датой и флагами,
     // иначе каждый запуск заново ждал бы их минутами.
     let got: HashSet<u32> = fetches.iter().filter_map(|f| f.uid).collect();
     let lost: Vec<u32> = batch.iter().copied().filter(|uid| !got.contains(uid)).collect();
     if !lost.is_empty() {
-        let meta: Vec<Fetch> = session.uid_fetch(uid_set(&lost), "(UID FLAGS INTERNALDATE)").await?.try_collect().await?;
-        eprintln!("mMail: {}: сервер не отдал заголовки {} писем — заглушки", cursor.display, meta.len());
-        parsed.extend(meta.iter().filter_map(|f| placeholder(f, account, cursor.folder)));
+        let meta: Vec<Fetch> = session
+            .uid_fetch(uid_set(&lost), "(UID FLAGS INTERNALDATE)")
+            .await?
+            .try_collect()
+            .await?;
+        eprintln!(
+            "mMail: {}: сервер не отдал заголовки {} писем — заглушки",
+            console_safe(&cursor.display),
+            meta.len()
+        );
+        parsed.extend(
+            meta.iter()
+                .filter_map(|f| placeholder(f, account, cursor.folder)),
+        );
     }
     cursor.batch = if took > SLOW_BATCH { (cursor.batch / 2).max(MIN_BATCH) } else if took < FAST_BATCH { (cursor.batch * 2).min(BATCH as usize) } else { cursor.batch };
     Ok(parsed)
@@ -246,29 +266,44 @@ fn recipients(parsed: &mail_parser::Message) -> Recipients {
     Recipients { to: list(parsed.to()), cc: list(parsed.cc()) }
 }
 
-/// Вердикт по самому верхнему Authentication-Results от серверов провайдера.
-/// Заголовки с чужим authserv-id мог вписать сам отправитель — их игнорируем.
-fn auth_verdict(headers: impl Iterator<Item = String>, trusted: &[&str]) -> Auth {
-    for header in headers {
-        let value = strip_comments_and_quotes(&header).to_ascii_lowercase();
-        let mut segments = value.split(';');
-        let authserv = segments.next().unwrap_or_default().split_whitespace().next().unwrap_or_default();
-        if !trusted.iter().any(|t| authserv == t.trim_start_matches('.') || authserv.ends_with(t)) {
-            continue;
-        }
-        // Результат метода — первое слово своего сегмента («dmarc=fail header.from=…»);
-        // остальное (адреса, селекторы) задаёт отправитель, по нему не судим.
-        let results: Vec<&str> = segments.filter_map(|s| s.split_whitespace().next()).collect();
-        let has = |result: &str| results.contains(&result);
-        return if has("dmarc=pass") {
-            Auth::Pass
-        } else if has("dmarc=fail") || (has("spf=fail") && !has("dkim=pass")) {
-            Auth::Fail
-        } else {
-            Auth::Unknown
-        };
+/// Вердикт по самому верхнему Authentication-Results.
+///
+/// Провайдер добавляет свой заголовок сверху, выше всего, что мог вписать отправитель.
+/// Более нижние заголовки не рассматриваем даже если их authserv-id выглядит доверенным:
+/// иначе письмо с поддельным `Authentication-Results: mxfront.mail.yandex.net; dmarc=pass`
+/// могло бы «перебить» настоящий результат, если его authserv-id не попал в список.
+/// Если верхний заголовок не от доверенного сервера — результата нет, а не «идём дальше».
+fn auth_verdict(mut headers: impl Iterator<Item = String>, trusted: &[&str]) -> Auth {
+    let Some(header) = headers.next() else {
+        return Auth::Unknown;
+    };
+    let value = strip_comments_and_quotes(&header).to_ascii_lowercase();
+    let mut segments = value.split(';');
+    let authserv = segments
+        .next()
+        .unwrap_or_default()
+        .split_whitespace()
+        .next()
+        .unwrap_or_default();
+    if !trusted
+        .iter()
+        .any(|t| authserv == t.trim_start_matches('.') || authserv.ends_with(t))
+    {
+        return Auth::Unknown;
     }
-    Auth::Unknown
+    // Результат метода — первое слово своего сегмента («dmarc=fail header.from=…»);
+    // остальное (адреса, селекторы) задаёт отправитель, по нему не судим.
+    let results: Vec<&str> = segments
+        .filter_map(|s| s.split_whitespace().next())
+        .collect();
+    let has = |result: &str| results.contains(&result);
+    if has("dmarc=pass") {
+        Auth::Pass
+    } else if has("dmarc=fail") || (has("spf=fail") && !has("dkim=pass")) {
+        Auth::Fail
+    } else {
+        Auth::Unknown
+    }
 }
 
 /// Убирает комментарии `(…)` и строки в кавычках (RFC 5322 CFWS/quoted-string): туда
@@ -336,8 +371,8 @@ pub struct Imap {
 }
 
 fn set_status(app: &AppHandle, email: &str, state: &'static str, message: impl Into<String>) {
-    let message = message.into();
-    eprintln!("mMail: [{state}] {email}: {message}");
+    let message = console_safe(&message.into()).into_owned();
+    eprintln!("mMail: [{state}] {}: {message}", console_safe(email));
     let imap = app.state::<Imap>();
     imap.statuses.lock().unwrap().insert(email.to_string(), SyncStatus { state, message });
     let _ = app.emit("sync-status", imap.summary());
@@ -353,7 +388,11 @@ impl Imap {
             return SyncStatus { state: "ok", message: "Нет почтовых ящиков — добавьте в настройках".into() };
         }
         let pick = |state: &str| -> Vec<String> {
-            statuses.iter().filter(|(_, s)| s.state == state).map(|(email, s)| format!("{email}: {}", s.message)).collect()
+            statuses
+                .iter()
+                .filter(|(_, s)| s.state == state)
+                .map(|(email, s)| format!("{}: {}", console_safe(email), s.message))
+                .collect()
         };
         let locked = pick("locked");
         if !locked.is_empty() {
@@ -507,18 +546,35 @@ async fn run_sync(app: &AppHandle, account: Account) -> Result<()> {
     let store = app.state::<Store>();
     let started = std::time::Instant::now();
     let list = discover_folders(&mut session).await?;
-    eprintln!("mMail: {email}: LIST — {} папок за {:?}", list.len(), started.elapsed());
+    eprintln!(
+        "mMail: {}: LIST — {} папок за {:?}",
+        console_safe(&email),
+        list.len(),
+        started.elapsed()
+    );
     let mut cursors = Vec::new();
     for f in &list {
         match scan_folder(app, &mut session, &email, f).await {
             Ok(cursor) => cursors.push(cursor),
             // Папка могла исчезнуть между LIST и EXAMINE или быть недоступной — остальные не ждут.
-            Err(e) => eprintln!("mMail: папка {} недоступна: {e}", f.display),
+            Err(e) => eprintln!(
+                "mMail: папка {} недоступна: {}",
+                console_safe(&f.display),
+                console_safe(&e.to_string())
+            ),
         }
     }
     // Папки, удалённые на сервере, пока программа была закрыта, — из кэша тоже.
-    for gone in store.folders_of(&email).into_iter().filter(|f| !list.iter().any(|s| s.folder == *f)) {
-        eprintln!("mMail: {email}: папки {gone:?} больше нет на сервере");
+    for gone in store
+        .folders_of(&email)
+        .into_iter()
+        .filter(|f| !list.iter().any(|s| s.folder == *f))
+    {
+        eprintln!(
+            "mMail: {}: папки {} больше нет на сервере",
+            console_safe(&email),
+            console_safe(&format!("{gone:?}"))
+        );
         store.remove_folder(&email, gone);
     }
     let conn = Arc::new(Connection {
@@ -553,7 +609,12 @@ async fn run_sync(app: &AppHandle, account: Account) -> Result<()> {
         match fetch_batch(&mut session, &email, cursor).await {
             Ok(messages) => step(cursor, messages),
             Err(e) => {
-                eprintln!("mMail: {email}: первая порция «{}» не загрузилась: {e}", cursor.display);
+                eprintln!(
+                    "mMail: {}: первая порция «{}» не загрузилась: {}",
+                    console_safe(&email),
+                    console_safe(&cursor.display),
+                    console_safe(&e.to_string())
+                );
                 break;
             }
         }
@@ -569,16 +630,32 @@ async fn run_sync(app: &AppHandle, account: Account) -> Result<()> {
             let idle = caps.has_str("IDLE");
             if !idle {
                 let names: Vec<String> = caps.iter().map(|c| format!("{c:?}")).collect();
-                eprintln!("mMail: {email}: возможности сервера: {}", names.join(" "));
+                eprintln!(
+                    "mMail: {}: возможности сервера: {}",
+                    console_safe(&email),
+                    console_safe(&names.join(" "))
+                );
             }
             idle
         }
         Err(e) => {
-            eprintln!("mMail: {email}: CAPABILITY не удалось: {e}");
+            eprintln!(
+                "mMail: {}: CAPABILITY не удалось: {}",
+                console_safe(&email),
+                console_safe(&e.to_string())
+            );
             false
         }
     };
-    eprintln!("mMail: {email}: IDLE {}", if idle { "есть — новые письма приходят сразу" } else { "нет — опрос по интервалу" });
+    eprintln!(
+        "mMail: {}: IDLE {}",
+        console_safe(&email),
+        if idle {
+            "есть — новые письма приходят сразу"
+        } else {
+            "нет — опрос по интервалу"
+        }
+    );
     let mut idle_ok = false;
     // Заглушки (сервер не отдал заголовок) пробуем снова — не чаще раза в полчаса.
     let mut last_retry = std::time::Instant::now();
@@ -611,13 +688,21 @@ async fn run_sync(app: &AppHandle, account: Account) -> Result<()> {
                 }
                 Err(e) => {
                     // Сессия ушла в idle_wait и не вернулась — нужна новая.
-                    eprintln!("mMail: {email}: IDLE прервался ({e}) — переподключаюсь");
+                    eprintln!(
+                        "mMail: {}: IDLE прервался ({}) — переподключаюсь",
+                        console_safe(&email),
+                        console_safe(&e.to_string())
+                    );
                     session = reconnect(app, &conn).await?;
                     Ok(())
                 }
             };
             if let Err(e) = outcome {
-                eprintln!("mMail: {email}: {e} — переподключаюсь");
+                eprintln!(
+                    "mMail: {}: {} — переподключаюсь",
+                    console_safe(&email),
+                    console_safe(&e.to_string())
+                );
                 session = reconnect(app, &conn).await?;
                 last_flags = std::time::Instant::now() - FLAGS_EVERY;
             }
@@ -676,7 +761,11 @@ async fn run_sync(app: &AppHandle, account: Account) -> Result<()> {
         if let Err(e) = result {
             // Кнопка не должна крутиться до таймаута, если проверка упала.
             conn.checked.notify_waiters();
-            eprintln!("mMail: {email}: {e} — переподключаюсь");
+            eprintln!(
+                "mMail: {}: {} — переподключаюсь",
+                console_safe(&email),
+                console_safe(&e.to_string())
+            );
             session = reconnect(app, &conn).await?;
             idle_ok = false;
             // Папку могли удалить на сервере — сверяем список сразу, а не через минуту.
@@ -694,9 +783,22 @@ async fn retry_unavailable(app: &AppHandle, session: &mut Session, email: &str, 
             continue;
         }
         session.examine(&cursor.name).await?;
-        let fetches: Vec<Fetch> = session.uid_fetch(uid_set(&uids), HEADER_QUERY).await?.try_collect().await?;
-        let found: Vec<Message> = fetches.iter().filter_map(|f| to_message(f, email, cursor.folder)).collect();
-        eprintln!("mMail: {email}: {}: повторно — заголовки {} из {} заглушек", cursor.display, found.len(), uids.len());
+        let fetches: Vec<Fetch> = session
+            .uid_fetch(uid_set(&uids), HEADER_QUERY)
+            .await?
+            .try_collect()
+            .await?;
+        let found: Vec<Message> = fetches
+            .iter()
+            .filter_map(|f| to_message(f, email, cursor.folder))
+            .collect();
+        eprintln!(
+            "mMail: {}: {}: повторно — заголовки {} из {} заглушек",
+            console_safe(&email),
+            console_safe(&cursor.display),
+            found.len(),
+            uids.len()
+        );
         if !found.is_empty() {
             store.replace_headers(found);
             let _ = app.emit("mailbox-changed", ());
@@ -722,7 +824,12 @@ async fn fill_recipients(app: &AppHandle, session: &mut Session, email: &str, cu
                 let _ = app.emit("mailbox-changed", ());
             }
         }
-        eprintln!("mMail: {email}: {}: получатели — {} писем", cursor.display, uids.len());
+        eprintln!(
+            "mMail: {}: {}: получатели — {} писем",
+            console_safe(&email),
+            console_safe(&cursor.display),
+            uids.len()
+        );
     }
     Ok(())
 }
@@ -735,8 +842,18 @@ async fn scan_folder(app: &AppHandle, session: &mut Session, email: &str, f: &Se
     store.check_validity(email, f.folder, mailbox.uid_validity.unwrap_or_default());
     // Список UID папки — дёшево даже для десятков тысяч писем; сверяем с кэшем.
     let examined = started.elapsed();
-    let on_server: HashSet<u32> = if mailbox.exists == 0 { HashSet::new() } else { session.uid_search("ALL").await? };
-    eprintln!("mMail: {email}: {}: EXAMINE {examined:?}, UID SEARCH {} писем {:?}", f.display, on_server.len(), started.elapsed() - examined);
+    let on_server: HashSet<u32> = if mailbox.exists == 0 {
+        HashSet::new()
+    } else {
+        session.uid_search("ALL").await?
+    };
+    eprintln!(
+        "mMail: {}: {}: EXAMINE {examined:?}, UID SEARCH {} писем {:?}",
+        console_safe(&email),
+        console_safe(&f.display),
+        on_server.len(),
+        started.elapsed() - examined
+    );
     if store.retain_on_server(email, f.folder, &on_server) {
         let _ = app.emit("mailbox-changed", ());
     }
@@ -762,7 +879,11 @@ async fn resync_folders(app: &AppHandle, session: &mut Session, conn: &Connectio
     cursors.retain(|c| {
         let keep = list.iter().any(|f| f.folder == c.folder && f.server_name == c.name);
         if !keep {
-            eprintln!("mMail: {email}: папки «{}» больше нет на сервере", c.display);
+            eprintln!(
+                "mMail: {}: папки «{}» больше нет на сервере",
+                console_safe(&email),
+                console_safe(&c.display)
+            );
             store.remove_folder(email, c.folder);
             changed = true;
         }
@@ -774,11 +895,19 @@ async fn resync_folders(app: &AppHandle, session: &mut Session, conn: &Connectio
         }
         match scan_folder(app, session, email, f).await {
             Ok(cursor) => {
-                eprintln!("mMail: {email}: новая папка «{}»", f.display);
+                eprintln!(
+                    "mMail: {}: новая папка «{}»",
+                    console_safe(&email),
+                    console_safe(&f.display)
+                );
                 cursors.push(cursor);
                 changed = true;
             }
-            Err(e) => eprintln!("mMail: папка {} недоступна: {e}", f.display),
+            Err(e) => eprintln!(
+                "mMail: папка {} недоступна: {}",
+                console_safe(&f.display),
+                console_safe(&e.to_string())
+            ),
         }
     }
     cursors.sort_by_key(|c| (folders::rank(c.folder), c.display.to_lowercase()));
@@ -877,8 +1006,13 @@ async fn prefetch_bodies(
         for f in &fetches {
             let (Some(uid), Some(raw)) = (f.uid, f.body()) else { continue };
             match parse_opened(raw, account.provider) {
-                Ok(opened) => changed |= store.set_opened_uid(&account.email, cursor.folder, uid, opened),
-                Err(e) => eprintln!("mMail: письмо {uid} не разобрано: {e}"),
+                Ok(opened) => {
+                    changed |= store.set_opened_uid(&account.email, cursor.folder, uid, opened)
+                }
+                Err(e) => eprintln!(
+                    "mMail: письмо {uid} не разобрано: {}",
+                    console_safe(&e.to_string())
+                ),
             }
         }
         if changed {
@@ -972,7 +1106,14 @@ async fn verify(account: &Account, password: &str) -> Result<()> {
 
 #[tauri::command]
 pub async fn list_accounts() -> std::result::Result<Vec<String>, String> {
-    accounts::list().await.map_err(|e| e.to_string())
+    accounts::list()
+        .await
+        .map(|list| {
+            list.into_iter()
+                .map(|a| display_safe(&a).into_owned())
+                .collect()
+        })
+        .map_err(|e| e.to_string())
 }
 
 /// Добавляет ящик: проверяет вход, кладёт пароль в KWallet и запускает синхронизацию.
@@ -1026,7 +1167,11 @@ impl Imap {
             match fetch_raw(reader.as_mut().unwrap(), name, uid).await {
                 Ok(raw) => return Ok(raw),
                 Err(e) if attempt == 0 => {
-                    eprintln!("mMail: IMAP-сессия {email} сброшена ({e}), переподключаюсь");
+                    eprintln!(
+                        "mMail: IMAP-сессия {} сброшена ({}), переподключаюсь",
+                        console_safe(&email),
+                        console_safe(&e.to_string())
+                    );
                     *reader = None;
                 }
                 Err(e) => return Err(e),
@@ -1232,8 +1377,24 @@ mod tests {
     fn trusts_only_provider_results() {
         let forged = "evil.example; dmarc=pass";
         let real = "mxfront12.mail.yandex.net;\r\n\tspf=fail smtp.mail=a@b; dkim=none";
-        assert!(verdict(&[forged, real]) == Auth::Fail, "подделка отправителя не должна давать pass");
+        // Верхний заголовок не от доверенного сервера: не ищем «удобный» ниже, а честно
+        // говорим, что проверки нет. Иначе подделанный заголовок отправителя мог бы
+        // перебить настоящий, если authserv-id провайдера не попал в список.
+        assert!(
+            verdict(&[forged, real]) == Auth::Unknown,
+            "подделка отправителя не должна давать pass"
+        );
         assert!(verdict(&[forged]) == Auth::Unknown);
+        // Настоящий верхний заголовок от Яндекса, подделанный доверенный — ниже.
+        let genuine = "mx.yandex.com; dmarc=fail header.from=paypal.com";
+        let forged_trusted = "mxfront12.mail.yandex.net; dmarc=pass header.from=paypal.com";
+        assert!(
+            verdict(&[genuine, forged_trusted]) == Auth::Fail,
+            "нижний заголовок не перебивает верхний"
+        );
+        assert!(verdict(&["mx.yandex.net; dmarc=fail", "mx.yandex.net; dmarc=pass"]) == Auth::Fail);
+        // Верхний заголовок неизвестного сервера: доверенный ниже по-прежнему не считается.
+        assert!(verdict(&["mx.other.example; dmarc=fail", forged_trusted]) == Auth::Unknown);
     }
 
     #[test]

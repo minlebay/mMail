@@ -22,7 +22,14 @@ pub const YANDEX: Provider = Provider {
     imap_host: "imap.yandex.com",
     smtp_host: "smtp.yandex.com",
     saves_sent: false,
-    trusted_authserv: &[".yandex.net", ".yandex.ru"],
+    // authserv-id должен быть доменом самой Яндекса, а не любого сервера, который прислал письмо.
+    trusted_authserv: &[
+        ".yandex.net",
+        ".yandex.ru",
+        ".yandex.com",
+        ".yandex.by",
+        ".yandex.kz",
+    ],
 };
 pub const GMAIL: Provider = Provider {
     imap_host: "imap.gmail.com",

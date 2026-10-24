@@ -23,6 +23,7 @@ mod sanitize;
 mod scheme;
 mod smtp;
 mod store;
+mod text;
 mod tray;
 mod window_pins;
 mod window_state;
