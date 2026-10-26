@@ -4,7 +4,7 @@ use tauri::{Manager, State};
 use crate::config::ConfigStore;
 use crate::imap::Imap;
 use crate::folders;
-use crate::store::{Auth, Folder, Mailbox, Recipients, Scope, Store, Summary};
+use crate::store::{AddressFilter, Auth, Folder, Mailbox, Recipients, Scope, Store, Summary};
 use crate::text::{console_safe, display_safe};
 use crate::{links, remote, sanitize};
 
@@ -148,9 +148,12 @@ pub fn list_messages(
     offset: usize,
     limit: usize,
     unread_only: Option<bool>,
+    from_addr: Option<String>,
+    to_addr: Option<String>,
 ) -> Result<Page, String> {
     let query = query.trim().to_lowercase();
-    let (total, items) = store.page(Scope::parse(account.as_deref()), &folder, &query, offset, limit.min(MAX_PAGE), unread_only.unwrap_or(false)).ok_or("unknown folder")?;
+    let filter = AddressFilter { from: from_addr.as_deref(), to: to_addr.as_deref() };
+    let (total, items) = store.page(Scope::parse(account.as_deref()), &folder, &query, filter, offset, limit.min(MAX_PAGE), unread_only.unwrap_or(false)).ok_or("unknown folder")?;
     Ok(Page { total, items })
 }
 
@@ -714,9 +717,12 @@ pub async fn mark_folder_read(
     account: Option<String>,
     folder: String,
     query: Option<String>,
+    from_addr: Option<String>,
+    to_addr: Option<String>,
 ) -> Result<usize, String> {
     let query = query.unwrap_or_default().trim().to_lowercase();
-    let targets = store.unread_in(Scope::parse(account.as_deref()), &folder, &query).ok_or("unknown folder")?;
+    let filter = AddressFilter { from: from_addr.as_deref(), to: to_addr.as_deref() };
+    let targets = store.unread_in(Scope::parse(account.as_deref()), &folder, &query, filter).ok_or("unknown folder")?;
     let mut groups: std::collections::HashMap<(Option<String>, Folder), Vec<(u32, Option<u32>)>> = Default::default();
     for (id, account, folder, uid) in targets {
         groups.entry((account, folder)).or_default().push((id, uid));

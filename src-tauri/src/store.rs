@@ -243,13 +243,13 @@ impl Store {
     }
 
     /// Непрочитанные письма папки (`query` уже в нижнем регистре): `(id, ящик, папка, UID)`.
-    pub fn unread_in(&self, scope: Scope, folder: &str, query: &str) -> Option<Vec<(u32, Option<String>, Folder, Option<u32>)>> {
+    pub fn unread_in(&self, scope: Scope, folder: &str, query: &str, filter: AddressFilter) -> Option<Vec<(u32, Option<String>, Folder, Option<u32>)>> {
         let in_folder = folder_filter(folder)?;
         let entries = self.entries.read().unwrap();
         Some(
             entries
                 .iter()
-                .filter(|e| e.msg.unread && scope.contains(&e.msg) && in_folder(&e.msg) && (query.is_empty() || e.haystack.contains(query)))
+                .filter(|e| e.msg.unread && scope.contains(&e.msg) && in_folder(&e.msg) && filter.matches(&e.msg) && (query.is_empty() || e.haystack.contains(query)))
                 .map(|e| (e.id, e.msg.account.clone(), e.msg.folder, e.msg.uid))
                 .collect(),
         )
@@ -391,12 +391,12 @@ impl Store {
     }
 
     /// Страница писем папки (`query` уже в нижнем регистре) и общее число совпадений.
-    pub fn page(&self, scope: Scope, folder: &str, query: &str, offset: usize, limit: usize, unread_only: bool) -> Option<(usize, Vec<Summary>)> {
+    pub fn page(&self, scope: Scope, folder: &str, query: &str, filter: AddressFilter, offset: usize, limit: usize, unread_only: bool) -> Option<(usize, Vec<Summary>)> {
         let in_folder = folder_filter(folder)?;
         let entries = self.entries.read().unwrap();
         let mut total = 0;
         let mut items = Vec::with_capacity(limit);
-        let matches = |e: &&Entry| scope.contains(&e.msg) && in_folder(&e.msg) && (!unread_only || e.msg.unread) && (query.is_empty() || e.haystack.contains(query));
+        let matches = |e: &&Entry| scope.contains(&e.msg) && in_folder(&e.msg) && filter.matches(&e.msg) && (!unread_only || e.msg.unread) && (query.is_empty() || e.haystack.contains(query));
         for e in entries.iter().filter(matches) {
             if total >= offset && items.len() < limit {
                 items.push(Summary {
@@ -637,6 +637,22 @@ impl<'a> Scope<'a> {
     }
 }
 
+/// Точный фильтр по адресу: «от» — для входящих, «кому» — для отправленных.
+#[derive(Clone, Copy, Default)]
+pub struct AddressFilter<'a> {
+    pub from: Option<&'a str>,
+    pub to: Option<&'a str>,
+}
+
+impl AddressFilter<'_> {
+    fn matches(&self, m: &Message) -> bool {
+        self.from.is_none_or(|addr| m.from_addr.eq_ignore_ascii_case(addr))
+            && self.to.is_none_or(|addr| {
+                m.recipients.as_ref().is_some_and(|r| r.to.iter().chain(r.cc.iter()).any(|a| a.addr.eq_ignore_ascii_case(addr)))
+            })
+    }
+}
+
 fn folder_filter(folder: &str) -> Option<Box<dyn Fn(&Message) -> bool>> {
     if folder == "starred" {
         return Some(Box::new(|m| m.starred && !matches!(m.folder, Folder::Trash | Folder::Junk)));
@@ -699,20 +715,20 @@ mod tests {
         messages.extend([other_account, other_folder, search_match]);
         store.append(messages);
         let scope = || Scope::parse(Some("me@ya.ru"));
-        let (total, first) = store.page(scope(), "inbox", "", 0, 100, true).unwrap();
-        let (same_total, second) = store.page(scope(), "inbox", "", 100, 100, true).unwrap();
+        let (total, first) = store.page(scope(), "inbox", "", AddressFilter::default(), 0, 100, true).unwrap();
+        let (same_total, second) = store.page(scope(), "inbox", "", AddressFilter::default(), 100, 100, true).unwrap();
         assert_eq!((total, same_total, first.len(), second.len()), (104, 104, 100, 4));
         assert!(first.iter().chain(&second).all(|m| m.unread));
         assert!(first.iter().all(|a| second.iter().all(|b| a.id != b.id)));
-        assert_eq!(store.page(scope(), "inbox", "", 0, 100, false).unwrap().0, 206);
-        assert_eq!(store.page(Scope::All, "inbox", "", 0, 100, true).unwrap().0, 105);
-        assert_eq!(store.page(scope(), "f:Work", "", 0, 100, true).unwrap().0, 1);
-        let (total, found) = store.page(scope(), "inbox", "unique", 0, 100, true).unwrap();
+        assert_eq!(store.page(scope(), "inbox", "", AddressFilter::default(), 0, 100, false).unwrap().0, 206);
+        assert_eq!(store.page(Scope::All, "inbox", "", AddressFilter::default(), 0, 100, true).unwrap().0, 105);
+        assert_eq!(store.page(scope(), "f:Work", "", AddressFilter::default(), 0, 100, true).unwrap().0, 1);
+        let (total, found) = store.page(scope(), "inbox", "unique", AddressFilter::default(), 0, 100, true).unwrap();
         assert_eq!(total, 1);
         assert_eq!(found[0].subject, "Unique subject");
-        assert_eq!(store.page(scope(), "starred", "unique", 0, 100, true).unwrap().0, 1);
-        assert_eq!(store.page(scope(), "inbox", "missing", 0, 100, true).unwrap().0, 0);
-        assert!(store.page(scope(), "inbox", "", 104, 100, true).unwrap().1.is_empty());
+        assert_eq!(store.page(scope(), "starred", "unique", AddressFilter::default(), 0, 100, true).unwrap().0, 1);
+        assert_eq!(store.page(scope(), "inbox", "missing", AddressFilter::default(), 0, 100, true).unwrap().0, 0);
+        assert!(store.page(scope(), "inbox", "", AddressFilter::default(), 104, 100, true).unwrap().1.is_empty());
 
         // Массовое действие охватывает все страницы и ровно те же фильтры, что список.
         for (account, folder, query) in [
@@ -722,18 +738,42 @@ mod tests {
             (Some("me@ya.ru"), "starred", "unique"),
             (Some("me@ya.ru"), "inbox", "missing"),
         ] {
-            let targets = store.unread_in(Scope::parse(account), folder, query).unwrap();
-            let (_, visible) = store.page(Scope::parse(account), folder, query, 0, 1000, true).unwrap();
+            let targets = store.unread_in(Scope::parse(account), folder, query, AddressFilter::default()).unwrap();
+            let (_, visible) = store.page(Scope::parse(account), folder, query, AddressFilter::default(), 0, 1000, true).unwrap();
             assert_eq!(targets.iter().map(|m| m.0).collect::<Vec<_>>(), visible.iter().map(|m| m.id).collect::<Vec<_>>());
         }
-        let targets = store.unread_in(scope(), "inbox", "unique").unwrap();
+        let targets = store.unread_in(scope(), "inbox", "unique", AddressFilter::default()).unwrap();
         assert_eq!(targets.len(), 1);
         for (id, _, _, _) in targets {
             store.set_unread(id, false);
         }
-        assert!(store.unread_in(scope(), "inbox", "unique").unwrap().is_empty());
-        assert_eq!(store.unread_in(scope(), "inbox", "").unwrap().len(), 103);
-        assert_eq!(store.unread_in(scope(), "f:Work", "").unwrap().len(), 1);
+        assert!(store.unread_in(scope(), "inbox", "unique", AddressFilter::default()).unwrap().is_empty());
+        assert_eq!(store.unread_in(scope(), "inbox", "", AddressFilter::default()).unwrap().len(), 103);
+        assert_eq!(store.unread_in(scope(), "f:Work", "", AddressFilter::default()).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn address_filter_matches_sender_and_recipient_exactly() {
+        let store = Store::default();
+        let mut from_alice = message(1);
+        from_alice.from_addr = "Alice@Example.com".into();
+        let mut from_bob = message(2);
+        from_bob.from_addr = "bob@example.com".into();
+        let mut to_jane = message(3);
+        to_jane.recipients = Some(Recipients {
+            to: vec![Mailbox { name: "Jane".into(), addr: "jane@example.com".into() }],
+            cc: Vec::new(),
+        });
+        store.append(vec![from_alice, from_bob, to_jane]);
+        let by_from = AddressFilter { from: Some("alice@example.com"), to: None };
+        assert_eq!(store.page(Scope::All, "inbox", "", by_from, 0, 100, false).unwrap().0, 1);
+        // «Отметить все прочитанными» действует по тем же фильтрам, что и список.
+        assert_eq!(store.unread_in(Scope::All, "inbox", "", by_from).unwrap().len(), 1);
+        let by_to = AddressFilter { from: None, to: Some("JANE@example.com") };
+        assert_eq!(store.page(Scope::All, "inbox", "", by_to, 0, 100, false).unwrap().0, 1);
+        // Подстрока не подходит: фильтр по адресу точный.
+        let domain = AddressFilter { from: Some("example.com"), to: None };
+        assert_eq!(store.page(Scope::All, "inbox", "", domain, 0, 100, false).unwrap().0, 0);
     }
 
     #[test]
@@ -741,14 +781,14 @@ mod tests {
         let store = Store::default();
         store.append(vec![message(1)]);
         let id = store.id_of("me@ya.ru", Folder::Inbox, 1).unwrap();
-        assert_eq!(store.page(Scope::All, "inbox", "", 0, 100, true).unwrap().0, 1);
+        assert_eq!(store.page(Scope::All, "inbox", "", AddressFilter::default(), 0, 100, true).unwrap().0, 1);
         store.set_unread(id, false);
-        let (total, items) = store.page(Scope::All, "inbox", "", 0, 100, true).unwrap();
+        let (total, items) = store.page(Scope::All, "inbox", "", AddressFilter::default(), 0, 100, true).unwrap();
         assert_eq!(total, 0);
         assert!(items.is_empty());
-        assert_eq!(store.page(Scope::All, "inbox", "", 0, 100, false).unwrap().0, 1);
+        assert_eq!(store.page(Scope::All, "inbox", "", AddressFilter::default(), 0, 100, false).unwrap().0, 1);
         store.set_unread(id, true);
-        assert_eq!(store.page(Scope::All, "inbox", "", 0, 100, true).unwrap().1[0].id, id);
+        assert_eq!(store.page(Scope::All, "inbox", "", AddressFilter::default(), 0, 100, true).unwrap().1[0].id, id);
     }
 
     #[test]

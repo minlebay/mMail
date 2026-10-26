@@ -20,6 +20,9 @@
   let query = $state('');
   let searchInput = $state();
   let unreadOnly = $state(false);
+  // Точный фильтр по адресу: входящие — отправитель, отправленные — получатель.
+  let fromFilter = $state(null);
+  let toFilter = $state(null);
   let markingRead = $state(false);
   let debounced = $state('');
   let total = $state(0);
@@ -41,8 +44,20 @@
     return () => clearTimeout(t);
   });
 
+  // Фильтр по адресу относится к текущей папке: при переходе в другую снимаем его.
+  let filterScope = '';
   $effect(() => {
-    const scope = { account, folder, unreadOnly };
+    const key = `${account ?? ''}\u0000${folder}`;
+    if (filterScope === key) return;
+    filterScope = key;
+    untrack(() => {
+      fromFilter = null;
+      toFilter = null;
+    });
+  });
+
+  $effect(() => {
+    const scope = { account, folder, unreadOnly, fromFilter, toFilter };
     const q = debounced;
     untrack(() => reset(scope, q));
   });
@@ -97,12 +112,12 @@
     for (let p = from; p <= to; p++) load(p);
   }
 
-  async function load(p, scope = { account, folder, unreadOnly }, q = debounced) {
+  async function load(p, scope = { account, folder, unreadOnly, fromFilter, toFilter }, q = debounced) {
     if ((pages.has(p) && !stale.has(p)) || pending.has(p)) return;
     const gen = generation;
     pending.add(p);
     try {
-      const res = await listMessages(scope.account, scope.folder, q, p * PAGE, PAGE, scope.unreadOnly);
+      const res = await listMessages(scope.account, scope.folder, q, p * PAGE, PAGE, scope.unreadOnly, scope.fromFilter, scope.toFilter);
       if (gen !== generation) return;
       total = res.total;
       // После прочтения/удаления последней страницы возвращаемся к оставшимся письмам.
@@ -131,7 +146,7 @@
     if (markingRead || !loaded || !total || query.trim() !== debounced) return;
     markingRead = true;
     try {
-      await markFolderRead(account, folder, debounced);
+      await markFolderRead(account, folder, debounced, fromFilter, toFilter);
     } catch (err) {
       onerror?.(String(err));
     } finally {
@@ -140,8 +155,35 @@
     }
   }
 
+  // Входящее фильтруем по отправителю, отправленное — по каждому получателю.
+  function addressFilters(item) {
+    if (outgoing) {
+      return item.to.map((a) => ({
+        label: `Все письма получателю: ${a.addr}`,
+        run: () => setAddressFilter(null, a.addr),
+      }));
+    }
+    return item.fromAddr
+      ? [{ label: `Все письма отправителя: ${item.fromAddr}`, run: () => setAddressFilter(item.fromAddr, null) }]
+      : [];
+  }
+
+  function setAddressFilter(from, to) {
+    fromFilter = from;
+    toFilter = to;
+    // Новый фильтр показывает все письма адресата, поэтому старый поиск сбрасываем.
+    query = '';
+    debounced = '';
+  }
+
+  function clearAddressFilter() {
+    fromFilter = null;
+    toFilter = null;
+  }
+
   function menu(event, item) {
     if (!item) return;
+    const filters = addressFilters(item);
     showContextMenu(event, [
       { label: 'Открыть письмо', run: () => onselect(item.id) },
       { label: 'Ответить', run: () => onreply(item, 'reply') },
@@ -158,6 +200,7 @@
       { label: 'Копировать адрес отправителя', run: () => writeClipboard(item.fromAddr) },
       ...(item.to.length ? [{ label: 'Копировать адреса получателей', run: () => writeClipboard(addrs(item.to)) }] : []),
       { label: 'Копировать тему', run: () => writeClipboard(item.subject) },
+      ...(filters.length ? [{ separator: true }, ...filters] : []),
       { separator: true },
       ...(folder === 'junk' || folder === 'trash' ? [{ label: 'Переместить во «Входящие»', run: () => moveTo(item, item.account ?? '', 'inbox') }] : []),
       ...(folder === 'inbox' ? [{ label: 'Это спам', run: () => moveTo(item, item.account ?? '', 'junk') }] : []),
@@ -220,6 +263,20 @@
       </button>
     {/if}
   </label>
+  {#if fromFilter || toFilter}
+    <div class="address-filter" title={fromFilter ?? toFilter}>
+      <Icon name="filter" size={13} />
+      <span>{fromFilter ? $t("От: {address}", { address: fromFilter }) : $t("Кому: {address}", { address: toFilter })}</span>
+      <button
+        class="clear"
+        aria-label={$t("Сбросить фильтр по адресу")}
+        title={$t("Сбросить фильтр по адресу")}
+        onclick={clearAddressFilter}
+      >
+        <Icon name="x" size={13} />
+      </button>
+    </div>
+  {/if}
   <label class="unread-filter">
     <input type="checkbox" bind:checked={unreadOnly} />
     {$t("Только непрочитанные")}
@@ -341,6 +398,37 @@
     color: var(--muted);
   }
   .search .clear:hover {
+    background: rgba(var(--ink), 0.14);
+    color: inherit;
+  }
+
+  .address-filter {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 6px 5px 10px;
+    border-radius: 9px;
+    background: var(--accent-soft);
+    font-size: 13px;
+  }
+  .address-filter span {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .address-filter .clear {
+    flex: none;
+    width: 22px;
+    height: 22px;
+    display: grid;
+    place-items: center;
+    border-radius: 50%;
+    color: var(--muted);
+  }
+  .address-filter .clear:hover {
     background: rgba(var(--ink), 0.14);
     color: inherit;
   }

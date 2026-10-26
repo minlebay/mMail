@@ -1266,5 +1266,25 @@
   "неизвестная папка": {
     "en": "unknown folder",
     "sr": "nepoznata fascikla"
+  },
+  "Все письма отправителя: {address}": {
+    "en": "All messages from {address}",
+    "sr": "Sve poruke od {address}"
+  },
+  "Все письма получателю: {address}": {
+    "en": "All messages to {address}",
+    "sr": "Sve poruke za {address}"
+  },
+  "От: {address}": {
+    "en": "From: {address}",
+    "sr": "Od: {address}"
+  },
+  "Кому: {address}": {
+    "en": "To: {address}",
+    "sr": "Za: {address}"
+  },
+  "Сбросить фильтр по адресу": {
+    "en": "Clear address filter",
+    "sr": "Ukloni filter po adresi"
   }
 }
