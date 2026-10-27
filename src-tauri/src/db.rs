@@ -13,7 +13,7 @@ use zeroize::Zeroizing;
 use crate::imap::Result;
 use crate::store::{Auth, Folder, Message, Opened, Recipients};
 
-const SCHEMA_VERSION: i32 = 4;
+const SCHEMA_VERSION: i32 = 5;
 
 pub struct Db(Mutex<Connection>);
 
@@ -203,9 +203,35 @@ impl Db {
         Ok(html.flatten())
     }
 
+    /// Исходник письма (`None` — не скачан или стёрт по сроку хранения). Нужен, чтобы
+    /// сохранить вложение, не скачивая всё письмо с сервера заново.
+    pub fn raw(&self, account: &str, folder: Folder, uid: u32) -> Result<Option<Vec<u8>>> {
+        let conn = self.0.lock().unwrap();
+        let raw = conn
+            .query_row(
+                "SELECT raw FROM messages WHERE account = ?1 AND folder = ?2 AND uid = ?3",
+                params![account, folder_to(folder), uid],
+                |r| r.get::<_, Option<Vec<u8>>>(0),
+            )
+            .optional()?;
+        Ok(raw.flatten())
+    }
+
+    /// Кладёт исходник письма рядом с телом: из него достаются вложения.
+    pub fn set_raw(&self, account: &str, folder: Folder, uid: u32, raw: &[u8]) -> Result<()> {
+        self.0.lock().unwrap().execute(
+            "UPDATE messages SET raw = ?4 WHERE account = ?1 AND folder = ?2 AND uid = ?3",
+            params![account, folder_to(folder), uid, raw],
+        )?;
+        Ok(())
+    }
+
     pub fn clear_bodies(&self, cutoff: i64) -> Result<u64> {
         let conn = self.0.lock().unwrap();
-        let cleared = conn.execute("UPDATE messages SET html = NULL WHERE html IS NOT NULL AND timestamp < ?1", [cutoff])?;
+        let cleared = conn.execute(
+            "UPDATE messages SET html = NULL, raw = NULL WHERE (html IS NOT NULL OR raw IS NOT NULL) AND timestamp < ?1",
+            [cutoff],
+        )?;
         let free: i64 = conn.query_row("PRAGMA freelist_count", [], |r| r.get(0))?;
         // Очистка по сроку идёт при каждом запуске; если стирать нечего, базу не трогаем.
         if cleared > 0 || free > 0 {
@@ -330,6 +356,16 @@ fn migrate(conn: &Connection) -> Result<()> {
              PRAGMA user_version = 4;
              COMMIT;",
         )?;
+        version = 4;
+    }
+    if version == 4 {
+        // v5: исходник письма — чтобы «Сохранить вложение» не скачивало письмо с сервера заново.
+        conn.execute_batch(
+            "BEGIN;
+             ALTER TABLE messages ADD COLUMN raw BLOB;
+             PRAGMA user_version = 5;
+             COMMIT;",
+        )?;
     }
     Ok(())
 }
@@ -354,6 +390,7 @@ fn create_schema(conn: &Connection) -> Result<()> {
             attachments TEXT NOT NULL,
             unavailable INTEGER NOT NULL DEFAULT 0,
             recipients TEXT,
+            raw BLOB,
             PRIMARY KEY (account, folder, uid)
         ) WITHOUT ROWID;
         CREATE TABLE folders (
@@ -362,7 +399,7 @@ fn create_schema(conn: &Connection) -> Result<()> {
             uidvalidity INTEGER NOT NULL,
             PRIMARY KEY (account, folder)
         ) WITHOUT ROWID;
-        PRAGMA user_version = 4;",
+        PRAGMA user_version = 5;",
     )?;
     Ok(())
 }

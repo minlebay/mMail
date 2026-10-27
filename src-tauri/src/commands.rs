@@ -170,7 +170,11 @@ pub async fn get_message(
     let html = match (m.html.take(), m.account.as_deref(), m.uid) {
         (Some(html), _, _) => html,
         (None, Some(account), Some(uid)) => {
-            let opened = imap.open(account, m.folder, uid).await.map_err(|e| e.to_string())?;
+            let (opened, raw) = imap.open_raw(account, m.folder, uid).await.map_err(|e| e.to_string())?;
+            // Исходник письма с вложениями — в кэш: «Сохранить вложение» возьмёт вложение из него.
+            if !opened.attachments.is_empty() {
+                store.cache_raw(account, m.folder, uid, &raw);
+            }
             let html = opened.html.clone();
             m.auth = opened.auth;
             m.attachments = opened.attachments.clone();
@@ -535,15 +539,23 @@ fn deceptive_warnings(found: Vec<links::Deceptive>) -> Vec<String> {
         .collect()
 }
 
-/// Сохраняет вложение: письмо заново берётся с сервера, путь выбирают в системном диалоге.
-/// Возвращает false, если диалог закрыли без выбора.
+/// Сохраняет вложение: берёт его из кэша письма (или с сервера, если кэша нет),
+/// путь выбирают в системном диалоге. Возвращает false, если диалог закрыли без выбора.
 #[tauri::command]
 pub async fn save_attachment(app: tauri::AppHandle, store: State<'_, Store>, imap: State<'_, Imap>, id: u32, index: usize) -> Result<bool, String> {
     use tauri_plugin_dialog::DialogExt;
 
-    let m = store.details(id).ok_or("no such message")?;
-    let (Some(account), Some(uid)) = (m.account.as_deref(), m.uid) else { return Err("у демо-писем нет вложений".into()) };
-    let raw = imap.raw(account, m.folder, uid).await.map_err(|e| e.to_string())?;
+    let (account, folder, uid) = store.location(id).ok_or("no such message")?;
+    let (Some(account), Some(uid)) = (account.as_deref(), uid) else { return Err("у демо-писем нет вложений".into()) };
+    // Письмо уже скачано при открытии — берём вложение из кэша, а сервер беспокоим только без него.
+    let raw = match store.raw(account, folder, uid) {
+        Some(raw) => raw,
+        None => {
+            let raw = imap.raw(account, folder, uid).await.map_err(|e| e.to_string())?;
+            store.cache_raw(account, folder, uid, &raw);
+            raw
+        }
+    };
     let parsed = mail_parser::MessageParser::default().parse(&raw).ok_or("не удалось разобрать письмо")?;
     let parts = crate::attachments::visible(&parsed);
     let part = parts.get(index).ok_or("вложение не найдено")?;

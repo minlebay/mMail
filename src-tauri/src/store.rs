@@ -177,6 +177,10 @@ pub struct Opened {
     pub attachments: Vec<AttachmentMeta>,
 }
 
+/// Предел исходника, который кладём в кэш ради сохранения вложений. Больше — редкость,
+/// а диск занимать надолго не хочется: такое письмо при сохранении вложения скачается снова.
+const RAW_CACHE_MAX_BYTES: usize = 32 * 1024 * 1024;
+
 #[derive(Default)]
 pub struct Store {
     next_id: AtomicU32,
@@ -450,6 +454,13 @@ impl Store {
         entries.iter().find(|e| e.msg.uid == Some(uid) && e.msg.folder == folder && e.msg.account.as_deref() == Some(account)).map(|e| e.id)
     }
 
+    /// Ящик, папка и UID письма — без чтения тела из кэша (оно может быть в мегабайтах).
+    pub fn location(&self, id: u32) -> Option<(Option<String>, Folder, Option<u32>)> {
+        let entries = self.entries.read().unwrap();
+        let e = entries.iter().find(|e| e.id == id)?;
+        Some((e.msg.account.clone(), e.msg.folder, e.msg.uid))
+    }
+
     pub fn details(&self, id: u32) -> Option<Details> {
         let mut details = {
             let entries = self.entries.read().unwrap();
@@ -607,6 +618,28 @@ impl Store {
             e.msg.recipients = Some(opened.recipients);
             e.haystack = haystack(&e.msg);
         }
+    }
+
+    /// Исходник письма из кэша: из него берутся вложения, не скачивая письмо с сервера.
+    pub fn raw(&self, account: &str, folder: Folder, uid: u32) -> Option<Vec<u8>> {
+        let db = self.db.get()?;
+        match db.raw(account, folder, uid) {
+            Ok(raw) => raw,
+            Err(e) => {
+                eprintln!("mMail: чтение исходника письма из кэша: {e}");
+                None
+            }
+        }
+    }
+
+    /// Кладёт исходник письма с вложениями в кэш — целиком, как его отдал сервер:
+    /// вложения и заголовки в нём всегда согласованы, а разбор при сохранении недорог.
+    /// Очень большие письма не кэшируем, иначе кэш растёт быстрее, чем его чистят.
+    pub fn cache_raw(&self, account: &str, folder: Folder, uid: u32, raw: &[u8]) {
+        if raw.len() > RAW_CACHE_MAX_BYTES {
+            return;
+        }
+        self.persist(|db| db.set_raw(account, folder, uid, raw));
     }
 }
 
@@ -837,6 +870,28 @@ mod tests {
         assert_eq!(again.unopened("me@ya.ru", Folder::Inbox, None), vec![2]);
         again.clear_bodies(i64::MAX).unwrap();
         assert_eq!(again.details(id).unwrap().html, None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn message_source_for_attachments_survives_restart_until_body_expires() {
+        let dir = std::env::temp_dir().join(format!("mmail-test-raw-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let key = [6u8; 32];
+        let raw = b"From: a@b\r\nContent-Type: text/plain\r\n\r\nbody";
+        let store = Store::default();
+        store.attach_db(Db::open(&dir, &key).unwrap()).unwrap();
+        store.append(vec![message(1)]);
+        assert!(store.raw("me@ya.ru", Folder::Inbox, 1).is_none());
+        store.cache_raw("me@ya.ru", Folder::Inbox, 1, raw);
+        drop(store);
+
+        let again = Store::default();
+        again.attach_db(Db::open(&dir, &key).unwrap()).unwrap();
+        assert_eq!(again.raw("me@ya.ru", Folder::Inbox, 1).as_deref(), Some(&raw[..]));
+        // Исходник живёт ровно столько же, сколько тело письма.
+        again.clear_bodies(i64::MAX).unwrap();
+        assert!(again.raw("me@ya.ru", Folder::Inbox, 1).is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

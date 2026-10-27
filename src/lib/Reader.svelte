@@ -45,6 +45,7 @@
     msg = null;
     error = '';
     saved = {};
+    saveError = '';
     translation = null;
     if (current != null) load(current, false);
   });
@@ -127,18 +128,20 @@
   }
 
   let saved = $state({});
+  let saveError = $state('');
 
   const size = (bytes) =>
     bytes < 1024 ? `${bytes} ${$t("Б")}` : bytes < 1048576 ? `${(bytes / 1024).toFixed(0)} ${$t("КБ")}` : `${(bytes / 1048576).toFixed(1)} ${$t("МБ")}`;
 
   async function save(index) {
+    saveError = '';
     saved = { ...saved, [index]: 'saving' };
     try {
       const ok = await saveAttachment(msg.id, index);
       saved = { ...saved, [index]: ok ? 'done' : undefined };
     } catch (e) {
       saved = { ...saved, [index]: undefined };
-      error = String(e);
+      saveError = String(e);
     }
   }
 
@@ -267,16 +270,19 @@
     {#if msg.attachments.length}
       <div class="attachments">
         {#each msg.attachments as a (a.index)}
-          <div class="file" role="group" aria-label={a.name} oncontextmenu={(event) => attachmentMenu(event, a)} class:dangerous={a.dangerous} title={a.dangerous ? $t("Исполняемый файл — запускайте, только если доверяете отправителю") : a.name}>
+          <div class="file" role="group" aria-label={a.name} aria-busy={saved[a.index] === 'saving'} oncontextmenu={(event) => attachmentMenu(event, a)} class:dangerous={a.dangerous} title={a.dangerous ? $t("Исполняемый файл — запускайте, только если доверяете отправителю") : a.name}>
             <Icon name={a.dangerous ? 'alert' : 'paperclip'} size={14} />
             <span class="fname">{a.name}</span>
             <span class="fsize">{size(a.size)}</span>
-            <button onkeydown={(event) => { if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) attachmentMenu(event, a); }} class="save" disabled={saved[a.index] === 'saving'} onclick={() => save(a.index)} title={$t("Сохранить")}>
-              {#if saved[a.index] === 'done'}✓{:else}<Icon name="download" size={14} />{/if}
+            <button onkeydown={(event) => { if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) attachmentMenu(event, a); }} class="save" class:spinning={saved[a.index] === 'saving'} disabled={saved[a.index] === 'saving'} onclick={() => save(a.index)} title={saved[a.index] === 'saving' ? $t("Сохраняю…") : $t("Сохранить")}>
+              {#if saved[a.index] === 'done'}✓{:else if saved[a.index] === 'saving'}<Icon name="refresh" size={14} />{:else}<Icon name="download" size={14} />{/if}
             </button>
           </div>
         {/each}
       </div>
+      {#if saveError}
+        <div class="banner danger"><Icon name="alert" size={15} /><span class="text">{$t("Не удалось сохранить вложение:")} {saveError}</span></div>
+      {/if}
     {/if}
 
     <footer>
@@ -468,6 +474,14 @@
   }
   .save:hover:not(:disabled) {
     background: rgba(var(--ink), 0.16);
+  }
+  .save.spinning :global(svg) {
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   footer {

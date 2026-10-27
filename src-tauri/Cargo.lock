@@ -2588,7 +2588,7 @@ dependencies = [
 
 [[package]]
 name = "mmail"
-version = "0.1.15"
+version = "0.1.17"
 dependencies = [
  "ammonia",
  "async-imap",

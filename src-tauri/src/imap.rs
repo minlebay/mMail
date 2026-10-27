@@ -1007,7 +1007,12 @@ async fn prefetch_bodies(
             let (Some(uid), Some(raw)) = (f.uid, f.body()) else { continue };
             match parse_opened(raw, account.provider) {
                 Ok(opened) => {
-                    changed |= store.set_opened_uid(&account.email, cursor.folder, uid, opened)
+                    let with_attachments = !opened.attachments.is_empty();
+                    changed |= store.set_opened_uid(&account.email, cursor.folder, uid, opened);
+                    // Вложения сохраняются из исходника письма: держим его рядом с телом.
+                    if with_attachments {
+                        store.cache_raw(&account.email, cursor.folder, uid, raw);
+                    }
                 }
                 Err(e) => eprintln!(
                     "mMail: письмо {uid} не разобрано: {}",
@@ -1206,9 +1211,15 @@ impl Imap {
 
     /// Тело письма, проверка отправителя, идентификаторы цепочки и список вложений.
     pub async fn open(&self, email: &str, folder: Folder, uid: u32) -> Result<Opened> {
+        Ok(self.open_raw(email, folder, uid).await?.0)
+    }
+
+    /// То же, но вместе с исходником письма: его кладут в кэш, чтобы вложения
+    /// сохранялись без повторной загрузки письма с сервера.
+    pub async fn open_raw(&self, email: &str, folder: Folder, uid: u32) -> Result<(Opened, Vec<u8>)> {
         let raw = self.raw(email, folder, uid).await?;
         let provider = self.connection(email).ok_or("ящик отключён")?.account.provider;
-        parse_opened(&raw, provider)
+        Ok((parse_opened(&raw, provider)?, raw))
     }
 }
 
