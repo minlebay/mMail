@@ -20,9 +20,9 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use url::Url;
 use webkit2gtk::{
-    NavigationPolicyDecision, NavigationPolicyDecisionExt, NavigationType, PolicyDecisionExt, PolicyDecisionType, SettingsExt,
-    URIRequestExt, UserContentInjectedFrames, UserContentManager, UserContentManagerExt, UserStyleLevel, UserStyleSheet,
-    WebContext, WebView, WebViewExt,
+    HitTestResultExt, NavigationPolicyDecision, NavigationPolicyDecisionExt, NavigationType, PolicyDecisionExt,
+    PolicyDecisionType, SettingsExt, URIRequestExt, UserContentInjectedFrames, UserContentManager, UserContentManagerExt,
+    UserStyleLevel, UserStyleSheet, WebContext, WebView, WebViewExt,
 };
 
 pub const ZOOM_MIN: f64 = 0.5;
@@ -54,6 +54,12 @@ thread_local! {
 #[derive(Clone, Serialize)]
 struct MailZoom {
     zoom: f64,
+}
+
+/// Адрес ссылки под курсором. `None` — курсор не над ссылкой (в том числе ушёл из письма).
+#[derive(Clone, Serialize)]
+struct MailLink {
+    url: Option<String>,
 }
 
 /// Встраивает вид письма поверх основного webview главного окна. Вызывать в главном потоке.
@@ -90,6 +96,7 @@ pub fn install(main_view: &WebView, app: AppHandle, app_zoom: f64) {
 
     let links = app.clone();
     view.connect_decide_policy(move |_, decision, kind| decide(&links, decision, kind));
+    install_link_hover(&view, app.clone());
     install_zoom_wheel(&view, app.clone());
     crate::context_menu::install(&view, app, "mail".into());
 
@@ -122,6 +129,34 @@ fn decide(app: &AppHandle, decision: &webkit2gtk::PolicyDecision, kind: PolicyDe
     }
     decision.ignore();
     true
+}
+
+/// Наведение на ссылку: адрес уходит странице, она показывает его в подвале письма.
+/// `mouse-target-changed` срабатывает при смене цели, а `leave-notify-event` сбрасывает
+/// строку, когда курсор уходит из вида письма (иначе последний адрес остался бы висеть).
+fn install_link_hover(view: &WebView, app: AppHandle) {
+    let target_app = app.clone();
+    view.connect_mouse_target_changed(move |_, hit, _| {
+        let url = hit
+            .context_is_link()
+            .then(|| hit.link_uri())
+            .flatten()
+            .and_then(|uri| link_to_show(uri.as_str()));
+        let _ = target_app.emit_to("main", "mail-link-hover", MailLink { url });
+    });
+
+    let leave_app = app;
+    view.connect_leave_notify_event(move |_, _| {
+        let _ = leave_app.emit_to("main", "mail-link-hover", MailLink { url: None });
+        glib::Propagation::Proceed
+    });
+}
+
+/// Только http(s) и mailto. Санитайзер и так вырезает прочие схемы из `href`, но строка
+/// состояния не должна показывать `file:` или `javascript:`, даже если такая ссылка просочится.
+fn link_to_show(uri: &str) -> Option<String> {
+    let url = Url::parse(uri).ok()?;
+    crate::links::openable(&url).then(|| uri.to_string())
 }
 
 /// Ctrl + колёсико над письмом — родной масштаб WebKit, без IPC и раскладки страницы приложения.
@@ -193,13 +228,20 @@ pub fn set_app_zoom(app: &AppHandle, zoom: f64) {
 /// Документ письма (уже очищенный ядром; схему и мягкие края подставила страница).
 #[tauri::command]
 pub fn mail_view_load(app: AppHandle, html: String) -> Result<(), String> {
-    on_main(&app, move |m| m.view.load_html(&html, None))
+    let result = on_main(&app, move |m| m.view.load_html(&html, None));
+    // Старый адрес не должен остаться в подвале, пока новый документ ещё грузится.
+    let _ = app.emit_to("main", "mail-link-hover", MailLink { url: None });
+    result
 }
 
 /// Видимость отдельно от загрузки: диалог поверх прячет письмо, не сбрасывая его прокрутку.
 #[tauri::command]
 pub fn mail_view_visible(app: AppHandle, visible: bool) -> Result<(), String> {
-    on_main(&app, move |m| m.shown = visible)
+    let result = on_main(&app, move |m| m.shown = visible);
+    if !visible {
+        let _ = app.emit_to("main", "mail-link-hover", MailLink { url: None });
+    }
+    result
 }
 
 /// Место под письмо в CSS-пикселях страницы главного окна.
@@ -224,4 +266,19 @@ pub fn mail_view_zoom(app: AppHandle, zoom: f64) -> Result<(), String> {
     })?;
     let _ = app.emit_to("main", "mail-zoom", MailZoom { zoom });
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_openable_links_reach_the_status_line() {
+        assert_eq!(link_to_show("https://a.example/path?q=1").as_deref(), Some("https://a.example/path?q=1"));
+        assert_eq!(link_to_show("http://a.example").as_deref(), Some("http://a.example"));
+        assert_eq!(link_to_show("mailto:a@b.example").as_deref(), Some("mailto:a@b.example"));
+        for bad in ["file:///etc/passwd", "javascript:alert(1)", "data:text/html,x", "not a url"] {
+            assert!(link_to_show(bad).is_none(), "{bad}");
+        }
+    }
 }

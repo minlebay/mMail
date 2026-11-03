@@ -38,16 +38,24 @@
   let msg = $state(null);
   let error = $state('');
   let loadingRemote = $state(false);
+  // Адрес ссылки под курсором — его присылает вид письма (mailview.rs).
+  let hoveredLink = $state('');
   let request = 0;
 
   $effect(() => {
     const current = id;
     msg = null;
     error = '';
+    hoveredLink = '';
     saved = {};
     saveError = '';
     translation = null;
     if (current != null) load(current, false);
+  });
+
+  $effect(() => {
+    const stop = listen('mail-link-hover', (e) => (hoveredLink = e.payload?.url ?? ''));
+    return () => stop.then((f) => f());
   });
 
   // Перевод: null — оригинал; { loading } — ждём переводчик; { srcdoc, sourceLanguage } — готово.
@@ -288,6 +296,7 @@
     <footer>
       <button class="action" onclick={() => onreply(msg, 'reply')}><Icon name="reply" />{$t("Ответить")}</button>
       <button class="action" onclick={() => onreply(msg, 'forward')}><Icon name="forward" />{$t("Переслать")}</button>
+      <div class="link-hover" class:shown={hoveredLink} title={hoveredLink}>{hoveredLink}</div>
       {#if mailZoom !== 1}
         <button class="zoom-reset" title={$t("Вернуть масштаб письма")} onclick={() => mailViewZoom(1)}>{Math.round(mailZoom * 100)}%</button>
       {/if}
@@ -490,8 +499,24 @@
     gap: 10px;
     padding-top: 12px;
   }
+  /* Строка состояния ссылки: место зарезервировано всегда, чтобы подвал не прыгал. */
+  .link-hover {
+    flex: 1;
+    min-width: 0;
+    margin-left: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--muted);
+    font: 12px/1.4 ui-monospace, 'JetBrains Mono', monospace;
+    opacity: 0;
+    transition: opacity 0.12s;
+  }
+  .link-hover.shown {
+    opacity: 1;
+  }
   .zoom-reset {
-    margin-left: auto;
+    flex: none;
     height: 26px;
     padding: 0 10px;
     border-radius: 13px;
