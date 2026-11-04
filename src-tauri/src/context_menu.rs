@@ -17,7 +17,7 @@ use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
 use serde::Deserialize;
 use tauri::{AppHandle, Emitter, WebviewWindow};
-use webkit2gtk::{ContextMenuAction, ContextMenuExt, ContextMenuItemExt, WebViewExt};
+use webkit2gtk::{ContextMenuAction, ContextMenuExt, ContextMenuItemExt, HitTestResultExt, WebViewExt};
 
 /// Сколько ждать пунктов от страницы после клика (письмо во фрейме их не пришлёт).
 const PAGE_WAIT: Duration = Duration::from_millis(300);
@@ -56,10 +56,28 @@ pub struct Colors {
     border: String,
 }
 
+/// Что делать при выборе пункта меню правки.
+#[derive(Clone)]
+enum EditAction {
+    /// Команда конкретному виду, а не тому, что сейчас в фокусе: открытое меню забирает фокус,
+    /// и родное действие WebKit может скопировать не то или ничего.
+    Command(&'static str),
+    /// Адрес из hit test result. После закрытия меню WebKit уже не знает, что было под курсором.
+    Copy(String),
+    /// Всё остальное — родное действие WebKit.
+    Web(gio::Action),
+}
+
+struct Edit {
+    label: String,
+    action: EditAction,
+    enabled: bool,
+}
+
 struct Click {
     event: gdk::Event,
     /// Разрешённые действия правки WebKit для этого места.
-    edit: Vec<(String, gio::Action)>,
+    edit: Vec<Edit>,
     /// Есть выделенный текст (WebKit предлагает «Копировать») — можно перевести.
     has_selection: bool,
     view: webkit2gtk::WebView,
@@ -95,12 +113,27 @@ fn label(action: ContextMenuAction) -> Option<&'static str> {
 }
 
 pub fn install(view: &webkit2gtk::WebView, app: AppHandle, window_label: String) {
-    view.connect_context_menu(move |view, menu, event, _| {
+    view.connect_context_menu(move |view, menu, event, hit| {
         let items = menu.items();
         let has_selection = items.iter().any(|item| item.stock_action() == ContextMenuAction::Copy);
-        let edit: Vec<(String, gio::Action)> = items
+        let link = hit.context_is_link().then(|| hit.link_uri()).flatten().map(|uri| uri.to_string());
+        let image = hit.context_is_image().then(|| hit.image_uri()).flatten().map(|uri| uri.to_string());
+        let edit: Vec<Edit> = items
             .into_iter()
-            .filter_map(|item| Some((crate::i18n::text(&app, label(item.stock_action())?), item.gaction()?)))
+            .filter_map(|item| {
+                let stock = item.stock_action();
+                let label = crate::i18n::text(&app, label(stock)?);
+                let web = item.gaction();
+                let preferred = preferred_action(stock, link.as_deref(), image.as_deref());
+                let (action, enabled) = match preferred {
+                    Some(action) => (action, true),
+                    None => {
+                        let action = web?;
+                        (EditAction::Web(action.clone()), action.is_enabled())
+                    }
+                };
+                Some(Edit { label, action, enabled })
+            })
             .collect();
         let click = Click { event: event.clone(), edit, has_selection, view: view.clone(), at: Instant::now() };
         PENDING.with(|p| p.borrow_mut().entry(window_label.clone()).or_default().click = Some(click));
@@ -163,6 +196,39 @@ fn show_edit_only(app: &AppHandle, window_label: &str) {
     }
 }
 
+/// Копирование делаем сами: меню уже забрало фокус, и GAction может сработать не на том виде.
+/// Адреса ссылки и картинки берём из hit test result — после закрытия меню WebKit их уже не помнит.
+fn preferred_action(stock: ContextMenuAction, link: Option<&str>, image: Option<&str>) -> Option<EditAction> {
+    Some(match stock {
+        ContextMenuAction::Copy => EditAction::Command("Copy"),
+        ContextMenuAction::Cut => EditAction::Command("Cut"),
+        ContextMenuAction::Paste => EditAction::Command("Paste"),
+        ContextMenuAction::PasteAsPlainText => EditAction::Command("PasteAsPlainText"),
+        ContextMenuAction::SelectAll => EditAction::Command("SelectAll"),
+        ContextMenuAction::CopyLinkToClipboard => EditAction::Copy(link?.to_string()),
+        ContextMenuAction::CopyImageUrlToClipboard => EditAction::Copy(image?.to_string()),
+        _ => return None,
+    })
+}
+
+fn apply_edit(view: &webkit2gtk::WebView, action: EditAction) {
+    match action {
+        EditAction::Command(command) => {
+            // Меню ещё закрывается и держит фокус. Команду выполняем следующей итерацией
+            // главного цикла, когда фокус вернётся виду.
+            let view = view.clone();
+            glib::idle_add_local_once(move || {
+                view.grab_focus();
+                view.execute_editing_command(command);
+            });
+        }
+        EditAction::Copy(text) => {
+            gtk::Clipboard::get(&gdk::SELECTION_CLIPBOARD).set_text(&text);
+        }
+        EditAction::Web(action) => action.activate(None),
+    }
+}
+
 fn popup(app: &AppHandle, window_label: &str, click: Click, page: Option<PageMenu>) {
     if page.is_none() && click.edit.is_empty() {
         return;
@@ -190,11 +256,12 @@ fn popup(app: &AppHandle, window_label: &str, click: Click, page: Option<PageMen
             }
         }
         None => {
-            for (text, action) in &click.edit {
-                let entry = gtk::MenuItem::with_label(text);
-                entry.set_sensitive(action.is_enabled());
-                let action = action.clone();
-                entry.connect_activate(move |_| action.activate(None));
+            let view = click.view.clone();
+            for edit in &click.edit {
+                let entry = gtk::MenuItem::with_label(&edit.label);
+                entry.set_sensitive(edit.enabled);
+                let (view, action) = (view.clone(), edit.action.clone());
+                entry.connect_activate(move |_| apply_edit(&view, action.clone()));
                 menu.append(&entry);
             }
             // Окно перевода выделенного есть только в главном окне (письма читают там).
@@ -289,6 +356,29 @@ mod tests {
             ContextMenuAction::Reload, ContextMenuAction::GoBack, ContextMenuAction::InspectElement] {
             assert!(label(action).is_none());
         }
+    }
+
+    #[test]
+    fn clipboard_actions_use_explicit_commands_and_hit_test_urls() {
+        assert!(matches!(
+            preferred_action(ContextMenuAction::Copy, None, None),
+            Some(EditAction::Command("Copy"))
+        ));
+        assert!(matches!(
+            preferred_action(ContextMenuAction::Paste, None, None),
+            Some(EditAction::Command("Paste"))
+        ));
+        assert!(matches!(
+            preferred_action(ContextMenuAction::CopyLinkToClipboard, Some("https://a.example/x"), None),
+            Some(EditAction::Copy(url)) if url == "https://a.example/x"
+        ));
+        assert!(matches!(
+            preferred_action(ContextMenuAction::CopyImageUrlToClipboard, None, Some("https://a.example/i.png")),
+            Some(EditAction::Copy(url)) if url == "https://a.example/i.png"
+        ));
+        // Нет адреса в hit test — пусть решает родное действие WebKit.
+        assert!(preferred_action(ContextMenuAction::CopyLinkToClipboard, None, None).is_none());
+        assert!(preferred_action(ContextMenuAction::OpenLink, Some("https://a.example"), None).is_none());
     }
 
     #[test]
