@@ -1347,6 +1347,27 @@ async fn fetch_raw(session: &mut Session, folder: &str, uid: u32) -> Result<Vec<
     Ok(body.to_vec())
 }
 
+/// Исходник письма для командной строки, когда графика и синхронизации нет: отдельное
+/// подключение к ящику, папка открывается через EXAMINE (флаги на сервере не меняются),
+/// письмо читается через BODY.PEEK[]. В кэш ничего не пишется.
+pub async fn fetch_raw_detached(email: &str, folder: Folder, uid: u32) -> Result<Vec<u8>> {
+    let account = Account::new(email)?;
+    let password = accounts::password(&account.email).await?;
+    let mut session = connect(&account, &password).await?;
+    let result = async {
+        let folders = discover_folders(&mut session).await?;
+        let name = folders
+            .iter()
+            .find(|f| f.folder == folder)
+            .map(|f| f.server_name.clone())
+            .ok_or("папка не найдена на сервере")?;
+        fetch_raw(&mut session, &name, uid).await
+    }
+    .await;
+    let _ = session.logout().await;
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

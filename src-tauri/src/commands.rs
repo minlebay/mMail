@@ -565,26 +565,8 @@ pub async fn save_attachment(app: tauri::AppHandle, store: State<'_, Store>, ima
         return Ok(false);
     };
     let path = target.into_path().map_err(|e| e.to_string())?;
-    write_private(&path, part.contents()).map_err(|e| format!("{}: {e}", path.display()))?;
+    crate::attachments::write_private(&path, part.contents(), true).map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(true)
-}
-
-/// Запись с правами только владельца и без перехода по symlink: вложение может содержать
-/// чувствительные данные, а имя файла выбирается в том числе в общих каталогах.
-fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(path)?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
 }
 
 #[derive(Serialize)]
@@ -824,7 +806,7 @@ mod tests {
         symlink(&target, &link).unwrap();
 
         assert!(
-            write_private(&link, b"overwritten").is_err(),
+            crate::attachments::write_private(&link, b"overwritten", true).is_err(),
             "symlink не должен открываться"
         );
         assert_eq!(
@@ -834,7 +816,7 @@ mod tests {
         );
 
         let file = dir.join("attachment.pdf");
-        write_private(&file, b"secret").unwrap();
+        crate::attachments::write_private(&file, b"secret", true).unwrap();
         use std::os::unix::fs::PermissionsExt;
         assert_eq!(
             std::fs::metadata(&file).unwrap().permissions().mode() & 0o777,

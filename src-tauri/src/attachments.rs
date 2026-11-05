@@ -1,6 +1,7 @@
 //! Вложения входящих писем: что показывать, встроенные картинки (cid:), безопасные имена файлов.
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use base64::Engine;
 use lol_html::{element, HtmlRewriter, Settings};
@@ -116,6 +117,26 @@ const EXECUTABLE: &[&str] = &[
 pub fn is_dangerous(name: &str) -> bool {
     let lower = name.to_lowercase();
     lower.rsplit_once('.').is_some_and(|(_, ext)| EXECUTABLE.contains(&ext.trim()))
+}
+
+/// Запись вложения с правами только владельца и без перехода по symlink: файл может
+/// содержать чувствительные данные, а путь бывает в общем каталоге. `overwrite = false`
+/// не трогает существующий файл (в том числе symlink), `true` — перезаписывает обычный файл.
+pub fn write_private(path: &Path, bytes: &[u8], overwrite: bool) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).mode(0o600).custom_flags(libc::O_NOFOLLOW);
+    if overwrite {
+        options.create(true).truncate(true);
+    } else {
+        options.create_new(true);
+    }
+    let mut file = options.open(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
 }
 
 #[cfg(test)]

@@ -5,13 +5,18 @@
 //!   mmail list [--account a@b.c] [--folder inbox] [--unread] [--limit N] [--offset N] [--json]
 //!   mmail search [--account a@b.c] [--folder inbox] [--limit N] [--json] запрос…
 //!   mmail read ID [--html] [--json]
+//!   mmail attachments ID [--json]
+//!   mmail save-attachment ID [ИНДЕКС…] [--output ПУТЬ] [--force] [--json]
 //!
 //! Команды обслуживаются до запуска Tauri: окно не открывается, второй экземпляр не
 //! поднимается. Кэш писем открывается отдельным соединением только на чтение: файл не
 //! создаётся, не мигрирует и не пересоздаётся (в отличие от `db::Db::open`), ключ берётся
 //! из KWallet готовый — новый не создаётся. Свежесть писем — та, что успел сохранить
-//! работающий mMail.
+//! работающий mMail. `attachments` и `save-attachment` при отсутствии исходника письма в
+//! кэше скачивают его с IMAP (EXAMINE/BODY.PEEK) и в кэш не пишут; сами вложения
+//! сохраняются в указанный каталог.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -20,6 +25,7 @@ use serde::Serialize;
 use zeroize::Zeroizing;
 
 use crate::accounts;
+use crate::attachments::{self, AttachmentMeta};
 use crate::store::{date_label, Folder, Mailbox, Recipients};
 use crate::text::console_safe;
 
@@ -35,11 +41,17 @@ const USAGE: &str = "\
   mmail list [--account ЯЩИК] [--folder ПАПКА] [--unread] [--limit N] [--offset N] [--json]
   mmail search [--account ЯЩИК] [--folder ПАПКА] [--limit N] [--json] ЗАПРОС…
   mmail read ID [--html] [--json]
+  mmail attachments ID [--json]
+  mmail save-attachment ID [ИНДЕКС…] [--output ПУТЬ] [--force] [--json]
 
 ПАПКА — inbox, sent, drafts, trash, junk, archive или имя папки на сервере.
 ID — как в list/search: ящик:папка:uid (копируется целиком). Тело письма есть в кэше
 только у писем, которые уже открывали в mMail; у остальных в ответе будет body: null.
 --html отдаёт исходный HTML без очистки — не открывайте его в браузере.
+Вложения: ИНДЕКС — номер из attachments; без индексов сохраняются все. Если исходника
+письма в кэше нет, он скачивается с сервера (EXAMINE/BODY.PEEK, без изменения флагов и
+без записи в кэш). --output — файл для одного вложения или каталог; по умолчанию текущий
+каталог. Существующий файл не перезаписывается без --force.
 ";
 
 /// Разобранные аргументы команд чтения.
@@ -51,12 +63,25 @@ struct Opts {
     unread: bool,
     limit: usize,
     offset: usize,
+    output: Option<String>,
+    force: bool,
     words: Vec<String>,
 }
 
 impl Opts {
     fn parse(args: &[String]) -> Result<Self, String> {
-        let mut o = Opts { json: false, html: false, account: None, folder: None, unread: false, limit: 20, offset: 0, words: Vec::new() };
+        let mut o = Opts {
+            json: false,
+            html: false,
+            account: None,
+            folder: None,
+            unread: false,
+            limit: 20,
+            offset: 0,
+            output: None,
+            force: false,
+            words: Vec::new(),
+        };
         let mut it = args.iter();
         while let Some(arg) = it.next() {
             let (flag, inline) = match arg.split_once('=') {
@@ -77,6 +102,8 @@ impl Opts {
                     o.limit = o.limit.clamp(1, 500);
                 }
                 "--offset" => o.offset = value("--offset")?.parse().map_err(|_| "--offset: нужно число")?,
+                "--output" | "-o" => o.output = Some(value("--output")?),
+                "--force" => o.force = true,
                 "--help" | "-h" => return Err("help".into()),
                 _ if flag.starts_with("--") => return Err(format!("неизвестный параметр: {flag}")),
                 _ => o.words.push(arg.clone()),
@@ -95,7 +122,7 @@ pub fn run(argv: &[String]) -> Option<i32> {
         return Some(0);
     }
     let command = match cmd.as_str() {
-        "accounts" | "folders" | "list" | "search" | "read" => cmd.as_str(),
+        "accounts" | "folders" | "list" | "search" | "read" | "attachments" | "save-attachment" => cmd.as_str(),
         _ => return None,
     };
     let opts = match Opts::parse(rest) {
@@ -112,6 +139,8 @@ pub fn run(argv: &[String]) -> Option<i32> {
         "list" => cmd_list(&opts),
         "search" => cmd_search(&opts),
         "read" => cmd_read(&opts),
+        "attachments" => cmd_attachments(&opts),
+        "save-attachment" => cmd_save_attachment(&opts),
         _ => unreachable!(),
     };
     Some(match result {
@@ -430,6 +459,225 @@ fn cmd_read(o: &Opts) -> Result<(), String> {
         _ => println!("(тела нет в кэше — открой письмо в mMail)"),
     }
     Ok(())
+}
+
+/// Что о письме уже есть в кэше: исходник (если письмо скачивали) и метаданные вложений.
+struct CachedMessage {
+    raw: Option<Vec<u8>>,
+    attachments: Vec<AttachmentMeta>,
+}
+
+fn cached_message(conn: &Connection, account: &str, folder: &str, uid: i64, id: &str) -> Result<CachedMessage, String> {
+    conn.query_row(
+        "SELECT raw, attachments FROM messages WHERE account = ?1 AND folder = ?2 AND uid = ?3",
+        rusqlite::params![account, folder, uid],
+        |r| {
+            let attachments = r
+                .get::<_, Option<String>>(1)?
+                .as_deref()
+                .and_then(|j| serde_json::from_str(j).ok())
+                .unwrap_or_default();
+            Ok(CachedMessage { raw: r.get(0)?, attachments })
+        },
+    )
+    .optional()
+    .map_err(|e| e.to_string())?
+    .ok_or_else(|| format!("письмо {id} не найдено в кэше"))
+}
+
+/// Список вложений: из кэша, а если письмо ещё не открывали — с сервера.
+fn attachment_list(cached: CachedMessage, account: &str, folder: &str, uid: i64) -> Result<Vec<AttachmentMeta>, String> {
+    if !cached.attachments.is_empty() {
+        return Ok(cached.attachments);
+    }
+    if let Some(raw) = cached.raw {
+        return Ok(attachments::describe(&parse_message(&raw)?));
+    }
+    let raw = fetch_raw(account, folder, uid)?;
+    Ok(attachments::describe(&parse_message(&raw)?))
+}
+
+fn cmd_attachments(o: &Opts) -> Result<(), String> {
+    let id = o.words.first().ok_or("attachments: нужен ID письма (из list или search)")?;
+    let (account, folder, uid) = parse_id(id).ok_or("attachments: ID как в list/search — ящик:папка:uid")?;
+    let conn = open_cache()?;
+    let cached = cached_message(&conn, &account, &folder, uid, id)?;
+    drop(conn);
+    let list = attachment_list(cached, &account, &folder, uid)?;
+    if o.json {
+        return print_json(&list);
+    }
+    if list.is_empty() {
+        println!("Вложений нет.");
+        return Ok(());
+    }
+    for item in list {
+        println!(
+            "{}\t{}\t{}\t{}{}",
+            item.index,
+            console_safe(&item.name),
+            console_safe(&item.mime),
+            item.size,
+            if item.dangerous { "\tопасный" } else { "" }
+        );
+    }
+    Ok(())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SavedAttachment {
+    index: usize,
+    name: String,
+    mime: String,
+    size: usize,
+    path: String,
+}
+
+fn cmd_save_attachment(o: &Opts) -> Result<(), String> {
+    let id = o.words.first().ok_or("save-attachment: нужен ID письма (из list или search)")?;
+    let (account, folder, uid) = parse_id(id).ok_or("save-attachment: ID как в list/search — ящик:папка:uid")?;
+    let indexes = parse_indexes(&o.words[1..])?;
+
+    let conn = open_cache()?;
+    let cached = cached_message(&conn, &account, &folder, uid, id)?;
+    drop(conn);
+    let raw = match cached.raw {
+        Some(raw) => raw,
+        None => fetch_raw(&account, &folder, uid)?,
+    };
+    let parsed = parse_message(&raw)?;
+    let parts = attachments::visible(&parsed);
+    if parts.is_empty() {
+        return Err("у письма нет вложений".into());
+    }
+    let chosen = if indexes.is_empty() {
+        (0..parts.len()).collect::<Vec<_>>()
+    } else {
+        for &index in &indexes {
+            if index >= parts.len() {
+                return Err(format!("вложение {index} не найдено: всего {}", parts.len()));
+            }
+        }
+        indexes
+    };
+
+    let meta = attachments::describe(&parsed);
+    let names = chosen.iter().map(|&index| meta[index].name.clone()).collect::<Vec<_>>();
+    let targets = output_targets(o.output.as_deref(), &names, o.force)?;
+    let mut saved = Vec::with_capacity(chosen.len());
+    for (&index, path) in chosen.iter().zip(targets) {
+        let item = &meta[index];
+        let bytes = parts[index].contents();
+        attachments::write_private(&path, bytes, o.force).map_err(|e| format!("{}: {e}", path.display()))?;
+        saved.push(SavedAttachment {
+            index,
+            name: item.name.clone(),
+            mime: item.mime.clone(),
+            size: item.size,
+            path: path.to_string_lossy().into_owned(),
+        });
+    }
+    if o.json {
+        return print_json(&saved);
+    }
+    for item in saved {
+        println!("{}", console_safe(&item.path));
+    }
+    Ok(())
+}
+
+fn parse_message(raw: &[u8]) -> Result<mail_parser::Message<'_>, String> {
+    mail_parser::MessageParser::default().parse(raw).ok_or_else(|| "не удалось разобрать письмо".into())
+}
+
+fn fetch_raw(account: &str, folder: &str, uid: i64) -> Result<Vec<u8>, String> {
+    let folder = Folder::from_key(folder).ok_or("неизвестная папка")?;
+    let uid = u32::try_from(uid).map_err(|_| "некорректный UID письма")?;
+    runtime()?.block_on(crate::imap::fetch_raw_detached(account, folder, uid)).map_err(|e| e.to_string())
+}
+
+/// `0,2 5` — номера вложений из `attachments`; повторы не сохраняем дважды.
+fn parse_indexes(words: &[String]) -> Result<Vec<usize>, String> {
+    let mut out = Vec::new();
+    for word in words {
+        for part in word.split(',').filter(|p| !p.is_empty()) {
+            let index: usize = part.parse().map_err(|_| format!("{part}: номер вложения должен быть числом"))?;
+            if !out.contains(&index) {
+                out.push(index);
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// Пути для сохранения. `--output` может быть файлом (одно вложение) или каталогом
+/// (существующим либо с завершающим `/`); по умолчанию — текущий каталог.
+fn output_targets(output: Option<&str>, names: &[String], force: bool) -> Result<Vec<PathBuf>, String> {
+    let cwd = std::env::current_dir().map_err(|e| format!("текущий каталог: {e}"))?;
+    let (directory, base) = match output {
+        None => (true, cwd),
+        Some(text) => {
+            let path = PathBuf::from(text);
+            let path = if path.is_absolute() { path } else { cwd.join(path) };
+            if path.is_dir() || text.ends_with('/') {
+                (true, path)
+            } else if names.len() == 1 {
+                (false, path)
+            } else {
+                return Err("несколько вложений: --output должен указывать на каталог".into());
+            }
+        }
+    };
+    let targets: Vec<PathBuf> = if directory {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&base)
+            .map_err(|e| format!("{}: {e}", base.display()))?;
+        unique_names(names).into_iter().map(|name| base.join(name)).collect()
+    } else {
+        vec![base]
+    };
+    for target in &targets {
+        match std::fs::symlink_metadata(target) {
+            Ok(meta) if meta.file_type().is_symlink() && force => {
+                return Err(format!("{}: не перезаписываю symlink", target.display()));
+            }
+            Ok(_) if !force => {
+                return Err(format!("файл уже существует: {} (--force, чтобы перезаписать)", target.display()));
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("{}: {e}", target.display())),
+        }
+    }
+    Ok(targets)
+}
+
+/// Одинаковые имена в одном письме не должны затирать друг друга.
+fn unique_names(names: &[String]) -> Vec<String> {
+    let mut used = HashSet::new();
+    names
+        .iter()
+        .map(|name| {
+            if used.insert(name.clone()) {
+                return name.clone();
+            }
+            let (stem, extension) = match name.rsplit_once('.') {
+                Some((stem, extension)) if !stem.is_empty() => (stem, format!(".{extension}")),
+                _ => (name.as_str(), String::new()),
+            };
+            for number in 2.. {
+                let candidate = format!("{stem} ({number}){extension}");
+                if used.insert(candidate.clone()) {
+                    return candidate;
+                }
+            }
+            unreachable!()
+        })
+        .collect()
 }
 
 fn print_json<T: Serialize + ?Sized>(value: &T) -> Result<(), String> {
@@ -781,6 +1029,92 @@ mod tests {
         assert_eq!(opts(&["--limit=7"]).unwrap().limit, 7);
         assert!(opts(&["--nope"]).is_err());
         assert_eq!(opts(&[]).unwrap().limit, 20);
+    }
+
+    #[test]
+    fn attachment_arguments() {
+        let o = opts(&["--output=/tmp/attachments", "--force", "a@b.c:inbox:7", "0,2", "5"]).unwrap();
+        assert_eq!(o.output.as_deref(), Some("/tmp/attachments"));
+        assert!(o.force);
+        assert_eq!(parse_indexes(&o.words[1..]).unwrap(), vec![0, 2, 5]);
+        assert_eq!(parse_indexes(&["1,1".into()]).unwrap(), vec![1]);
+        assert!(parse_indexes(&["x".into()]).is_err());
+    }
+
+    #[test]
+    fn duplicate_names_do_not_overwrite_each_other() {
+        let names = ["a.pdf".to_string(), "a.pdf".into(), "a.pdf".into(), "noext".into(), "noext".into()];
+        assert_eq!(unique_names(&names), vec!["a.pdf", "a (2).pdf", "a (3).pdf", "noext", "noext (2)"]);
+    }
+
+    #[test]
+    fn output_is_a_file_or_a_directory() {
+        use std::os::unix::fs::symlink;
+
+        let dir = temp_dir("targets");
+        std::fs::create_dir_all(&dir).unwrap();
+        let dir_text = dir.to_str().unwrap();
+
+        assert_eq!(output_targets(Some(dir_text), &["a.pdf".into()], false).unwrap(), vec![dir.join("a.pdf")]);
+        let file = dir.join("one.bin");
+        assert_eq!(output_targets(Some(file.to_str().unwrap()), &["a.pdf".into()], false).unwrap(), vec![file.clone()]);
+        assert!(output_targets(Some(file.to_str().unwrap()), &["a.pdf".into(), "b.pdf".into()], false).is_err());
+
+        std::fs::write(&file, b"old").unwrap();
+        assert!(output_targets(Some(file.to_str().unwrap()), &["a.pdf".into()], false).is_err());
+        assert!(output_targets(Some(file.to_str().unwrap()), &["a.pdf".into()], true).is_ok());
+
+        let existing = dir.join("a.pdf");
+        std::fs::write(&existing, b"old").unwrap();
+        assert!(output_targets(Some(dir_text), &["a.pdf".into()], false).is_err());
+
+        let link = dir.join("link.pdf");
+        symlink(&existing, &link).unwrap();
+        assert!(output_targets(Some(dir_text), &["link.pdf".into()], true).is_err(), "symlink не перезаписываем");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Исходник письма из кэша читается тем же соединением только на чтение.
+    #[test]
+    fn cached_source_is_read_without_writing() {
+        let dir = temp_dir("cached-raw");
+        let key = [3u8; 32];
+        let raw = b"From: a@b.example\r\nSubject: x\r\n\r\nbody".to_vec();
+        {
+            let db = crate::db::Db::open(&dir, &key).unwrap();
+            db.insert(&[&sample_message()]).unwrap();
+            db.set_raw("me@ya.ru", Folder::Inbox, 7, &raw).unwrap();
+        }
+        let conn = open_read_only(&dir.join("mail.db"), &key).unwrap();
+        let cached = cached_message(&conn, "me@ya.ru", "inbox", 7, "id").unwrap();
+        assert_eq!(cached.raw.as_deref(), Some(&raw[..]));
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn attachment_is_extracted_and_saved_private() {
+        use mail_parser::MimeHeaders;
+        use std::os::unix::fs::PermissionsExt;
+
+        let raw = b"From: a@b.example\r\nContent-Type: multipart/mixed; boundary=X\r\n\r\n--X\r\nContent-Type: application/pdf; name=\"../report.pdf\"\r\nContent-Disposition: attachment; filename=\"../report.pdf\"\r\nContent-Transfer-Encoding: base64\r\n\r\nJVBERi0=\r\n--X--\r\n";
+        let parsed = parse_message(&raw[..]).unwrap();
+        let parts = attachments::visible(&parsed);
+        assert_eq!(parts.len(), 1);
+        let name = attachments::safe_name(parts[0].attachment_name().unwrap_or("вложение"));
+        assert_eq!(name, "report.pdf");
+        assert_eq!(parts[0].contents(), b"%PDF-");
+
+        let dir = temp_dir("save");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(&name);
+        attachments::write_private(&path, parts[0].contents(), false).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"%PDF-");
+        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+        assert!(attachments::write_private(&path, b"x", false).is_err(), "без --force не перезаписываем");
+        attachments::write_private(&path, b"x", true).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), b"x");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
