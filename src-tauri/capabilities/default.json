@@ -26,6 +26,7 @@
     "allow-translate-text",
     "allow-list-messages",
     "allow-get-message",
+    "allow-message-calendar-invite",
     "allow-set-sender-trusted",
     "allow-get-appearance",
     "allow-set-zoom",

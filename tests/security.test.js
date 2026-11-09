@@ -25,7 +25,7 @@ test('app CSP allows no remote scripts, frames or network', () => {
 });
 
 test('only the main window can read mail', () => {
-  const reading = ['allow-get-message', 'allow-list-messages', 'allow-list-folders', 'allow-save-attachment', 'allow-translate-message', 'allow-open-link', 'allow-calendar-events'];
+  const reading = ['allow-get-message', 'allow-message-calendar-invite', 'allow-list-messages', 'allow-list-folders', 'allow-save-attachment', 'allow-translate-message', 'allow-open-link', 'allow-calendar-events'];
   for (const name of ['compose', 'settings']) {
     const { permissions, windows } = json(`src-tauri/capabilities/${name}.json`);
     assert.ok(!windows.includes('main'), name);

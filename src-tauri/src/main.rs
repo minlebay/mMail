@@ -14,6 +14,7 @@ mod folders;
 mod headless;
 mod imap;
 mod i18n;
+mod invite;
 mod links;
 mod mailview;
 mod memory;
@@ -65,6 +66,7 @@ fn main() {
             commands::list_folders,
             commands::list_messages,
             commands::get_message,
+            commands::message_calendar_invite,
             commands::set_sender_trusted,
             commands::get_appearance,
             commands::set_appearance,

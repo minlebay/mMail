@@ -10,7 +10,7 @@ use tauri::{AppHandle, State};
 
 use crate::config::ConfigStore;
 use crate::google;
-use crate::text::display_safe;
+use crate::text::{console_safe, display_safe};
 
 const API: &str = "https://www.googleapis.com/calendar/v3";
 
@@ -39,8 +39,10 @@ pub struct Event {
     end: String,
     all_day: bool,
     location: String,
-    /// Описание как текст: Google хранит его с HTML, а это чужое содержимое.
+    /// Описание как текст — для формы редактирования.
     description: String,
+    /// Описание как безопасный HTML — для просмотра.
+    description_html: String,
     /// Повторяющееся: правка меняет только это повторение.
     recurring: bool,
 }
@@ -58,6 +60,9 @@ pub struct Draft {
     location: String,
     #[serde(default)]
     description: String,
+    /// Строки RFC 5545 для повторяющегося события (RRULE/RDATE/EXDATE).
+    #[serde(default)]
+    recurrence: Vec<String>,
 }
 
 #[tauri::command]
@@ -177,13 +182,29 @@ fn event_body(draft: &Draft) -> Result<Value, String> {
         }
         (json!({ "dateTime": start.to_rfc3339(), "date": null }), json!({ "dateTime": end.to_rfc3339(), "date": null }))
     };
-    Ok(json!({
+    let mut body = json!({
         "summary": if title.is_empty() { "(без названия)" } else { title },
         "location": draft.location.trim(),
         "description": draft.description,
         "start": start,
         "end": end,
-    }))
+    });
+    if !draft.recurrence.is_empty() {
+        if draft.recurrence.len() > 100 || !draft.recurrence.iter().all(|line| valid_recurrence(line)) {
+            return Err("некорректное повторение события".into());
+        }
+        body["recurrence"] = json!(&draft.recurrence);
+    }
+    Ok(body)
+}
+
+/// Google принимает строки RFC 5545; не пропускаем чужие свойства из формы.
+fn valid_recurrence(line: &str) -> bool {
+    let line = line.trim();
+    if line.is_empty() || line.len() > 2000 {
+        return false;
+    }
+    matches!(line.split([';', ':']).next().unwrap_or_default().to_ascii_uppercase().as_str(), "RRULE" | "RDATE" | "EXDATE" | "EXRULE")
 }
 
 fn to_event(e: &Value, calendar: &str) -> Option<Event> {
@@ -211,7 +232,8 @@ fn to_event(e: &Value, calendar: &str) -> Option<Event> {
                 .unwrap_or_default(),
         )
         .into_owned(),
-        description: display_safe(&html_to_text(description)).into_owned(),
+        description: html_to_text(description),
+        description_html: html_for_event(description),
         recurring: e.get("recurringEventId").is_some(),
     })
 }
@@ -225,13 +247,95 @@ fn time_of(v: &Value) -> Option<(String, bool)> {
     Some((at.with_timezone(&Local).to_rfc3339(), false))
 }
 
-/// Описание события в Google — HTML от кого угодно (приглашения извне). Показываем только текст.
+/// Описание события в Google — HTML от кого угодно (приглашения извне).
+/// Для формы редактирования оставляем текст: переводы строк нужны, управляющие и bidi-символы — нет.
 fn html_to_text(html: &str) -> String {
-    if !html.contains('<') && !html.contains('&') {
-        return html.to_string();
+    let text = if looks_like_html(html) {
+        let clean = crate::sanitize::clean_html(html, false);
+        mail_parser::decoders::html::html_to_text(&clean.html).trim().to_string()
+    } else {
+        // Простой текст: `<` в нём — не тег, а переводы строк для HTML — пробелы.
+        // Поэтому экранируем `<` и заменяем переносы на `<br>`, а сущности (`&amp;`) раскрываем.
+        let text = html.replace("\r\n", "\n").replace('\r', "\n").replace('<', "&lt;").replace('\n', "<br>");
+        mail_parser::decoders::html::html_to_text(&text).trim().to_string()
+    };
+    let text = text.replace("\r\n", "\n").replace('\r', "\n");
+    console_safe(&text).into_owned()
+}
+
+/// HTML для просмотра: безопасная разметка, а простой текст — с сохранёнными переносами.
+fn html_for_event(description: &str) -> String {
+    let normalized = description.replace("\r\n", "\n").replace('\r', "\n");
+    let safe = console_safe(&normalized);
+    if looks_like_html(&safe) {
+        return crate::sanitize::clean_event_html(&safe).trim().to_string();
     }
-    let clean = crate::sanitize::clean_html(html, false);
-    mail_parser::decoders::html::html_to_text(&clean.html).trim().to_string()
+    plain_html(safe.trim())
+}
+
+/// Есть ли в строке тег, а не просто `<` в тексте вроде «a < b».
+fn looks_like_html(text: &str) -> bool {
+    let bytes = text.as_bytes();
+    (0..bytes.len().saturating_sub(1)).any(|i| {
+        bytes[i] == b'<' && (bytes[i + 1].is_ascii_alphabetic() || bytes[i + 1] == b'/' || bytes[i + 1] == b'!')
+    })
+}
+
+/// Простой текст в HTML: пустые строки — абзацы, переносы — `<br>`, ссылки — кликабельные.
+fn plain_html(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for paragraph in text.split("\n\n").map(|p| p.trim_matches('\n')).filter(|p| !p.is_empty()) {
+        out.push_str("<p>");
+        for (i, line) in paragraph.split('\n').enumerate() {
+            if i > 0 {
+                out.push_str("<br>");
+            }
+            linked_text(&mut out, line);
+        }
+        out.push_str("</p>");
+    }
+    out
+}
+
+/// Текст с экранированием и ссылками http(s): в приглашениях Calendly адреса идут как текст.
+fn linked_text(out: &mut String, text: &str) {
+    let mut rest = text;
+    while let Some(start) = ["https://", "http://"].iter().filter_map(|p| rest.find(p)).min() {
+        escape_html(out, &rest[..start]);
+        let tail = &rest[start..];
+        let end = tail.find(|c: char| c.is_whitespace() || c == '<' || c == '>').unwrap_or(tail.len());
+        // Точка или скобка в конце предложения — не часть адреса.
+        let mut url_end = end;
+        while url_end > 0
+            && matches!(
+                tail.as_bytes()[url_end - 1],
+                b'.' | b',' | b';' | b':' | b'!' | b'?' | b')' | b']' | b'}' | b'"' | b'\''
+            )
+        {
+            url_end -= 1;
+        }
+        let url = &tail[..url_end];
+        out.push_str(r#"<a href=""#);
+        escape_html(out, url);
+        out.push_str(r#"" target="_blank" rel="noopener noreferrer nofollow">"#);
+        escape_html(out, url);
+        out.push_str("</a>");
+        escape_html(out, &tail[url_end..end]);
+        rest = &tail[end..];
+    }
+    escape_html(out, rest);
+}
+
+fn escape_html(out: &mut String, text: &str) {
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            _ => out.push(c),
+        }
+    }
 }
 
 fn is_hex_color(v: &str) -> bool {
@@ -298,7 +402,7 @@ mod tests {
     }
 
     #[test]
-    fn reads_events_and_drops_markup() {
+    fn reads_events_and_sanitizes_description() {
         let v = json!({
             "id": "e1", "summary": "Встреча", "status": "confirmed",
             "start": {"dateTime": "2026-10-20T10:00:00+02:00"}, "end": {"dateTime": "2026-10-20T11:00:00+02:00"},
@@ -306,18 +410,74 @@ mod tests {
         });
         let e = to_event(&v, "me@gmail.com").unwrap();
         assert!(!e.all_day && e.description.contains("Привет") && !e.description.contains('<'), "{}", e.description);
+        assert!(e.description_html.contains("<b>Привет</b>"), "{}", e.description_html);
+        assert!(!e.description_html.contains("<img") && !e.description_html.contains("script"), "{}", e.description_html);
         let all_day = json!({"id": "e2", "start": {"date": "2026-10-20"}, "end": {"date": "2026-10-21"}});
         assert!(to_event(&all_day, "c").unwrap().all_day);
         assert!(to_event(&json!({"id": "e3", "status": "cancelled", "start": {"date": "2026-10-20"}, "end": {"date": "2026-10-21"}}), "c").is_none());
     }
 
     #[test]
+    fn event_description_keeps_line_breaks_and_safe_markup() {
+        let plain = json!({
+            "id": "e1", "start": {"dateTime": "2026-10-20T10:00:00+02:00"}, "end": {"dateTime": "2026-10-20T11:00:00+02:00"},
+            "description": "Строка 1\nСтрока 2\r\n<важно> & ссылка"
+        });
+        let e = to_event(&plain, "me@gmail.com").unwrap();
+        // display_safe раньше превращал переносы строк в �.
+        assert_eq!(e.description, "Строка 1\nСтрока 2\n<важно> & ссылка");
+        assert_eq!(e.description_html, "<p>Строка 1<br>Строка 2<br>&lt;важно&gt; &amp; ссылка</p>");
+
+        let text = json!({
+            "id": "e3", "start": {"date": "2026-10-20"}, "end": {"date": "2026-10-21"},
+            "description": "Отмена: https://calendly.com/cancellations/x.\n\nPowered by Calendly.com"
+        });
+        let e = to_event(&text, "c").unwrap();
+        assert!(e.description_html.contains(r#"<a href="https://calendly.com/cancellations/x" target="_blank""#), "{}", e.description_html);
+        assert!(e.description_html.contains("https://calendly.com/cancellations/x</a>.</p>"), "{}", e.description_html);
+        assert!(e.description_html.contains("<p>Powered by Calendly.com</p>"), "{}", e.description_html);
+
+        let formatted = json!({
+            "id": "e2", "start": {"date": "2026-10-20"}, "end": {"date": "2026-10-21"},
+            "description": "<b>важно</b> и ссылка"
+        });
+        let e = to_event(&formatted, "c").unwrap();
+        assert!(e.description.contains("важно") && e.description.contains("ссылка"), "{}", e.description);
+        assert_eq!(e.description_html, "<b>важно</b> и ссылка");
+
+        let linked = json!({
+            "id": "e2", "start": {"date": "2026-10-20"}, "end": {"date": "2026-10-21"},
+            "description": "<p style=\"position:fixed\" class=\"overlay\">Место</p><p><a href=\"https://calendly.com/x\">Calendly</a></p>"
+        });
+        let e = to_event(&linked, "c").unwrap();
+        assert!(e.description_html.contains("<p>Место</p>"), "{}", e.description_html);
+        assert!(e.description_html.contains(r#"href="https://calendly.com/x""#), "{}", e.description_html);
+        assert!(e.description_html.contains(r#"target="_blank""#) && e.description_html.contains("noopener"), "{}", e.description_html);
+        assert!(!e.description_html.contains("position:fixed") && !e.description_html.contains("class="), "{}", e.description_html);
+    }
+
+    #[test]
     fn drafts_are_validated() {
-        let d = |all_day, start: &str, end: &str| Draft { title: "x".into(), all_day, start: start.into(), end: end.into(), location: String::new(), description: String::new() };
+        let d = |all_day, start: &str, end: &str| Draft {
+            title: "x".into(),
+            all_day,
+            start: start.into(),
+            end: end.into(),
+            location: String::new(),
+            description: String::new(),
+            recurrence: Vec::new(),
+        };
         assert!(event_body(&d(false, "2026-10-20T10:00:00+02:00", "2026-10-20T11:00:00+02:00")).is_ok());
         assert!(event_body(&d(false, "2026-10-20T11:00:00+02:00", "2026-10-20T10:00:00+02:00")).is_err());
         assert!(event_body(&d(true, "2026-10-20", "2026-10-21")).is_ok());
         assert!(event_body(&d(true, "2026-10-20", "nonsense")).is_err());
+
+        let mut recurrence = d(true, "2026-10-20", "2026-10-21");
+        recurrence.recurrence = vec!["RRULE:FREQ=WEEKLY;BYDAY=MO".into()];
+        let body = event_body(&recurrence).unwrap();
+        assert_eq!(body["recurrence"][0], "RRULE:FREQ=WEEKLY;BYDAY=MO");
+        recurrence.recurrence = vec!["FREQ=WEEKLY".into()];
+        assert!(event_body(&recurrence).is_err());
     }
 }
 

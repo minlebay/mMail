@@ -2,7 +2,7 @@
   import { t } from './i18n.js';
   import Icon from './Icon.svelte';
   import { showContextMenu } from './contextMenu.js';
-  import { getMessage, writeClipboard, setSenderTrusted, saveAttachment, translateMessage, mailViewLoad, mailViewVisible, mailViewBounds, mailViewZoom } from './api.js';
+  import { getMessage, writeClipboard, setSenderTrusted, saveAttachment, messageCalendarInvite, translateMessage, mailViewLoad, mailViewVisible, mailViewBounds, mailViewZoom } from './api.js';
   import { covered } from './covers.js';
   import { translateRequest, TARGET_LANGUAGES } from './translate.js';
   import Select from './Select.svelte';
@@ -23,7 +23,7 @@
     return aligned.replace('<html>', `<html${dark ? '' : ' data-scheme="light"'}${soft ? ' data-soft' : ''}>`);
   };
 
-  let { id, onreply, softEdges = true } = $props();
+  let { id, onreply, softEdges = true, calendarConnected = false, onaddtocalendar, onconnectcalendar } = $props();
 
   // Тело письма показывает отдельный WebKit поверх страницы (mailview.rs), как messagepane у
   // Thunderbird: Ctrl + колёсико там — родной масштаб движка. Страница только говорит, где
@@ -38,6 +38,9 @@
   let msg = $state(null);
   let error = $state('');
   let loadingRemote = $state(false);
+  // Приглашение на встречу из вложенного text/calendar.
+  let invite = $state(null);
+  let inviteRequest = 0;
   // Адрес ссылки под курсором — его присылает вид письма (mailview.rs).
   let hoveredLink = $state('');
   let request = 0;
@@ -50,6 +53,8 @@
     saved = {};
     saveError = '';
     translation = null;
+    invite = null;
+    inviteRequest++;
     if (current != null) load(current, false);
   });
 
@@ -119,13 +124,43 @@
     }
   });
 
+  // Ящик мог ещё подключаться, когда письмо выбрали. Ядро ждёт подключения, но если
+  // оно не успело — повторяем, как только синхронизация сообщит о готовности.
+  const stillConnecting = (text) => /ящик ещё подключается|account is still connecting/.test(String(text));
+
+  $effect(() => {
+    const stop = listen('mailbox-changed', () => {
+      if (id != null && stillConnecting(error)) load(id, false);
+    });
+    return () => stop.then((f) => f());
+  });
+
   async function load(current, showRemote) {
     const mine = ++request;
+    error = '';
     try {
       const m = await getMessage(current, showRemote);
-      if (mine === request) msg = m;
+      if (mine === request) {
+        msg = m;
+        // Календарь разбираем только у письма с подходящим вложением или текстом
+        // приглашения в теле: за исходником остальных писем не ходим.
+        const calendar = m.attachments.some((a) => a.mime === 'text/calendar' || a.mime === 'application/ics' || /\.ics$/i.test(a.name));
+        if (!invite && (calendar || /BEGIN:VCALENDAR/i.test(m.srcdoc))) {
+          loadInvite(m.id);
+        }
+      }
     } catch (e) {
       if (mine === request) error = String(e);
+    }
+  }
+
+  async function loadInvite(current) {
+    const mine = ++inviteRequest;
+    try {
+      const value = await messageCalendarInvite(current);
+      if (mine === inviteRequest) invite = value;
+    } catch {
+      if (mine === inviteRequest) invite = null;
     }
   }
 
@@ -219,6 +254,23 @@
       {#each msg.warnings as w}
         <div class="banner danger"><Icon name="alert" size={15} />{$t(w)}</div>
       {/each}
+      {#if invite}
+        <div class="banner invite">
+          <Icon name="calendar" size={15} />
+          <span class="text">
+            {#if invite.cancelled}
+              {$t("Встреча отменена:")} <b>{invite.title || $t("Событие")}</b>
+            {:else}
+              {$t("Приглашение на встречу:")} <b>{invite.title || $t("Событие")}</b>
+            {/if}
+          </span>
+          {#if !invite.cancelled && calendarConnected}
+            <button class="chip" onclick={() => onaddtocalendar(invite)}>{$t("Добавить в календарь")}</button>
+          {:else if !invite.cancelled}
+            <button class="chip" onclick={onconnectcalendar}>{$t("Подключить календарь")}</button>
+          {/if}
+        </div>
+      {/if}
       {#if msg.blockedRemote && !msg.remoteShown}
         <div class="banner">
           <Icon name="imageOff" size={15} />
@@ -431,6 +483,9 @@
   .banner.danger {
     background: rgba(255, 79, 120, 0.18);
     color: var(--danger-text);
+  }
+  .banner.invite {
+    background: var(--accent-soft);
   }
 
   /* Место под вид письма (mailview.rs). Шире панели на полосу прокрутки: она уходит в правый

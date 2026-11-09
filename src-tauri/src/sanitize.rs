@@ -71,12 +71,38 @@ pub fn clean_message(dirty: &str, allow_remote: bool) -> Clean {
     clean(dirty, allow_remote, true)
 }
 
+/// HTML описания события календаря. Это чужая разметка (приглашение из Calendly, Google Meet
+/// и т. п.), но показываем её прямо в диалоге, а не в отдельном документе письма. Поэтому
+/// оставляем только смысловое оформление: без стилей, классов, картинок и вёрстки, которая
+/// могла бы накрыть интерфейс. Ссылки открываются через общее подтверждение, как в письмах.
+pub fn clean_event_html(dirty: &str) -> String {
+    Builder::default()
+        .tags(HashSet::from([
+            "a", "b", "strong", "i", "em", "u", "s", "del", "br", "p", "div", "span", "ul", "ol", "li",
+            "blockquote", "code", "pre", "h1", "h2", "h3", "h4", "h5", "h6", "hr", "table", "thead",
+            "tbody", "tr", "th", "td",
+        ]))
+        .url_schemes(HashSet::from(["http", "https", "mailto"]))
+        .url_relative(UrlRelative::Deny)
+        .link_rel(Some("noopener noreferrer nofollow"))
+        .set_tag_attribute_value("a", "target", "_blank")
+        .clean(dirty)
+        .to_string()
+}
+
 fn clean(dirty: &str, allow_remote: bool, styles: bool) -> Clean {
     let blocked = Arc::new(AtomicUsize::new(0));
     let counter = Arc::clone(&blocked);
     let relative_counter = Arc::clone(&blocked);
     let mut builder = Builder::default();
-    builder.add_tags(&["font"]).add_tag_attributes("font", &["face", "size"]).add_generic_attributes(GENERIC_ATTRS);
+    builder
+        .add_tags(&["font"])
+        .add_tag_attributes("font", &["face", "size"])
+        .add_generic_attributes(GENERIC_ATTRS)
+        // <title> — служебный заголовок документа, но его текст иначе попадает в тело письма.
+        // В рассылках внутри title бывает разметка (например, эмодзи в <span>), и она
+        // показывалась как экранированный HTML в начале письма.
+        .add_clean_content_tags(&["title"]);
     if styles {
         builder.add_tags(&["style"]).rm_clean_content_tags(&["style"]).add_generic_attributes(&["class"]);
     }
@@ -388,6 +414,17 @@ mod tests {
     }
 
     #[test]
+    fn document_title_does_not_leak_into_the_body() {
+        // Gigatron кладёт в <title> разметку эмодзи; из title она попадала в тело письма.
+        let c = clean_message(
+            r#"<html><head><title>BLACK NOVEMBER <span class="emoji-outer"><span class="emoji-inner"></span></span></title></head><body><p>Тело письма</p></body></html>"#,
+            false,
+        );
+        assert!(!c.html.contains("BLACK NOVEMBER") && !c.html.contains("emoji-outer"), "{}", c.html);
+        assert!(c.html.contains("Тело письма"), "{}", c.html);
+    }
+
+    #[test]
     fn message_keeps_styles_without_resources() {
         let c = clean_message(
             r#"<style>.f{color:#000}.b{background:url(https://t.example/b.png)}</style><p class="f" onclick="x()">a</p>"#,
@@ -437,6 +474,20 @@ mod tests {
         // Цитата в редакторе ответа: <style> там действовал бы на всё окно.
         let c = clean_html("<style>body{display:none}</style><p class=\"x\">a</p>", false);
         assert!(!c.html.contains("display") && !c.html.contains("class"), "{}", c.html);
+    }
+
+    #[test]
+    fn event_description_keeps_formatting_but_not_layout() {
+        let html = clean_event_html(
+            r#"<p style="position:fixed" class="overlay">Текст</p>
+<p><a href="https://calendly.com/x" target="_self">Calendly</a></p>
+<ul><li>раз</li></ul><img src="https://t.example/x"><script>x()</script><a href="/relative">относительная</a>"#,
+        );
+        assert!(html.contains("<p>Текст</p>") && html.contains("<li>раз</li>"), "{html}");
+        assert!(html.contains(r#"href="https://calendly.com/x""#), "{html}");
+        assert!(html.contains(r#"target="_blank""#) && html.contains("noopener"), "{html}");
+        assert!(!html.contains("<img") && !html.contains("script") && !html.contains("style") && !html.contains("class"), "{html}");
+        assert!(!html.contains("/relative"), "{html}");
     }
 
     #[test]

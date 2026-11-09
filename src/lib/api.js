@@ -35,7 +35,7 @@ export const googleConnect = (clientId, clientSecret) => invoke('google_connect'
 export const googleDisconnect = () => invoke('google_disconnect');
 export const calendarList = () => invoke('calendar_list');
 export const calendarSetVisible = (id, visible) => invoke('calendar_set_visible', { id, visible });
-// from/to — RFC 3339; события: { id, calendarId, title, start, end, allDay, location, description, recurring }
+// from/to — RFC 3339; события: { id, calendarId, title, start, end, allDay, location, description, descriptionHtml, recurring }
 export const calendarEvents = (calendars, from, to) => invoke('calendar_events', { calendars, from, to });
 export const calendarSaveEvent = (calendarId, eventId, draft) => invoke('calendar_save_event', { calendarId, eventId, draft });
 export const calendarDeleteEvent = (calendarId, eventId) => invoke('calendar_delete_event', { calendarId, eventId });
@@ -74,6 +74,9 @@ export const cleanComposeHtml = (html) => invoke('clean_compose_html', { html })
 
 // Путь выбирается в системном диалоге ядра; возвращает false, если сохранение отменили.
 export const saveAttachment = (id, index) => invoke('save_attachment', { id, index });
+
+// Приглашение на встречу из вложенного text/calendar: { title, allDay, start, end, location, description, recurrence, cancelled }.
+export const messageCalendarInvite = (id) => invoke('message_calendar_invite', { id });
 
 export const writeClipboard = (text) => invoke('write_clipboard', { text });
 

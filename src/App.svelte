@@ -256,6 +256,24 @@
     calVersion++;
   }
 
+  // Приглашение из письма: открываем форму события с заполненными полями. В режиме почты
+  // список календарей ещё не запрашивали — загружаем его только по этому действию.
+  async function addInviteToCalendar(invite) {
+    try {
+      if (!calendars.length) {
+        calendars = await calendarList();
+        calListed = true;
+      }
+      if (!calendars.some((c) => c.writable)) {
+        showToast('Нет календаря, доступного для записи');
+        return;
+      }
+      eventDialog = { preset: { invite } };
+    } catch (e) {
+      showToast(String(e));
+    }
+  }
+
   function pickFolder(account, folder) {
     active = { account, folder };
     selectedId = null;
@@ -319,7 +337,14 @@
     <Splitter value={sizes.sidebar} min={150} max={380} initial={SIZES.sidebar} onchange={(px) => resize('sidebar', px)} />
     <MessageList onreply={replyTo} onerror={showToast} account={active.account} folder={active.folder} {version} {selectedId} onselect={(id) => (selectedId = id)} />
     <Splitter value={sizes.list} min={220} max={640} initial={SIZES.list} onchange={(px) => resize('list', px)} />
-    <Reader id={selectedId} onreply={replyTo} softEdges={appearance.softMailEdges ?? true} />
+    <Reader
+      id={selectedId}
+      onreply={replyTo}
+      softEdges={appearance.softMailEdges ?? true}
+      calendarConnected={!!googleAccount}
+      onaddtocalendar={addInviteToCalendar}
+      onconnectcalendar={openSettings}
+    />
     {#if wide}
       <Splitter value={calendarWidth} min={560} max={calendarMax} initial={SIZES.calendar} reverse onchange={(px) => resize('calendar', px)} />
       {@render calendarPane()}

@@ -569,6 +569,23 @@ pub async fn save_attachment(app: tauri::AppHandle, store: State<'_, Store>, ima
     Ok(true)
 }
 
+/// Приглашение на встречу из вложенного `text/calendar`. Исходник берём из кэша, а если
+/// письмо открывали без вложений — с сервера. `None` — календарного вложения нет.
+#[tauri::command]
+pub async fn message_calendar_invite(store: State<'_, Store>, imap: State<'_, Imap>, id: u32) -> Result<Option<crate::invite::Invite>, String> {
+    let (account, folder, uid) = store.location(id).ok_or("no such message")?;
+    let (Some(account), Some(uid)) = (account.as_deref(), uid) else { return Ok(None) };
+    let raw = match store.raw(account, folder, uid) {
+        Some(raw) => raw,
+        None => {
+            let raw = imap.raw(account, folder, uid).await.map_err(|e| e.to_string())?;
+            store.cache_raw(account, folder, uid, &raw);
+            raw
+        }
+    };
+    Ok(crate::invite::find(&raw))
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StorageInfo {

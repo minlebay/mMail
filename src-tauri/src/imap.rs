@@ -12,7 +12,7 @@ use mail_parser::{MessageParser, MimeHeaders};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::net::TcpStream;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 use tokio_rustls::client::TlsStream;
 use tokio_rustls::rustls::pki_types::ServerName;
 use tokio_rustls::rustls::{self, ClientConfig, RootCertStore};
@@ -46,6 +46,8 @@ const TIMEOUT: Duration = Duration::from_secs(20);
 const FLAGS_EVERY: Duration = Duration::from_secs(60);
 /// Сколько кнопка «Проверить почту» ждёт ящики.
 const CHECK_TIMEOUT: Duration = Duration::from_secs(15);
+/// Сколько открытие письма ждёт, пока ящик закончит вход и обход папок.
+const CONNECT_WAIT: Duration = Duration::from_secs(60);
 /// У скольких последних писем папки сверять флаги.
 const FLAGS_WINDOW: u32 = 500;
 /// Тела писем до этого размера сохраняются в кэш заранее, в фоне; крупные — при открытии.
@@ -367,6 +369,8 @@ pub struct Imap {
     /// Номер запуска синхронизации каждого ящика: прежний запуск видит, что его сменили
     /// (ящик удалили или добавили заново), и перестаёт повторять попытки.
     runs: std::sync::Mutex<HashMap<String, u64>>,
+    /// Будит открытие письма, когда ящик зарегистрировал подключение.
+    connected: Notify,
     demo: AtomicBool,
 }
 
@@ -433,11 +437,30 @@ impl Imap {
         self.connections.lock().unwrap().get(email).cloned()
     }
 
+    /// Ждёт подключения ящика: письмо из кэша можно открыть раньше, чем вход и обход папок
+    /// закончатся. Уведомление создаём до повторной проверки, чтобы не потерять `notify_waiters`.
+    async fn wait_connection(&self, email: &str, timeout: Duration) -> Option<Arc<Connection>> {
+        if let Some(conn) = self.connection(email) {
+            return Some(conn);
+        }
+        let deadline = tokio::time::Instant::now() + timeout;
+        loop {
+            let notified = self.connected.notified();
+            if let Some(conn) = self.connection(email) {
+                return Some(conn);
+            }
+            if tokio::time::timeout_at(deadline, notified).await.is_err() {
+                return None;
+            }
+        }
+    }
+
     /// Регистрирует подключение; прежнее для того же ящика останавливается.
     fn register(&self, conn: Arc<Connection>) {
         if let Some(old) = self.connections.lock().unwrap().insert(conn.account.email.clone(), conn) {
             old.cancelled.store(true, Ordering::Relaxed);
         }
+        self.connected.notify_waiters();
     }
 
     fn unregister(&self, email: &str) {
@@ -1161,7 +1184,7 @@ pub async fn remove_account(app: AppHandle, email: String) -> std::result::Resul
 impl Imap {
     /// Письмо целиком с сервера (BODY.PEEK — не помечается прочитанным); одна попытка переподключения.
     pub async fn raw(&self, email: &str, folder: Folder, uid: u32) -> Result<Vec<u8>> {
-        let conn = self.connection(email).ok_or("ящик ещё подключается")?;
+        let conn = self.wait_connection(email, CONNECT_WAIT).await.ok_or("ящик ещё подключается")?;
         let name = &conn.server_name(folder).ok_or("папка не найдена на сервере")?;
         let mut reader = conn.reader.lock().await;
         for attempt in 0..2 {
@@ -1382,6 +1405,12 @@ mod tests {
             vec![Mailbox { name: "Ильшат".into(), addr: "a@x.example".into() }, Mailbox { name: String::new(), addr: "b@y.example".into() }]
         );
         assert!(r.cc.is_empty());
+    }
+
+    #[tokio::test]
+    async fn waiting_for_a_connection_has_a_deadline() {
+        let imap = Imap::default();
+        assert!(imap.wait_connection("nobody@example.com", Duration::from_millis(10)).await.is_none());
     }
 
     fn verdict(headers: &[&str]) -> Auth {

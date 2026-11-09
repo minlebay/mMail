@@ -1290,5 +1290,25 @@
   "Сбросить фильтр по адресу": {
     "en": "Clear address filter",
     "sr": "Ukloni filter po adresi"
+  },
+  "Приглашение на встречу:": {
+    "en": "Meeting invitation:",
+    "sr": "Poziv na sastanak:"
+  },
+  "Встреча отменена:": {
+    "en": "Meeting cancelled:",
+    "sr": "Sastanak je otkazan:"
+  },
+  "Добавить в календарь": {
+    "en": "Add to calendar",
+    "sr": "Dodaj u kalendar"
+  },
+  "Подключить календарь": {
+    "en": "Connect calendar",
+    "sr": "Poveži kalendar"
+  },
+  "Нет календаря, доступного для записи": {
+    "en": "No calendar available for writing",
+    "sr": "Nema kalendara dostupnog za upis"
   }
 }

@@ -22,6 +22,7 @@
 
   // Поля формы: даты и время по отдельности (так их показывают поля ввода).
   function initial() {
+    const calendarId = (calendars.find((c) => c.primary && c.writable) ?? calendars.find((c) => c.writable))?.id ?? '';
     if (event) {
       const [s, e] = eventBounds(event);
       // У событий на весь день конец в Google не включается — в форме показываем последний день.
@@ -36,12 +37,31 @@
         endTime: timeOf(e),
         location: event.location,
         description: event.description,
+        recurrence: [],
+      };
+    }
+    // Приглашение из письма: поля уже разобраны ядром, остаётся показать их в форме.
+    if (preset?.invite) {
+      const inv = preset.invite;
+      const s = inv.allDay ? fromDateKey(inv.start) : new Date(inv.start);
+      const e = inv.allDay ? addDays(fromDateKey(inv.end), -1) : new Date(inv.end);
+      return {
+        calendarId,
+        title: inv.title ?? '',
+        allDay: !!inv.allDay,
+        startDate: toDateKey(s),
+        startTime: timeOf(s),
+        endDate: toDateKey(e),
+        endTime: timeOf(e),
+        location: inv.location ?? '',
+        description: inv.description ?? '',
+        recurrence: Array.isArray(inv.recurrence) ? inv.recurrence : [],
       };
     }
     const s = preset?.start ?? new Date();
     const e = new Date(s.getTime() + 60 * 60 * 1000);
     return {
-      calendarId: (calendars.find((c) => c.primary && c.writable) ?? calendars.find((c) => c.writable))?.id ?? '',
+      calendarId,
       title: '',
       allDay: !!preset?.allDay,
       startDate: toDateKey(s),
@@ -50,6 +70,7 @@
       endTime: timeOf(e),
       location: '',
       description: '',
+      recurrence: [],
     };
   }
   let form = $state(untrack(initial));
@@ -72,17 +93,19 @@
   }
 
   function draft() {
-    if (form.allDay) {
-      return { title: form.title, allDay: true, start: form.startDate, end: toDateKey(addDays(fromDateKey(form.endDate), 1)), location: form.location, description: form.description };
-    }
-    return {
-      title: form.title,
-      allDay: false,
-      start: toRfc3339(new Date(`${form.startDate}T${form.startTime}`)),
-      end: toRfc3339(new Date(`${form.endDate}T${form.endTime}`)),
-      location: form.location,
-      description: form.description,
-    };
+    const draft = form.allDay
+      ? { title: form.title, allDay: true, start: form.startDate, end: toDateKey(addDays(fromDateKey(form.endDate), 1)), location: form.location, description: form.description }
+      : {
+          title: form.title,
+          allDay: false,
+          start: toRfc3339(new Date(`${form.startDate}T${form.startTime}`)),
+          end: toRfc3339(new Date(`${form.endDate}T${form.endTime}`)),
+          location: form.location,
+          description: form.description,
+        };
+    // Повторение пришло из приглашения; при правке существующего события его не трогаем.
+    if (form.recurrence?.length) draft.recurrence = form.recurrence;
+    return draft;
   }
 
   async function save(e) {
@@ -137,8 +160,12 @@
       {#if event.recurring}<div class="row muted">{$t('Повторяющееся событие: изменения коснутся только этого повторения')}</div>{/if}
       {#if event.location}<div class="row"><Icon name="mapPin" size={15} /><span class="selectable">{event.location}</span></div>{/if}
       <div class="row muted"><Icon name="calendar" size={15} /><span>{calendarOf(event.calendarId)?.name ?? ''}</span></div>
-      <!-- Описание — чужой текст (приглашения извне): только текст, без разметки и ссылок. -->
-      {#if event.description}<div class="description selectable">{event.description}</div>{/if}
+      <!-- Описание — чужой HTML (приглашения извне); ядро оставило только безопасную разметку. -->
+      {#if event.descriptionHtml}
+        <div class="description selectable">{@html event.descriptionHtml}</div>
+      {:else if event.description}
+        <div class="description selectable plain">{event.description}</div>
+      {/if}
       {#if error}<div class="error">{error}</div>{/if}
       <div class="buttons">
         {#if canEdit}
@@ -242,12 +269,85 @@
     padding: 10px 12px;
     border-radius: 9px;
     background: rgba(var(--ink), 0.05);
-    white-space: pre-wrap;
     overflow-wrap: anywhere;
-    max-height: 240px;
-    overflow-y: auto;
+    max-height: 280px;
+    overflow: auto;
     font-size: 13px;
     line-height: 1.5;
+  }
+  .description.plain {
+    white-space: pre-wrap;
+  }
+  .description :global(p) {
+    margin: 0 0 0.55em;
+  }
+  .description :global(p:last-child) {
+    margin-bottom: 0;
+  }
+  .description :global(a) {
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+  .description :global(ul),
+  .description :global(ol) {
+    margin: 0.35em 0 0.55em;
+    padding-left: 1.4em;
+  }
+  .description :global(li) {
+    margin: 0.15em 0;
+  }
+  .description :global(li > p) {
+    margin: 0;
+  }
+  .description :global(h1),
+  .description :global(h2),
+  .description :global(h3),
+  .description :global(h4),
+  .description :global(h5),
+  .description :global(h6) {
+    margin: 0.6em 0 0.3em;
+    font-size: 1.05em;
+    font-weight: 600;
+    line-height: 1.3;
+  }
+  .description :global(h1:first-child),
+  .description :global(h2:first-child),
+  .description :global(h3:first-child) {
+    margin-top: 0;
+  }
+  .description :global(blockquote) {
+    margin: 0.4em 0;
+    padding-left: 0.8em;
+    border-left: 2px solid var(--glass-border);
+    color: var(--muted);
+  }
+  .description :global(pre),
+  .description :global(code) {
+    font: 12px/1.45 ui-monospace, 'JetBrains Mono', monospace;
+  }
+  .description :global(pre) {
+    margin: 0.4em 0;
+    padding: 8px 10px;
+    border-radius: 7px;
+    background: rgba(var(--ink), 0.06);
+    overflow-x: auto;
+    white-space: pre-wrap;
+  }
+  .description :global(hr) {
+    margin: 0.6em 0;
+    border: none;
+    border-top: 1px solid var(--glass-border);
+  }
+  .description :global(table) {
+    border-collapse: collapse;
+    margin: 0.4em 0;
+    max-width: 100%;
+  }
+  .description :global(td),
+  .description :global(th) {
+    padding: 2px 6px;
+    vertical-align: top;
   }
   form {
     display: flex;
