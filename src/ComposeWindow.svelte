@@ -1,12 +1,13 @@
 <script>
   import { t } from './lib/i18n.js';
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { listen } from '@tauri-apps/api/event';
   import TitleBar from './lib/TitleBar.svelte';
   import Icon from './lib/Icon.svelte';
   import Select from './lib/Select.svelte';
   import { applyTheme, isDark } from './lib/themes.js';
+  import { formatHtml } from './lib/htmlFormat.js';
   import { composeInit, sendMessage, pickAttachments, getAppearance, cleanComposeHtml } from './lib/api.js';
 
   const win = getCurrentWindow();
@@ -23,6 +24,19 @@
   let text = $state('');
   // Режим «Код»: HTML письма как текст с тегами.
   let code = $state('');
+  // HTML и текст на момент перехода в «Текст»: если текст не меняли, возвращаем исходную
+  // разметку с цитатой, а не собранную заново из plain text.
+  let htmlBeforeText = null;
+  let textBeforeHtml = null;
+  let textCameFromCode = false;
+  // Снимок для «Кода»: если код не правили, возвращаем исходную разметку без
+  // переформатирования — иначе добавленные отступы сдвигали бы курсор.
+  let htmlBeforeCode = null;
+  let codeBeforeHtml = null;
+  let htmlBeforeCodeSafe = false;
+  // Курсор в HTML-редакторе: числовой offset переживает замену innerHTML по возвращении
+  // из «Текста» или «Кода». Узлы старого Range после перерисовки уже не существуют.
+  let htmlCaret = null;
   let linkAnchor = null;
   let linkRemovable = $state(false);
   let editor = $state();
@@ -115,10 +129,15 @@
     }
     const header = escapeHtml(data.quoteHeader ?? '').replace(/\n/g, '<br>');
     const quote = data.quoteHtml ?? '';
+    // Текст из CLI (`reply ID --body …`) — над цитатой; без него остаются пустые строки.
+    const intro = data.body
+      ? `${textToHtml(data.body)}<div><br></div>`
+      : '<div><br></div><div><br></div>';
     editor.innerHTML =
       data.kind === 'forward'
-        ? `<div><br></div><div><br></div><div class="fwd">${header}</div>${quote}`
-        : `<div><br></div><div><br></div><div>${header}</div><blockquote type="cite">${quote}</blockquote>`;
+        ? `${intro}<div class="fwd">${header}</div>${quote}`
+        : `${intro}<div>${header}</div><blockquote type="cite">${quote}</blockquote>`;
+    if (data.body) touched = true;
     placeCaretAtStart();
   }
 
@@ -127,6 +146,69 @@
     const range = document.createRange();
     range.setStart(editor, 0);
     range.collapse(true);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+
+  function editorOffset(node, offset) {
+    const range = document.createRange();
+    range.selectNodeContents(editor);
+    range.setEnd(node, offset);
+    return range.toString().length;
+  }
+
+  // Запомнить курсор/выделение перед уходом из HTML-режима. Клик по кнопке режима
+  // иногда успевает увести выделение из редактора — тогда берём последнее известное.
+  function captureEditorCaret() {
+    const sel = window.getSelection();
+    const current = sel?.rangeCount ? sel.getRangeAt(0) : null;
+    const range =
+      current && editor?.contains(current.commonAncestorContainer)
+        ? current
+        : savedRange && editor?.contains(savedRange.commonAncestorContainer)
+          ? savedRange
+          : null;
+    if (!editor || !range) return null;
+    return {
+      start: editorOffset(range.startContainer, range.startOffset),
+      end: range.collapsed ? null : editorOffset(range.endContainer, range.endOffset),
+    };
+  }
+
+  function pointAtOffset(offset) {
+    const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+    let seen = 0;
+    let last = null;
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      const length = node.nodeValue.length;
+      if (offset <= seen + length) return { node, offset: Math.max(0, offset - seen) };
+      seen += length;
+      last = node;
+    }
+    return last ? { node: last, offset: last.nodeValue.length } : null;
+  }
+
+  function restoreEditorCaret(point) {
+    if (!editor) return;
+    editor.focus({ preventScroll: true });
+    if (!point) return;
+    const start = pointAtOffset(point.start);
+    if (!start) {
+      // Пустой редактор: единственный возможный курсор — в начале.
+      const range = document.createRange();
+      range.selectNodeContents(editor);
+      range.collapse(true);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      return;
+    }
+    const end = point.end == null ? start : pointAtOffset(point.end) ?? start;
+    const range = document.createRange();
+    range.setStart(start.node, start.offset);
+    range.setEnd(end.node, end.offset);
     const sel = window.getSelection();
     sel.removeAllRanges();
     sel.addRange(range);
@@ -185,25 +267,56 @@
 
   async function switchMode(next) {
     if (next === mode) return;
-    const html = currentHtml();
+    if (mode === 'html') htmlCaret = captureEditorCaret();
     if (next === 'text') {
-      text = htmlToText(html);
-    } else if (next === 'code') {
-      code = html;
-    } else {
-      // Из кода — только через фильтр ядра; текст экранирован textToHtml.
-      let clean = html;
-      if (mode === 'code') {
-        try {
-          clean = await cleanComposeHtml(html);
-        } catch (e) {
-          error = String(e);
-          return;
-        }
-      }
-      queueMicrotask(() => (editor.innerHTML = clean));
+      htmlBeforeText = currentHtml();
+      textCameFromCode = mode === 'code';
+      text = htmlToText(htmlBeforeText);
+      textBeforeHtml = text;
+      mode = next;
+      return;
     }
+    if (next === 'code') {
+      const unchangedText = mode === 'text' && text === textBeforeHtml && htmlBeforeText !== null;
+      htmlBeforeCode = unchangedText ? htmlBeforeText : currentHtml();
+      htmlBeforeCodeSafe = !(unchangedText && textCameFromCode);
+      code = formatHtml(htmlBeforeCode);
+      codeBeforeHtml = code;
+      mode = next;
+      return;
+    }
+    // Возвращаемся в HTML. Если текст или код не меняли — восстанавливаем прежнюю
+    // разметку целиком, иначе форматирование цитаты терялось бы при каждом переключении.
+    const unchangedText = mode === 'text' && text === textBeforeHtml && htmlBeforeText !== null;
+    const unchangedCode = mode === 'code' && code === codeBeforeHtml && htmlBeforeCode !== null;
+    let clean = unchangedCode ? htmlBeforeCode : unchangedText ? htmlBeforeText : currentHtml();
+    // HTML из «Кода» (и сохранённый там снимок) пропускаем через фильтр ядра;
+    // текст экранирован textToHtml и безопасен.
+    if ((mode === 'code' && !unchangedCode) || (unchangedCode && !htmlBeforeCodeSafe) || (unchangedText && textCameFromCode)) {
+      try {
+        clean = await cleanComposeHtml(clean);
+      } catch (e) {
+        error = String(e);
+        return;
+      }
+    }
+    const caret = htmlCaret;
     mode = next;
+    // Сначала Svelte убирает display:none у редактора, иначе focus() не сработает.
+    await tick();
+    if (mode !== next) return;
+    const same = editor.innerHTML === clean;
+    if (!same) editor.innerHTML = clean;
+    // Если разметка не менялась, старый Range ещё указывает на живые узлы — он точнее
+    // числового offset (например, курсор в пустой строке).
+    if (same && savedRange && editor.contains(savedRange.commonAncestorContainer)) {
+      editor.focus({ preventScroll: true });
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(savedRange);
+    } else if (caret) {
+      restoreEditorCaret(caret);
+    }
   }
 
   // Панель форматирования: execCommand работает с выделением внутри contenteditable.

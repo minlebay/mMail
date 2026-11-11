@@ -77,11 +77,17 @@ mmail -compose "to='a@b.c,d@e.f',subject='Тема',body='Текст',attachment
 mmail -compose "to='a@b.c',subject='Отчёт',message='/путь/текст.txt'"   # текст из файла
 mmail compose --to a@b.c --subject 'Тема' --attach файл.pdf < текст.txt
 mmail mailto:a@b.c?subject=Тема
+mmail reply 'a@b.c:inbox:20350' --body 'Спасибо!'   # ID — из list/search
 ```
 
 Параметры `-compose`: `to`, `cc`, `bcc`, `subject`, `from` (один из ящиков), `body` или
 `message` (файл UTF-8), `attachment` (через запятую). Относительные пути считаются от текущей
 папки. Ссылки `mailto:` не могут прикладывать файлы.
+
+`reply ID` открывает ответ на письмо: получателя, тему `Re:` и цитату mMail берёт из
+исходного письма, а `--body` вставляет над цитатой. Дополнительно можно указать `--cc`,
+`--bcc`, `--attach`, `--from` и `--to`; `In-Reply-To`/`References` заполняются автоматически,
+чтобы ответ попал в цепочку.
 
 ### Чтение почты без окна
 

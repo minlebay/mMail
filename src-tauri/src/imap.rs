@@ -1391,6 +1391,13 @@ pub async fn fetch_raw_detached(email: &str, folder: Folder, uid: u32) -> Result
     result
 }
 
+/// Открыть письмо, не дожидаясь синхронизации ящика: отдельное соединение, только чтение.
+pub async fn open_detached(email: &str, folder: Folder, uid: u32) -> Result<Opened> {
+    let raw = fetch_raw_detached(email, folder, uid).await?;
+    let provider = Account::new(email)?.provider;
+    parse_opened(&raw, provider)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

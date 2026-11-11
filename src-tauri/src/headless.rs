@@ -33,8 +33,7 @@ use crate::text::console_safe;
 /// (`app.path().app_data_dir()`), а в headless-режиме AppHandle недоступен.
 const APP_ID: &str = "dev.minlebay.mmail";
 
-const USAGE: &str = "\
-Команды чтения (графика не запускается, кэш писем только читается):
+const USAGE: &str = r#"Команды чтения (графика не запускается, кэш писем только читается):
 
   mmail accounts [--json]
   mmail folders [--account ЯЩИК] [--json]
@@ -52,7 +51,11 @@ ID — как в list/search: ящик:папка:uid (копируется це
 письма в кэше нет, он скачивается с сервера (EXAMINE/BODY.PEEK, без изменения флагов и
 без записи в кэш). --output — файл для одного вложения или каталог; по умолчанию текущий
 каталог. Существующий файл не перезаписывается без --force.
-";
+
+Ответ и новое письмо открываются в окне mMail (нужен графический сеанс):
+  mmail -compose "to='…',subject='…',body='…'"
+  mmail reply ID [--body ТЕКСТ] [--cc АДРЕС] [--bcc АДРЕС] [--attach ФАЙЛ] [--from ЯЩИК]
+"#;
 
 /// Разобранные аргументы команд чтения.
 struct Opts {
@@ -773,7 +776,7 @@ fn unescape(part: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
-fn parse_id(id: &str) -> Option<(String, String, i64)> {
+pub(crate) fn parse_id(id: &str) -> Option<(String, String, i64)> {
     let mut parts = id.split(':');
     let account = unescape(parts.next()?)?;
     let folder = unescape(parts.next()?)?;

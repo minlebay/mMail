@@ -71,6 +71,12 @@ pub fn clean_message(dirty: &str, allow_remote: bool) -> Clean {
     clean(dirty, allow_remote, true)
 }
 
+/// Цитата в окне ответа. Цвета текста и фона из исходного письма убираем: письмо,
+/// написанное в тёмной теме, иначе цитировалось бы белым текстом на белом фоне.
+pub fn clean_quote_html(dirty: &str) -> Clean {
+    clean_with(dirty, false, false, true)
+}
+
 /// HTML описания события календаря. Это чужая разметка (приглашение из Calendly, Google Meet
 /// и т. п.), но показываем её прямо в диалоге, а не в отдельном документе письма. Поэтому
 /// оставляем только смысловое оформление: без стилей, классов, картинок и вёрстки, которая
@@ -91,6 +97,10 @@ pub fn clean_event_html(dirty: &str) -> String {
 }
 
 fn clean(dirty: &str, allow_remote: bool, styles: bool) -> Clean {
+    clean_with(dirty, allow_remote, styles, false)
+}
+
+fn clean_with(dirty: &str, allow_remote: bool, styles: bool, neutral_colors: bool) -> Clean {
     let blocked = Arc::new(AtomicUsize::new(0));
     let counter = Arc::clone(&blocked);
     let relative_counter = Arc::clone(&blocked);
@@ -113,7 +123,7 @@ fn clean(dirty: &str, allow_remote: bool, styles: bool) -> Clean {
         .link_rel(Some("noopener noreferrer nofollow"))
         .set_tag_attribute_value("a", "target", "_blank")
         .attribute_filter(move |element, attribute, value| {
-            filter_attribute(&counter, allow_remote, element, attribute, value)
+            filter_attribute(&counter, allow_remote, neutral_colors, element, attribute, value)
         })
         .clean(dirty)
         .to_string();
@@ -173,11 +183,15 @@ impl UrlRelativeEvaluate<'_> for DropRelative {
 fn filter_attribute<'u>(
     blocked: &AtomicUsize,
     allow_remote: bool,
+    neutral_colors: bool,
     element: &str,
     attribute: &str,
     value: &'u str,
 ) -> Option<Cow<'u, str>> {
     let lower = value.trim().to_ascii_lowercase();
+    if neutral_colors && matches!(attribute, "color" | "bgcolor") {
+        return None;
+    }
     match (element, attribute) {
         ("img", "src") => {
             if lower.starts_with("data:image/") && !lower.starts_with("data:image/svg") {
@@ -200,12 +214,28 @@ fn filter_attribute<'u>(
             } else if lower.contains("url(") || lower.contains("image-set(") {
                 blocked.fetch_add(1, Ordering::Relaxed);
                 (allow_remote && !lower.contains("image-set(")).then(|| value.into())
+            } else if neutral_colors {
+                neutral_style(value)
             } else {
                 Some(value.into())
             }
         }
         _ => Some(value.into()),
     }
+}
+
+/// Убрать из inline-стиля цвет текста и фон, оставив размеры, шрифт, отступы и рамки.
+fn neutral_style(style: &str) -> Option<Cow<'_, str>> {
+    let kept: Vec<&str> = style
+        .split(';')
+        .filter(|decl| {
+            let name = decl.split_once(':').map_or("", |(name, _)| name.trim()).to_ascii_lowercase();
+            !(name == "color" || name == "-webkit-text-fill-color" || name.starts_with("background"))
+        })
+        .map(str::trim)
+        .filter(|decl| !decl.is_empty())
+        .collect();
+    (!kept.is_empty()).then(|| Cow::Owned(kept.join("; ")))
 }
 
 /// Холст HTML-письма. Почтовые программы рисуют письмо на белом, и рассылки на это рассчитывают:
@@ -474,6 +504,17 @@ mod tests {
         // Цитата в редакторе ответа: <style> там действовал бы на всё окно.
         let c = clean_html("<style>body{display:none}</style><p class=\"x\">a</p>", false);
         assert!(!c.html.contains("display") && !c.html.contains("class"), "{}", c.html);
+    }
+
+    #[test]
+    fn quote_drops_text_and_background_colors() {
+        let c = clean_quote_html(
+            r##"<p style="color:#fff;background-color:#000;font-size:12pt;border-color:#ccc" bgcolor="#000"><font color="#fff">x</font></p>"##,
+        );
+        // Размер и рамку сохраняем, а цвет текста и фон — нет: иначе белое на белом.
+        assert!(c.html.contains("font-size:12pt") && c.html.contains("border-color:#ccc"), "{}", c.html);
+        assert!(!c.html.contains("color:#fff") && !c.html.contains("background") && !c.html.contains("bgcolor"), "{}", c.html);
+        assert!(c.html.contains("<font>x</font>"), "{}", c.html);
     }
 
     #[test]

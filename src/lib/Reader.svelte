@@ -252,7 +252,7 @@
       </div>
 
       {#each msg.warnings as w}
-        <div class="banner danger"><Icon name="alert" size={15} />{$t(w)}</div>
+        <div class="banner danger"><Icon name="alert" size={15} /><span class="text">{$t(w)}</span></div>
       {/each}
       {#if invite}
         <div class="banner invite">
@@ -441,6 +441,8 @@
     border-radius: 9px;
     background: rgba(var(--ink), 0.08);
     font-size: 13px;
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
   .banner .text {
     flex: 1 1 160px;

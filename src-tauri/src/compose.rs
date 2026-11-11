@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tauri::webview::NewWindowResponse;
@@ -11,7 +12,7 @@ use tauri::{AppHandle, State, WebviewWindow};
 use tauri_plugin_dialog::DialogExt;
 
 use crate::imap::Imap;
-use crate::store::{date_label, Store};
+use crate::store::{date_label, Folder, Store};
 use crate::text::display_safe;
 use crate::{accounts, sanitize};
 
@@ -34,6 +35,9 @@ pub struct Prefill {
     pub(crate) attach: Vec<PathBuf>,
     /// Исходное письмо для ответа или пересылки.
     pub(crate) source: Option<u32>,
+    /// ID из CLI (`ящик:папка:uid`), когда окно открыто до того, как кэш успел загрузиться.
+    #[serde(skip)]
+    pub(crate) source_ref: Option<String>,
     /// "new" | "reply" | "forward"
     pub(crate) kind: String,
 }
@@ -142,6 +146,7 @@ pub async fn compose_init(
         .into_iter()
         .map(|a| display_safe(&a).into_owned())
         .collect();
+    let from_explicit = prefill.from.is_some();
     let from = prefill
         .from
         .filter(|f| accounts.contains(f))
@@ -167,14 +172,41 @@ pub async fn compose_init(
         in_reply_to: None,
         references: Vec::new(),
     };
-    let Some(mut source) = prefill.source.and_then(|id| store.details(id)) else { return Ok(init) };
+    let source_id = match prefill.source {
+        Some(id) => Some(id),
+        None => match prefill.source_ref.as_deref() {
+            Some(raw) => wait_for_source(&store, raw).await?,
+            None => None,
+        },
+    };
+    let Some(mut source) = source_id.and_then(|id| store.details(id)) else { return Ok(init) };
 
     // Исходное письмо могли ещё не открывать — загружаем тело (и Message-ID) с сервера.
     if source.html.is_none() {
         if let (Some(account), Some(uid)) = (source.account.clone(), source.uid) {
-            let opened = imap.open(&account, source.folder, uid).await.map_err(|e| e.to_string())?;
+            // Ответ из CLI может открыться до того, как синхронизация подключила ящик:
+            // в этом случае читаем письмо отдельным соединением, не дожидаясь её.
+            let opened = if prefill.source_ref.is_some() {
+                crate::imap::open_detached(&account, source.folder, uid).await.map_err(|e| e.to_string())?
+            } else {
+                imap.open(&account, source.folder, uid).await.map_err(|e| e.to_string())?
+            };
             store.set_opened(source.id, opened);
             source = store.details(source.id).ok_or("письмо пропало")?;
+        }
+    }
+
+    if prefill.kind == "reply" {
+        if !from_explicit {
+            if let Some(account) = source.account.as_ref().filter(|a| init.accounts.contains(a)) {
+                init.from = account.clone();
+            }
+        }
+        if init.to.trim().is_empty() {
+            init.to = display_safe(&source.from_addr).into_owned();
+        }
+        if init.subject.trim().is_empty() {
+            init.subject = display_safe(&reply_subject(&source.subject)).into_owned();
         }
     }
 
@@ -192,7 +224,7 @@ pub async fn compose_init(
     } else {
         format!("{when}, {sender} пишет:")
     });
-    init.quote_html = source.html.as_deref().map(|html| sanitize::clean_html(html, false).html);
+    init.quote_html = source.html.as_deref().map(|html| sanitize::clean_quote_html(html).html);
     if prefill.kind == "reply" {
         if let Some(id) = &source.message_id {
             init.in_reply_to = Some(id.clone());
@@ -201,6 +233,36 @@ pub async fn compose_init(
         }
     }
     Ok(init)
+}
+
+/// ID из `mmail list/search` → id письма в памяти. Если окно ответа открылось раньше,
+/// чем загрузился кэш, ждём его; когда кэш уже загружен, а письма в нём нет — ошибка сразу.
+async fn wait_for_source(store: &Store, raw: &str) -> Result<Option<u32>, String> {
+    let (account, folder, uid) = crate::headless::parse_id(raw)
+        .ok_or("reply: ID как в list/search — ящик:папка:uid")?;
+    let folder = Folder::from_key(&folder).ok_or("reply: неизвестная папка в ID")?;
+    let uid = u32::try_from(uid).map_err(|_| "reply: некорректный UID письма")?;
+    for attempt in 0..40 {
+        if let Some(id) = store.id_of(&account, folder, uid) {
+            return Ok(Some(id));
+        }
+        if store.has_db() || attempt == 39 {
+            return Err(format!(
+                "письмо {raw} не найдено в кэше — обновите список писем в mMail"
+            ));
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    unreachable!()
+}
+
+fn reply_subject(subject: &str) -> String {
+    let lower = subject.to_lowercase();
+    if lower.starts_with("re:") || lower.starts_with("fw:") || lower.starts_with("fwd:") {
+        subject.to_string()
+    } else {
+        format!("Re: {subject}")
+    }
 }
 
 /// HTML, набранный в режиме «Код»: прежде чем показать его в редакторе, чистим тем же
@@ -255,17 +317,10 @@ pub fn open_from_background(app: &AppHandle, prefill: Prefill) {
 pub fn open_reply(app: &AppHandle, id: u32) -> Result<(), String> {
     let store = tauri::Manager::state::<Store>(app);
     let m = store.details(id).ok_or("письмо пропало")?;
-    let lower = m.subject.to_lowercase();
-    let subject =
-        if lower.starts_with("re:") || lower.starts_with("fw:") || lower.starts_with("fwd:") {
-            m.subject.clone()
-        } else {
-            format!("Re: {}", m.subject)
-        };
     let prefill = Prefill {
         from: m.account.clone(),
         to: display_safe(&m.from_addr).into_owned(),
-        subject: display_safe(&subject).into_owned(),
+        subject: display_safe(&reply_subject(&m.subject)).into_owned(),
         source: Some(id),
         kind: "reply".into(),
         ..Default::default()

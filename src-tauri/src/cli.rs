@@ -5,6 +5,7 @@
 //!   mmail -compose "to='a@b.c',subject='Отчёт',message='/путь/текст.txt'"
 //!   mmail mailto:a@b.c?subject=Тема&body=Текст
 //!   mmail compose --to a@b.c --subject Тема --body Текст --attach /путь/файл
+//!   mmail reply 'a@b.c:inbox:20350' --body Текст
 //!
 //! Работающему mMail аргументы приходят через D-Bus (tauri-plugin-single-instance) вместе с
 //! рабочей папкой вызывающего — от неё считаются относительные пути.
@@ -22,12 +23,14 @@ const BODY_MAX: usize = 1024 * 1024;
 /// `None` — аргументов для письма нет (просто показать окно).
 pub fn parse(argv: &[String], cwd: &Path) -> Result<Option<Prefill>, String> {
     let args = argv.get(1..).unwrap_or_default();
-    let Some((pos, first)) = args.iter().enumerate().find(|(_, a)| is_compose(a) || a.starts_with("mailto:")) else {
+    let Some((pos, first)) = args.iter().enumerate().find(|(_, a)| is_compose(a) || is_reply(a) || a.starts_with("mailto:")) else {
         return Ok(None);
     };
     let mut prefill = Prefill { kind: "new".into(), ..Default::default() };
     if first.starts_with("mailto:") {
         mailto(&mut prefill, first)?;
+    } else if is_reply(first) {
+        reply(&mut prefill, &args[pos + 1..], cwd)?;
     } else {
         let rest = &args[pos + 1..];
         match rest.first() {
@@ -42,6 +45,27 @@ pub fn parse(argv: &[String], cwd: &Path) -> Result<Option<Prefill>, String> {
 
 fn is_compose(arg: &str) -> bool {
     matches!(arg, "-compose" | "--compose" | "compose")
+}
+
+fn is_reply(arg: &str) -> bool {
+    matches!(arg, "-reply" | "--reply" | "reply")
+}
+
+/// `reply ID [--body …] [--cc …] [--bcc …] [--attach …] [--from …]` — ответ на письмо
+/// из `list`/`search`. Получатель, тема и цитата подставляются по исходному письму.
+fn reply(prefill: &mut Prefill, args: &[String], cwd: &Path) -> Result<(), String> {
+    let (id, options) = args
+        .split_first()
+        .ok_or("reply: нужен ID письма (из list или search)")?;
+    if crate::headless::parse_id(id).is_none() {
+        return Err("reply: ID как в list/search — ящик:папка:uid".into());
+    }
+    prefill.kind = "reply".into();
+    prefill.source_ref = Some(id.clone());
+    if !options.is_empty() {
+        flags(prefill, options, cwd)?;
+    }
+    Ok(())
 }
 
 /// Thunderbird: `key=value,key='значение, с запятыми',…`.
@@ -253,6 +277,22 @@ mod tests {
     fn flag_style() {
         let p = run(&["compose", "--from", "me@gmail.com", "--to", "a@b.c", "--bcc", "h@b.c", "--subject", "Тема", "--body", "x"]).unwrap().unwrap();
         assert_eq!((p.to.as_str(), p.bcc.as_str(), p.subject.as_str(), p.body.as_str()), ("a@b.c", "h@b.c", "Тема", "x"));
+    }
+
+    #[test]
+    fn reply_by_message_id() {
+        let p = run(&["reply", "me@ya.ru:inbox:20350", "--body", "Спасибо!", "--cc", "a@b.c"]).unwrap().unwrap();
+        assert_eq!(p.kind, "reply");
+        assert_eq!(p.source_ref.as_deref(), Some("me@ya.ru:inbox:20350"));
+        assert_eq!((p.body.as_str(), p.cc.as_str()), ("Спасибо!", "a@b.c"));
+        assert!(p.to.is_empty(), "получателя подставит исходное письмо");
+    }
+
+    #[test]
+    fn reply_requires_a_message_id() {
+        assert!(run(&["reply"]).is_err());
+        assert!(run(&["reply", "me@ya.ru:inbox"]).is_err());
+        assert!(run(&["-reply", "me@ya.ru:inbox:1", "--cc2", "x"]).is_err());
     }
 
     #[test]
