@@ -100,10 +100,17 @@ fn inline_cid_images_within(html: &str, parsed: &Message, budget: usize) -> Stri
     String::from_utf8(out).unwrap_or_else(|_| html.to_string())
 }
 
-/// Имя файла без путей, управляющих символов и скрытых «точечных» имён.
+/// Имя файла без путей, управляющих символов и скрытых «точечных» имён. Bidi-символы тоже
+/// убираем: с U+202E `invoice\u{202e}fdp.html` выглядит в списке и в диалоге как `invoicelmth.pdf`.
 pub fn safe_name(name: &str) -> String {
     let base = name.rsplit(['/', '\\']).next().unwrap_or_default();
-    let cleaned: String = base.chars().filter(|c| !c.is_control()).collect::<String>().trim().trim_start_matches('.').to_string();
+    let cleaned: String = base
+        .chars()
+        .filter(|c| !c.is_control() && !crate::text::is_bidi(*c))
+        .collect::<String>()
+        .trim()
+        .trim_start_matches('.')
+        .to_string();
     let cleaned: String = cleaned.chars().take(200).collect();
     if cleaned.is_empty() { "вложение".into() } else { cleaned }
 }
@@ -111,6 +118,8 @@ pub fn safe_name(name: &str) -> String {
 const EXECUTABLE: &[&str] = &[
     "exe", "msi", "bat", "cmd", "com", "scr", "pif", "vbs", "vbe", "js", "jse", "wsf", "ps1", "jar", "sh", "bash",
     "run", "bin", "appimage", "desktop", "deb", "rpm", "apk", "dmg", "pkg", "lnk", "hta", "cpl", "reg", "py", "pl",
+    // Не программы, но выполняют чужой код при открытии: скрипты в браузере, макросы, образы дисков.
+    "html", "htm", "xhtml", "svg", "docm", "xlsm", "pptm", "iso", "img", "url", "chm",
 ];
 
 /// Исполняемое расширение — в том числе за «маскировкой» вида `счёт.pdf.exe` или `doc.pdf      .exe`.
@@ -149,11 +158,14 @@ mod tests {
         assert_eq!(safe_name("C:\\Windows\\evil.dll"), "evil.dll");
         assert_eq!(safe_name("a\u{0}b\nc.txt"), "abc.txt");
         assert_eq!(safe_name(""), "вложение");
+        // Bidi-переворот не должен прятать настоящее расширение.
+        assert_eq!(safe_name("invoice\u{202e}fdp.html"), "invoicefdp.html");
+        assert_eq!(safe_name("\u{2066}a\u{2069}\u{200f}.txt"), "a.txt");
     }
 
     #[test]
     fn flags_executables_and_double_extensions() {
-        for bad in ["setup.exe", "run.sh", "x.AppImage", "счёт.pdf.exe", "invoice.pdf.scr", "notes.txt.js", "game.desktop"] {
+        for bad in ["setup.exe", "run.sh", "x.AppImage", "счёт.pdf.exe", "invoice.pdf.scr", "notes.txt.js", "game.desktop", "счёт.pdf.html", "logo.SVG", "отчёт.docm", "disk.iso"] {
             assert!(is_dangerous(bad), "{bad}");
         }
         for ok in ["report.pdf", "photo.jpg", "archive.tar.gz", "data.json", "Отчёт.v2.docx"] {
