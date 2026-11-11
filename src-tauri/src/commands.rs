@@ -167,6 +167,11 @@ pub async fn get_message(
     show_remote: bool,
 ) -> Result<MessageView, String> {
     let mut m = store.details(id).ok_or("no such message")?;
+    // В «Отправленных» и «Черновиках» вердикт не считается (провайдер не проверял письмо).
+    // Старый кэш мог сохранить там pass — не показываем его и не пускаем в remote_policy.
+    if matches!(m.folder, Folder::Sent | Folder::Drafts) {
+        m.auth = Auth::Unknown;
+    }
     let html = match (m.html.take(), m.account.as_deref(), m.uid) {
         (Some(html), _, _) => html,
         (None, Some(account), Some(uid)) => {

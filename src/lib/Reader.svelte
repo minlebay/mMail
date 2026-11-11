@@ -2,7 +2,7 @@
   import { t } from './i18n.js';
   import Icon from './Icon.svelte';
   import { showContextMenu } from './contextMenu.js';
-  import { getMessage, writeClipboard, setSenderTrusted, saveAttachment, messageCalendarInvite, translateMessage, mailViewLoad, mailViewVisible, mailViewBounds, mailViewZoom } from './api.js';
+  import { getMessage, writeClipboard, setSenderTrusted, saveAttachment, messageCalendarInvite, translateMessage, mailViewLoad, mailViewVisible, mailViewBounds, mailViewZoom, mailLinkHover } from './api.js';
   import { covered } from './covers.js';
   import { translateRequest, TARGET_LANGUAGES } from './translate.js';
   import Select from './Select.svelte';
@@ -41,8 +41,10 @@
   // Приглашение на встречу из вложенного text/calendar.
   let invite = $state(null);
   let inviteRequest = 0;
-  // Адрес ссылки под курсором — его присылает вид письма (mailview.rs).
+  // Адрес ссылки под курсором — его присылает вид письма (mailview.rs). Событие несёт только
+  // сигнал, сам адрес забираем командой: так он не попадает в другие окна.
   let hoveredLink = $state('');
+  let hoverRevision = 0;
   let request = 0;
 
   $effect(() => {
@@ -59,7 +61,15 @@
   });
 
   $effect(() => {
-    const stop = listen('mail-link-hover', (e) => (hoveredLink = e.payload?.url ?? ''));
+    const stop = listen('mail-link-hover', async () => {
+      try {
+        const state = await mailLinkHover();
+        if (state.revision >= hoverRevision) {
+          hoverRevision = state.revision;
+          hoveredLink = state.url ?? '';
+        }
+      } catch {}
+    });
     return () => stop.then((f) => f());
   });
 

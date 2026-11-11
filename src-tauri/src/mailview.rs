@@ -13,6 +13,7 @@
 //! (`mail_view_bounds`) и прячет вид, пока поверх открыт диалог (нативный вид всегда сверху).
 
 use std::cell::RefCell;
+use std::sync::Mutex;
 
 use gtk::prelude::*;
 use gtk::{gdk, glib};
@@ -56,10 +57,43 @@ struct MailZoom {
     zoom: f64,
 }
 
-/// Адрес ссылки под курсором. `None` — курсор не над ссылкой (в том числе ушёл из письма).
+/// Адрес ссылки под курсором и номер изменения. Событие `mail-link-hover` несёт только
+/// сигнал; сам адрес главное окно забирает командой, чтобы он не попадал в другие окна.
+#[derive(Default)]
+pub struct MailHover {
+    state: Mutex<(u64, Option<String>)>,
+}
+
 #[derive(Clone, Serialize)]
-struct MailLink {
+pub struct MailHoverState {
+    revision: u64,
+    /// `None` — курсор не над ссылкой (в том числе ушёл из письма).
     url: Option<String>,
+}
+
+impl MailHover {
+    /// Запоминает адрес; `None` — адрес не изменился, событие не нужно.
+    fn set(&self, url: Option<String>) -> Option<u64> {
+        let mut state = self.state.lock().unwrap();
+        if state.1 == url {
+            return None;
+        }
+        state.0 += 1;
+        state.1 = url;
+        Some(state.0)
+    }
+
+    fn get(&self) -> MailHoverState {
+        let state = self.state.lock().unwrap();
+        MailHoverState { revision: state.0, url: state.1.clone() }
+    }
+}
+
+/// Запоминает адрес под курсором и будит главное окно. Данные — только в состоянии ядра.
+fn set_hover(app: &AppHandle, url: Option<String>) {
+    if app.state::<MailHover>().set(url).is_some() {
+        let _ = app.emit_to("main", "mail-link-hover", ());
+    }
 }
 
 /// Встраивает вид письма поверх основного webview главного окна. Вызывать в главном потоке.
@@ -123,8 +157,8 @@ fn decide(app: &AppHandle, decision: &webkit2gtk::PolicyDecision, kind: PolicyDe
     }
     if let Ok(url) = Url::parse(&uri) {
         if crate::links::openable(&url) {
-            let request = app.state::<crate::links::PendingLink>().request(url);
-            let _ = app.emit_to("main", "link-request", request);
+            app.state::<crate::links::PendingLink>().request(url);
+            let _ = app.emit_to("main", "link-request", ());
         }
     }
     decision.ignore();
@@ -142,12 +176,12 @@ fn install_link_hover(view: &WebView, app: AppHandle) {
             .then(|| hit.link_uri())
             .flatten()
             .and_then(|uri| link_to_show(uri.as_str()));
-        let _ = target_app.emit_to("main", "mail-link-hover", MailLink { url });
+        set_hover(&target_app, url);
     });
 
     let leave_app = app;
     view.connect_leave_notify_event(move |_, _| {
-        let _ = leave_app.emit_to("main", "mail-link-hover", MailLink { url: None });
+        set_hover(&leave_app, None);
         glib::Propagation::Proceed
     });
 }
@@ -225,12 +259,18 @@ pub fn set_app_zoom(app: &AppHandle, zoom: f64) {
     let _ = on_main(app, move |m| m.app_zoom = zoom);
 }
 
+/// Адрес ссылки под курсором для главного окна. Событие `mail-link-hover` — только сигнал.
+#[tauri::command]
+pub fn mail_link_hover(hover: tauri::State<'_, MailHover>) -> MailHoverState {
+    hover.get()
+}
+
 /// Документ письма (уже очищенный ядром; схему и мягкие края подставила страница).
 #[tauri::command]
 pub fn mail_view_load(app: AppHandle, html: String) -> Result<(), String> {
     let result = on_main(&app, move |m| m.view.load_html(&html, None));
     // Старый адрес не должен остаться в подвале, пока новый документ ещё грузится.
-    let _ = app.emit_to("main", "mail-link-hover", MailLink { url: None });
+    set_hover(&app, None);
     result
 }
 
@@ -239,7 +279,7 @@ pub fn mail_view_load(app: AppHandle, html: String) -> Result<(), String> {
 pub fn mail_view_visible(app: AppHandle, visible: bool) -> Result<(), String> {
     let result = on_main(&app, move |m| m.shown = visible);
     if !visible {
-        let _ = app.emit_to("main", "mail-link-hover", MailLink { url: None });
+        set_hover(&app, None);
     }
     result
 }
@@ -271,6 +311,16 @@ pub fn mail_view_zoom(app: AppHandle, zoom: f64) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hover_state_reports_each_change_once() {
+        let hover = MailHover::default();
+        assert_eq!(hover.get().revision, 0);
+        assert_eq!(hover.set(Some("https://a.example/".into())), Some(1));
+        assert_eq!(hover.set(Some("https://a.example/".into())), None, "тот же адрес — без события");
+        assert_eq!(hover.set(None), Some(2));
+        assert_eq!(hover.get().url, None);
+    }
 
     #[test]
     fn only_openable_links_reach_the_status_line() {

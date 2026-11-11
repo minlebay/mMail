@@ -2,14 +2,20 @@
   import { covers } from './covers.js';
   import { t } from './i18n.js';
   import { listen } from '@tauri-apps/api/event';
-  import { openLink } from './api.js';
+  import { openLink, pendingLink } from './api.js';
 
   // Ядро присылает сюда каждый клик по ссылке в письме; открывает только по id после подтверждения.
+  // Событие — только сигнал, адрес забираем командой, чтобы он не попадал в другие окна.
   let request = $state(null);
   let cancelButton = $state();
 
   $effect(() => {
-    const unlisten = listen('link-request', (e) => (request = e.payload));
+    const unlisten = listen('link-request', async () => {
+      try {
+        const next = await pendingLink();
+        if (next) request = next;
+      } catch {}
+    });
     return () => unlisten.then((stop) => stop());
   });
 

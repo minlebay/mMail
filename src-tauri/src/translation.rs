@@ -2,6 +2,7 @@
 //! Текст уходит в Google; результат показывается в mMail, а не во вкладке браузера.
 //! Длинный текст режется на части по абзацам (у сервиса ограничение на размер запроса).
 
+use std::sync::Mutex;
 use std::time::Duration;
 
 use serde::Serialize;
@@ -185,6 +186,26 @@ fn chunks(text: &str, limit: usize) -> Vec<String> {
     out
 }
 
+/// Выделенный текст, который ждёт окно перевода. Событие `translate-selection` — только
+/// сигнал: сам текст главное окно забирает командой, чтобы он не попадал в другие окна.
+#[derive(Default)]
+pub struct PendingSelection(Mutex<Option<String>>);
+
+impl PendingSelection {
+    fn set(&self, text: String) {
+        *self.0.lock().unwrap() = Some(text);
+    }
+
+    fn take(&self) -> Option<String> {
+        self.0.lock().unwrap().take()
+    }
+}
+
+#[tauri::command]
+pub fn translate_selection_request(pending: tauri::State<'_, PendingSelection>) -> Option<String> {
+    pending.take()
+}
+
 /// «Перевести выделенное»: берём выделение (PRIMARY — не трогает буфер обмена Ctrl+C)
 /// и отдаём окну, где оно сделано. Вызывать в главном потоке.
 pub fn selected_text(app: AppHandle, window_label: String) {
@@ -194,7 +215,8 @@ pub fn selected_text(app: AppHandle, window_label: String) {
         let target = app.get_webview_window(&window_label).map(|w| w.label().to_string()).unwrap_or_else(|| "main".into());
         match text {
             Some(text) => {
-                let _ = app.emit_to(target.as_str(), "translate-selection", text);
+                app.state::<PendingSelection>().set(text);
+                let _ = app.emit_to(target.as_str(), "translate-selection", ());
             }
             None => {
                 let _ = app.emit_to(target.as_str(), "operation-error", "Не удалось получить выделение. Выделите текст заново.");
@@ -206,6 +228,15 @@ pub fn selected_text(app: AppHandle, window_label: String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pending_selection_is_taken_once() {
+        let pending = PendingSelection::default();
+        assert!(pending.take().is_none());
+        pending.set("Секретный текст письма".into());
+        assert_eq!(pending.take().as_deref(), Some("Секретный текст письма"));
+        assert!(pending.take().is_none(), "текст не повторяется");
+    }
 
     #[test]
     fn long_text_is_split_without_losing_anything() {

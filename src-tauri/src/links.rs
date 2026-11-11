@@ -84,6 +84,17 @@ pub struct LinkRequest {
     punycode: bool,
 }
 
+fn describe(id: u64, url: &Url) -> LinkRequest {
+    let host = url.host_str().unwrap_or_default().to_string();
+    LinkRequest {
+        id,
+        url: url.to_string(),
+        punycode: host.split('.').any(|label| label.starts_with("xn--")),
+        insecure: url.scheme() == "http",
+        host,
+    }
+}
+
 /// Адрес, ждущий подтверждения. UI возвращает только id, поэтому открыть
 /// произвольный URL через ядро нельзя — только тот, что пользователь кликнул.
 #[derive(Default)]
@@ -95,16 +106,16 @@ pub struct PendingLink {
 impl PendingLink {
     pub fn request(&self, url: Url) -> LinkRequest {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed) + 1;
-        let host = url.host_str().unwrap_or_default().to_string();
-        let request = LinkRequest {
-            id,
-            url: url.to_string(),
-            punycode: host.split('.').any(|label| label.starts_with("xn--")),
-            insecure: url.scheme() == "http",
-            host,
-        };
+        let request = describe(id, &url);
         *self.current.lock().unwrap() = Some((id, url));
         request
+    }
+
+    /// Ссылка, ждущая подтверждения. Событие `link-request` — только сигнал, поэтому
+    /// адрес главное окно забирает этой командой.
+    pub fn pending(&self) -> Option<LinkRequest> {
+        let current = self.current.lock().unwrap();
+        current.as_ref().map(|(id, url)| describe(*id, url))
     }
 
     fn take(&self, id: u64) -> Option<Url> {
@@ -117,6 +128,13 @@ impl PendingLink {
             }
         }
     }
+}
+
+/// Текущая ссылка, ждущая подтверждения. Вызывается только главным окном:
+/// в других capabilities этой команды нет.
+#[tauri::command]
+pub fn pending_link(pending: tauri::State<'_, PendingLink>) -> Option<LinkRequest> {
+    pending.pending()
 }
 
 #[tauri::command]
@@ -181,5 +199,20 @@ mod tests {
         assert!(p.take(first.id).is_none(), "старый id не должен открывать новую ссылку");
         assert_eq!(p.take(second.id).unwrap().as_str(), "https://b.example/");
         assert!(p.take(second.id).is_none(), "ссылка открывается один раз");
+    }
+
+    #[test]
+    fn pending_link_is_readable_without_opening_it() {
+        let p = PendingLink::default();
+        assert!(p.pending().is_none());
+        p.request(Url::parse("https://a.example/login?token=secret").unwrap());
+        // Событие несёт только сигнал, поэтому адрес и его признаки читает команда.
+        let pending = p.pending().expect("ссылка ждёт подтверждения");
+        assert_eq!(pending.url, "https://a.example/login?token=secret");
+        assert_eq!(pending.host, "a.example");
+        assert!(!pending.insecure);
+        // Чтение не расходует ссылку: открыть её всё ещё можно по тому же id.
+        assert!(p.pending().is_some());
+        assert_eq!(p.take(pending.id).unwrap().as_str(), "https://a.example/login?token=secret");
     }
 }

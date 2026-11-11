@@ -38,6 +38,43 @@ test('only the main window can read mail', () => {
   }
 });
 
+// listen() в JS регистрирует цель Any, а Tauri отдаёт событие Any-слушателю при любом emit_to.
+// Поэтому чувствительные события несут только сигнал, а данные главное окно забирает командой.
+test('sensitive window events carry only a signal', () => {
+  const sources = ['src-tauri/src/main.rs', 'src-tauri/src/mailview.rs', 'src-tauri/src/notify.rs', 'src-tauri/src/translation.rs']
+    .map((file) => [file, read(file)]);
+  for (const event of ['link-request', 'mail-link-hover', 'open-message', 'translate-selection']) {
+    const calls = sources.flatMap(([file, src]) =>
+      [...src.matchAll(new RegExp(`emit_to\\([^\\n]*"${event}"[^\\n]*`, 'g'))].map((m) => [file, m[0]]),
+    );
+    assert.ok(calls.length > 0, `нет отправки ${event}`);
+    for (const [file, call] of calls) {
+      assert.match(call, new RegExp(`"${event}",\\s*\\(\\)`), `${file}: ${event} должен нести только сигнал`);
+    }
+    for (const [file, src] of sources) {
+      assert.ok(!new RegExp(`\\.emit\\(\\s*"${event}"`).test(src), `${file}: ${event} не должен рассылаться всем`);
+    }
+  }
+  const commands = ['allow-pending-link', 'allow-mail-link-hover', 'allow-open-message-request', 'allow-translate-selection-request'];
+  const main = json('src-tauri/capabilities/default.json').permissions;
+  for (const p of commands) assert.ok(main.includes(p), p);
+  for (const name of ['compose', 'settings']) {
+    const { permissions } = json(`src-tauri/capabilities/${name}.json`);
+    for (const p of commands) assert.ok(!permissions.includes(p), `${name}: ${p}`);
+  }
+  // Подписка не должна читать данные из самого события.
+  for (const [file, event] of [
+    ['src/lib/LinkDialog.svelte', 'link-request'],
+    ['src/lib/Reader.svelte', 'mail-link-hover'],
+    ['src/App.svelte', 'open-message'],
+    ['src/lib/TranslationDialog.svelte', 'translate-selection'],
+  ]) {
+    const line = read(file).match(new RegExp(`listen\\('${event}'[^\\n]*`))?.[0];
+    assert.ok(line, `${file}: нет подписки на ${event}`);
+    assert.ok(!/payload/.test(line), `${file}: ${event} не должен читать payload`);
+  }
+});
+
 // Письмо не попадает в страницу приложения: его показывает отдельный WebKit (mailview.rs)
 // со своим эфемерным контекстом, без JavaScript и без навигации — ссылки только через подтверждение.
 test('mail body lives in an isolated native view without scripts', () => {

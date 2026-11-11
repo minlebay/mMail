@@ -1028,7 +1028,7 @@ async fn prefetch_bodies(
         let mut changed = false;
         for f in &fetches {
             let (Some(uid), Some(raw)) = (f.uid, f.body()) else { continue };
-            match parse_opened(raw, account.provider) {
+            match parse_opened(raw, account.provider, cursor.folder) {
                 Ok(opened) => {
                     let with_attachments = !opened.attachments.is_empty();
                     changed |= store.set_opened_uid(&account.email, cursor.folder, uid, opened);
@@ -1242,19 +1242,25 @@ impl Imap {
     pub async fn open_raw(&self, email: &str, folder: Folder, uid: u32) -> Result<(Opened, Vec<u8>)> {
         let raw = self.raw(email, folder, uid).await?;
         let provider = self.connection(email).ok_or("ящик отключён")?.account.provider;
-        Ok((parse_opened(&raw, provider)?, raw))
+        Ok((parse_opened(&raw, provider, folder)?, raw))
     }
 }
 
 /// Тело письма, проверка отправителя, идентификаторы цепочки и список вложений (без их содержимого).
-fn parse_opened(raw: &[u8], provider: &accounts::Provider) -> Result<Opened> {
+fn parse_opened(raw: &[u8], provider: &accounts::Provider, folder: Folder) -> Result<Opened> {
     let parsed = MessageParser::default().parse(raw).ok_or("не удалось разобрать письмо")?;
-    let auth_results = parsed
-        .headers()
-        .iter()
-        .filter(|h| h.name().eq_ignore_ascii_case("Authentication-Results"))
-        .map(|h| String::from_utf8_lossy(&raw[h.offset_start as usize..h.offset_end as usize]).into_owned());
-    let auth = auth_verdict(auth_results, provider.trusted_authserv);
+    // В «Отправленных» и «Черновиках» провайдер свой заголовок не добавляет, поэтому верхним
+    // оказался бы Authentication-Results из самого письма. Вердикт там не считаем.
+    let auth = if matches!(folder, Folder::Sent | Folder::Drafts) {
+        Auth::Unknown
+    } else {
+        let auth_results = parsed
+            .headers()
+            .iter()
+            .filter(|h| h.name().eq_ignore_ascii_case("Authentication-Results"))
+            .map(|h| String::from_utf8_lossy(&raw[h.offset_start as usize..h.offset_end as usize]).into_owned());
+        auth_verdict(auth_results, provider.trusted_authserv)
+    };
     let html = parsed.body_html(0).map(|h| attachments::inline_cid_images(&h, &parsed)).unwrap_or_default();
     let references = match parsed.references() {
         mail_parser::HeaderValue::Text(id) => vec![id.to_string()],
@@ -1395,7 +1401,7 @@ pub async fn fetch_raw_detached(email: &str, folder: Folder, uid: u32) -> Result
 pub async fn open_detached(email: &str, folder: Folder, uid: u32) -> Result<Opened> {
     let raw = fetch_raw_detached(email, folder, uid).await?;
     let provider = Account::new(email)?.provider;
-    parse_opened(&raw, provider)
+    parse_opened(&raw, provider, folder)
 }
 
 #[cfg(test)]
@@ -1481,5 +1487,17 @@ mod tests {
         let comment = "mx.yandex.net; dkim=none (x dmarc=pass) header.d=evil.example; dmarc=none (\\) dmarc=pass) header.from=evil.example";
         assert!(verdict(&[comment]) == Auth::Unknown);
         assert!(verdict(&["mx.yandex.net (mx; dmarc=pass); dmarc=fail"]) == Auth::Fail);
+    }
+
+    #[test]
+    fn sent_and_drafts_do_not_trust_embedded_results() {
+        // Почтовая программа дописывает такой заголовок сама; провайдер его не проверял.
+        let raw = b"Authentication-Results: mx.google.com; dmarc=pass header.from=github.com\r\n\
+                    From: GitHub <news@github.com>\r\n\
+                    Subject: test\r\n\r\nbody";
+        let opened = |folder| parse_opened(raw, &crate::accounts::GMAIL, folder).unwrap().auth;
+        assert!(opened(Folder::Sent) == Auth::Unknown);
+        assert!(opened(Folder::Drafts) == Auth::Unknown);
+        assert!(opened(Folder::Inbox) == Auth::Pass, "во входящих поведение прежнее");
     }
 }

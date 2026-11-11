@@ -16,7 +16,7 @@
   import { applyTheme, isDark, DEFAULT_THEME, DEFAULT_OPACITY } from './lib/themes.js';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { listen } from '@tauri-apps/api/event';
-  import { listFolders, syncStatus, getAppearance, setZoom, openSettings, checkMail, openCompose as openComposeWindow } from './lib/api.js';
+  import { listFolders, syncStatus, getAppearance, setZoom, openSettings, checkMail, openCompose as openComposeWindow, openMessageRequest } from './lib/api.js';
   import { googleStatus, calendarList, calendarSetVisible, calendarEvents, calendarSaveEvent, calendarDeleteEvent } from './lib/api.js';
   import { setMenuErrorHandler } from './lib/contextMenu.js';
 
@@ -126,7 +126,15 @@
       listen('message-sent', () => showToast('Письмо отправлено')),
       listen('google-changed', () => refreshGoogle()),
       // Клик по уведомлению: новое письмо (или несколько — тогда «Входящие» ящика) и день события.
-      listen('open-message', ({ payload }) => {
+      // Событие — только сигнал, id и ящик забираем командой.
+      listen('open-message', async () => {
+        let payload;
+        try {
+          payload = await openMessageRequest();
+        } catch {
+          return;
+        }
+        if (!payload) return;
         setMode('mail');
         if (groups.some((g) => g.account === payload.account)) active = { account: payload.account, folder: 'inbox' };
         if (payload.id != null) selectedId = payload.id;

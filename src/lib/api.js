@@ -16,7 +16,16 @@ export const getMessage = (id, showRemote = false) => invoke('get_message', { id
 export const setSenderTrusted = (address, trusted) => invoke('set_sender_trusted', { address, trusted });
 
 // Передаём только id запроса: сам адрес хранится в ядре.
+// Событие link-request — только сигнал; адрес забирает главное окно этой командой.
+export const pendingLink = () => invoke('pending_link');
 export const openLink = (id) => invoke('open_link', { id });
+
+// Адрес ссылки под курсором: { revision, url }; событие mail-link-hover — только сигнал.
+export const mailLinkHover = () => invoke('mail_link_hover');
+// Письмо из уведомления: { id, account }; open-message — только сигнал.
+export const openMessageRequest = () => invoke('open_message_request');
+// Выделенный текст: translate-selection — только сигнал.
+export const translateSelectionRequest = () => invoke('translate_selection_request');
 
 export const getAppearance = () => invoke('get_appearance');
 

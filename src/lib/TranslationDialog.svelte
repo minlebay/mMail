@@ -2,20 +2,29 @@
   import { covers } from './covers.js';
   import { t } from './i18n.js';
   import { listen } from '@tauri-apps/api/event';
-  import { translateText, writeClipboard } from './api.js';
+  import { translateText, writeClipboard, translateSelectionRequest } from './api.js';
 
-  // «Перевести выделенное»: ядро присылает выделенный текст, перевод показываем только как текст
-  // (интерполяция Svelte экранирует всё — разметка из ответа переводчика не исполняется).
+  // «Перевести выделенное»: ядро присылает сигнал, а текст забираем командой — событие не несёт
+  // содержимое письма. Перевод показываем только как текст (интерполяция Svelte экранирует всё —
+  // разметка из ответа переводчика не исполняется).
   let state = $state(null); // { loading } | { text, sourceLanguage } | { error }
   let closeButton = $state();
   let request = 0;
 
   $effect(() => {
-    const unlisten = listen('translate-selection', async (e) => {
+    const unlisten = listen('translate-selection', async () => {
+      let text;
+      try {
+        text = await translateSelectionRequest();
+      } catch (err) {
+        state = { error: String(err) };
+        return;
+      }
+      if (!text) return;
       const mine = ++request;
       state = { loading: true };
       try {
-        const result = await translateText(e.payload);
+        const result = await translateText(text);
         if (mine === request) state = result;
       } catch (err) {
         if (mine === request) state = { error: String(err) };

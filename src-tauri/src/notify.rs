@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use chrono::Utc;
 use notify_rust::{Hint, Notification};
+use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::config::ConfigStore;
@@ -69,9 +70,37 @@ pub fn cli_error(app: &AppHandle, error: &str) {
     show(app, crate::i18n::text(app, "Письмо не открыто"), escape(&plain(error, 300)), &[], |_, _| {});
 }
 
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenRequest {
+    id: Option<u32>,
+    account: String,
+}
+
+/// Письмо из уведомления, которое ждёт, пока главное окно заберёт его командой.
+/// Событие `open-message` несёт только сигнал: id и ящик в другие окна не попадают.
+#[derive(Default)]
+pub struct PendingOpen(Mutex<Option<OpenRequest>>);
+
+impl PendingOpen {
+    fn set(&self, request: OpenRequest) {
+        *self.0.lock().unwrap() = Some(request);
+    }
+
+    fn take(&self) -> Option<OpenRequest> {
+        self.0.lock().unwrap().take()
+    }
+}
+
+#[tauri::command]
+pub fn open_message_request(pending: tauri::State<'_, PendingOpen>) -> Option<OpenRequest> {
+    pending.take()
+}
+
 fn open_message(app: &AppHandle, id: Option<u32>, account: &str) {
     crate::tray::show_main(app);
-    let _ = app.emit_to("main", "open-message", serde_json::json!({ "id": id, "account": account }));
+    app.state::<PendingOpen>().set(OpenRequest { id, account: account.to_string() });
+    let _ = app.emit_to("main", "open-message", ());
 }
 
 /// Действие над письмами из уведомления — в фоне; ошибку показываем в окне, если оно открыто.
@@ -210,6 +239,17 @@ fn remind(app: &AppHandle, r: crate::calendar::Reminder) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pending_open_is_taken_once_by_the_main_window() {
+        let pending = PendingOpen::default();
+        assert!(pending.take().is_none());
+        pending.set(OpenRequest { id: Some(42), account: "me@example.com".into() });
+        let request = pending.take().expect("письмо ждёт открытия");
+        assert_eq!(request.id, Some(42));
+        assert_eq!(request.account, "me@example.com");
+        assert!(pending.take().is_none(), "событие-сигнал не повторяет открытие");
+    }
 
     #[test]
     fn foreign_text_cannot_add_markup() {

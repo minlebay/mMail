@@ -47,6 +47,9 @@ fn main() {
         .manage(store::Store::default())
         .manage(imap::Imap::default())
         .manage(links::PendingLink::default())
+        .manage(mailview::MailHover::default())
+        .manage(notify::PendingOpen::default())
+        .manage(translation::PendingSelection::default())
         .manage(compose::ComposeState::default())
         .manage(tray::TrayState::default())
         .manage(window_pins::PinState::default())
@@ -87,6 +90,7 @@ fn main() {
             mailview::mail_view_visible,
             mailview::mail_view_bounds,
             mailview::mail_view_zoom,
+            mailview::mail_link_hover,
             window_pins::window_pins,
             window_pins::set_window_pin,
             commands::write_clipboard,
@@ -106,7 +110,10 @@ fn main() {
             commands::move_messages,
             translation::translate_message,
             translation::translate_text,
+            translation::translate_selection_request,
             links::open_link,
+            links::pending_link,
+            notify::open_message_request,
             imap::sync_status,
             imap::list_accounts,
             imap::add_account,
@@ -128,8 +135,8 @@ fn main() {
                     let app = app.handle().clone();
                     move |url, _| {
                         if links::openable(&url) {
-                            let request = app.state::<links::PendingLink>().request(url);
-                            let _ = app.emit_to("main", "link-request", request);
+                            app.state::<links::PendingLink>().request(url);
+                            let _ = app.emit_to("main", "link-request", ());
                         }
                         NewWindowResponse::Deny
                     }
