@@ -265,8 +265,22 @@ fn parse_datetime(prop: &Prop) -> Option<DateTime<Local>> {
     if utc {
         return Some(Utc.from_utc_datetime(&naive).with_timezone(&Local));
     }
-    // TZID без базы часовых поясов трактуем как местное «настенное» время: для приглашений
-    // из российских календарей (Europe/Moscow) это совпадает с системным поясом.
+    // TZID — пояс, в котором организатор записал «настенное» время (Google часто пишет
+    // приглашение в поясе получателя: Europe/Minsk для ящика в Минске). Без перевода
+    // в местный пояс встреча в форме съезжала бы на разницу поясов.
+    if let Some(tzid) = prop.param("TZID") {
+        if let Ok(tz) = tzid.parse::<chrono_tz::Tz>() {
+            let local = tz
+                .from_local_datetime(&naive)
+                .earliest()
+                .or_else(|| tz.from_local_datetime(&naive).latest())
+                .map(|dt| dt.with_timezone(&Local));
+            // Перевод часов вперёд: такого времени в поясе не существует — берём UTC.
+            return local.or_else(|| Some(Utc.from_utc_datetime(&naive).with_timezone(&Local)));
+        }
+    }
+    // Незнакомый TZID (например, имя пояса Windows) трактуем как местное «настенное»
+    // время: лучше показать его как есть, чем сдвинуть на неизвестную разницу.
     Local
         .from_local_datetime(&naive)
         .earliest()
@@ -434,15 +448,46 @@ mod tests {
             "DURATION:PT30M\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
         );
         let invite = parse(tzid).unwrap();
-        assert!(
-            invite.start.starts_with("2026-11-10T10:00:00"),
-            "{}",
-            invite.start
+        assert_eq!(
+            DateTime::parse_from_rfc3339(&invite.start)
+                .unwrap()
+                .with_timezone(&Utc),
+            "2026-11-10T07:00:00Z".parse::<DateTime<Utc>>().unwrap()
         );
-        assert!(
-            invite.end.starts_with("2026-11-10T10:30:00"),
-            "{}",
-            invite.end
+        assert_eq!(
+            DateTime::parse_from_rfc3339(&invite.end)
+                .unwrap()
+                .with_timezone(&Utc),
+            "2026-11-10T07:30:00Z".parse::<DateTime<Utc>>().unwrap()
+        );
+    }
+
+    // Google пишет время приглашения в поясе получателя: 15:30 по Минску — это 13:30
+    // по Белграду. Раньше TZID игнорировался и в форму события попадало 15:30.
+    #[test]
+    fn converts_google_tzid_to_the_same_instant() {
+        let google = concat!(
+            "BEGIN:VCALENDAR\r\nMETHOD:REQUEST\r\nBEGIN:VTIMEZONE\r\n",
+            "TZID:Europe/Minsk\r\nBEGIN:STANDARD\r\nTZOFFSETFROM:+0300\r\n",
+            "TZOFFSETTO:+0300\r\nDTSTART:19700101T000000\r\nEND:STANDARD\r\n",
+            "END:VTIMEZONE\r\nBEGIN:VEVENT\r\n",
+            "SUMMARY:Intro call\r\n",
+            "DTSTART;TZID=Europe/Minsk:20261111T153000\r\n",
+            "DTEND;TZID=Europe/Minsk:20261111T161500\r\n",
+            "END:VEVENT\r\nEND:VCALENDAR\r\n"
+        );
+        let invite = parse(google).unwrap();
+        assert_eq!(
+            DateTime::parse_from_rfc3339(&invite.start)
+                .unwrap()
+                .with_timezone(&Utc),
+            "2026-11-11T12:30:00Z".parse::<DateTime<Utc>>().unwrap()
+        );
+        assert_eq!(
+            DateTime::parse_from_rfc3339(&invite.end)
+                .unwrap()
+                .with_timezone(&Utc),
+            "2026-11-11T13:15:00Z".parse::<DateTime<Utc>>().unwrap()
         );
     }
 
