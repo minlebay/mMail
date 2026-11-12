@@ -959,7 +959,12 @@ async fn reconnect(app: &AppHandle, conn: &Connection) -> Result<Session> {
         }
         .await;
         match attempt {
-            Ok(session) => return Ok(session),
+            Ok(session) => {
+                // Связь восстановлена — убираем ошибку «нет связи» из шапки сразу,
+                // иначе она висит до следующего изменения статуса (например, до письма).
+                set_status(app, email, "ok", "");
+                return Ok(session);
+            }
             Err(e) => {
                 set_status(app, email, "error", format!("нет связи с сервером ({e}), повторю через {} с", delay.as_secs()));
                 tokio::time::sleep(delay).await;
