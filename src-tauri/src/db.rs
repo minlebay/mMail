@@ -169,7 +169,7 @@ impl Db {
     }
 
     pub fn set_opened(&self, account: &str, folder: Folder, uid: u32, opened: &Opened) -> Result<()> {
-        self.0.lock().unwrap().execute(
+        let changed = self.0.lock().unwrap().execute(
             "UPDATE messages SET html = ?4, auth = ?5, message_id = ?6, refs = ?7, attachments = ?8, has_attachments = ?9,
                 recipients = ?10
              WHERE account = ?1 AND folder = ?2 AND uid = ?3",
@@ -186,6 +186,11 @@ impl Db {
                 serde_json::to_string(&opened.recipients)?,
             ],
         )?;
+        // UPDATE по несуществующей строке — не ошибка для SQLite, но тело тогда пропадёт
+        // молча: в памяти оно не остаётся (store решает по Ok), а в кэше его нет.
+        if changed == 0 {
+            return Err(format!("письма {}:{} {uid} нет в кэше — тело не сохранено", account, folder.key()).into());
+        }
         Ok(())
     }
 
@@ -495,6 +500,59 @@ mod tests {
         let second = &messages.iter().find(|(m, _)| m.uid == Some(2)).unwrap().0;
         assert!(!second.unread && second.starred);
         assert_eq!(db.validity("me@ya.ru", Folder::Sent), Some(42));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Тело, сохранённое GUI, должно сразу читаться отдельным read-only соединением —
+    /// именно так его читает `mmail read`, не дожидаясь закрытия mMail.
+    #[test]
+    fn opened_body_is_visible_to_read_only_connection() {
+        let dir = temp_dir("ro-reader");
+        let key = [4u8; 32];
+        let db = Db::open(&dir, &key).unwrap();
+        db.insert(&[&message(1)]).unwrap();
+        let opened = Opened {
+            html: "<p>Тело письма</p>".into(),
+            recipients: Recipients::default(),
+            auth: Auth::Pass,
+            message_id: Some("<id@b.example>".into()),
+            references: Vec::new(),
+            attachments: Vec::new(),
+        };
+        db.set_opened("me@ya.ru", Folder::Inbox, 1, &opened).unwrap();
+
+        // Второе соединение, как headless.rs: READ_ONLY, WAL остаётся в работе у первого.
+        let path = dir.join("mail.db");
+        let ro = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        let hex: String = key.iter().map(|b| format!("{b:02x}")).collect();
+        ro.execute_batch(&format!("PRAGMA key = \"x'{hex}'\";")).unwrap();
+        ro.busy_timeout(std::time::Duration::from_secs(3)).unwrap();
+        let html: Option<String> = ro
+            .query_row("SELECT html FROM messages WHERE account = ?1 AND folder = ?2 AND uid = ?3", params!["me@ya.ru", "inbox", 1], |r| r.get(0))
+            .unwrap();
+        assert_eq!(html.as_deref(), Some("<p>Тело письма</p>"));
+        drop(ro);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// UPDATE, не нашедший строку, — ошибка: иначе тело «сохранится» только в памяти
+    /// и пропадёт при перезапуске, а в кэше останется NULL.
+    #[test]
+    fn saving_body_for_unknown_message_fails() {
+        let dir = temp_dir("missing-row");
+        let db = Db::open(&dir, &[6u8; 32]).unwrap();
+        db.insert(&[&message(1)]).unwrap();
+        let opened = Opened {
+            html: "<p>Тело</p>".into(),
+            recipients: Recipients::default(),
+            auth: Auth::Unknown,
+            message_id: None,
+            references: Vec::new(),
+            attachments: Vec::new(),
+        };
+        let err = db.set_opened("me@ya.ru", Folder::Inbox, 2, &opened).unwrap_err();
+        assert!(err.to_string().contains("тело не сохранено"), "{err}");
+        assert_eq!(db.body("me@ya.ru", Folder::Inbox, 2).unwrap(), None);
         let _ = fs::remove_dir_all(&dir);
     }
 
