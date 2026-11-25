@@ -517,17 +517,6 @@ impl Store {
         }
     }
 
-    /// Наибольший известный UID папки ящика (0 — писем ещё нет).
-    pub fn max_uid(&self, account: &str, folder: Folder) -> u32 {
-        let entries = self.entries.read().unwrap();
-        entries
-            .iter()
-            .filter(|e| e.msg.folder == folder && e.msg.account.as_deref() == Some(account))
-            .filter_map(|e| e.msg.uid)
-            .max()
-            .unwrap_or(0)
-    }
-
     /// Флаги с сервера: `(uid, непрочитано, важное)`. Возвращает, изменилось ли что-нибудь.
     pub fn update_flags(&self, account: &str, folder: Folder, flags: &[(u32, bool, bool)]) -> bool {
         let by_uid: std::collections::HashMap<u32, (bool, bool)> = flags.iter().map(|&(uid, u, s)| (uid, (u, s))).collect();

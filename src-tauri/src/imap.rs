@@ -707,7 +707,7 @@ async fn run_sync(app: &AppHandle, account: Account) -> Result<()> {
                 Ok((back, news)) => {
                     session = back;
                     forced = conn.check.swap(false, Ordering::Relaxed);
-                    if news || forced { refresh(app, &mut session, &email, &cursors, true).await } else { Ok(()) }
+                    if news || forced { refresh(app, &mut session, &email, &mut cursors, true).await } else { Ok(()) }
                 }
                 Err(e) => {
                     // Сессия ушла в idle_wait и не вернулась — нужна новая.
@@ -737,7 +737,7 @@ async fn run_sync(app: &AppHandle, account: Account) -> Result<()> {
         let result: Result<()> = async {
             if last_flags.elapsed() >= FLAGS_EVERY {
                 resync_folders(app, &mut session, &conn, &mut cursors).await?;
-                refresh(app, &mut session, &email, &cursors, true).await?;
+                refresh(app, &mut session, &email, &mut cursors, true).await?;
                 last_flags = std::time::Instant::now();
                 last_poll = last_flags;
             }
@@ -772,7 +772,7 @@ async fn run_sync(app: &AppHandle, account: Account) -> Result<()> {
             // или сразу, если попросили кнопкой (тогда и свои папки).
             let forced = conn.check.swap(false, Ordering::Relaxed);
             if forced || last_poll.elapsed() >= poll() {
-                refresh(app, &mut session, &email, &cursors, forced).await?;
+                refresh(app, &mut session, &email, &mut cursors, forced).await?;
                 last_poll = std::time::Instant::now();
             }
             if forced {
@@ -868,7 +868,17 @@ async fn scan_folder(app: &AppHandle, session: &mut Session, email: &str, f: &Se
     let on_server: HashSet<u32> = if mailbox.exists == 0 {
         HashSet::new()
     } else {
-        session.uid_search("ALL").await?
+        let uids = session.uid_search("ALL").await?;
+        // Яндекс иногда отвечает на холодный поиск пустым списком, хотя письма есть:
+        // пустой курсор потом не даёт докачать папку. Лучше повторить позже.
+        if uids.is_empty() {
+            return Err(format!(
+                "UID SEARCH вернул 0 писем, а сервер сообщил {} — повторю позже",
+                mailbox.exists
+            )
+            .into());
+        }
+        uids
     };
     eprintln!(
         "mMail: {}: {}: EXAMINE {examined:?}, UID SEARCH {} писем {:?}",
@@ -881,8 +891,7 @@ async fn scan_folder(app: &AppHandle, session: &mut Session, email: &str, f: &Se
         let _ = app.emit("mailbox-changed", ());
     }
     let known = store.uids(email, f.folder);
-    let mut missing: Vec<u32> = on_server.iter().copied().filter(|uid| !known.contains(uid)).collect();
-    missing.sort_unstable_by(|a, b| b.cmp(a));
+    let missing = missing_uids(&on_server, &known);
     Ok(Cursor {
         folder: f.folder,
         name: f.server_name.clone(),
@@ -891,6 +900,13 @@ async fn scan_folder(app: &AppHandle, session: &mut Session, email: &str, f: &Se
         missing,
         batch: BATCH as usize,
     })
+}
+
+/// UID, которых ещё нет в кэше, — от новых к старым.
+fn missing_uids(on_server: &HashSet<u32>, known: &HashSet<u32>) -> Vec<u32> {
+    let mut missing: Vec<u32> = on_server.iter().copied().filter(|uid| !known.contains(uid)).collect();
+    missing.sort_unstable_by(|a, b| b.cmp(a));
+    missing
 }
 
 /// LIST заново: удалённые на сервере папки убираем из дерева и кэша, новые — начинаем синхронизировать.
@@ -1059,10 +1075,10 @@ async fn prefetch_bodies(
 }
 
 /// Новые письма (UID больше известных) и, если `with_flags`, актуальные флаги последних писем.
-async fn refresh(app: &AppHandle, session: &mut Session, email: &str, cursors: &[Cursor], with_flags: bool) -> Result<()> {
+async fn refresh(app: &AppHandle, session: &mut Session, email: &str, cursors: &mut [Cursor], with_flags: bool) -> Result<()> {
     let store = app.state::<Store>();
     let mut changed = false;
-    for cursor in cursors {
+    for cursor in cursors.iter_mut() {
         // Свои папки (не стандартные) проверяем реже — вместе с флагами, раз в минуту:
         // их может быть много, а EXAMINE каждой — лишний запрос на каждом опросе.
         if matches!(cursor.folder, Folder::Other(_)) && !with_flags {
@@ -1074,11 +1090,38 @@ async fn refresh(app: &AppHandle, session: &mut Session, email: &str, cursors: &
             if cursor.missing.is_empty() {
                 changed |= store.retain_on_server(email, cursor.folder, &HashSet::new());
             }
+            cursor.total = 0;
+            cursor.missing.clear();
             continue;
         }
-        let max = store.max_uid(email, cursor.folder);
+        let stored = store.uids(email, cursor.folder);
+        let max = stored.iter().copied().max().unwrap_or(0);
+        // Писем на сервере не столько, сколько у нас, — что-то удалили, перенесли
+        // в другом клиенте или первый SEARCH вернул пустой список. Сверяем UID целиком
+        // и недостающие отдаём основному циклу: он качает их порциями, а не запросом 1:*.
+        if cursor.missing.is_empty() && mailbox.exists as usize != stored.len() {
+            let on_server: HashSet<u32> = session.uid_search("ALL").await?;
+            if on_server.is_empty() {
+                eprintln!(
+                    "mMail: {}: {}: UID SEARCH пуст, а сервер сообщил {} — повторю позже",
+                    console_safe(email),
+                    console_safe(&cursor.display),
+                    mailbox.exists
+                );
+                continue;
+            }
+            changed |= store.retain_on_server(email, cursor.folder, &on_server);
+            let missing = missing_uids(&on_server, &stored);
+            if !missing.is_empty() {
+                cursor.total = on_server.len();
+                cursor.missing = missing;
+                // Докачаем обычными порциями в основном цикле — не просим 1:* целиком.
+                continue;
+            }
+        }
         // Пустую папку, которую ещё грузит основной цикл, не трогаем — иначе получим дубли.
-        if max > 0 || cursor.missing.is_empty() {
+        // Если история ещё качается, свежие письма всё равно проверяем: они приходят раньше.
+        if max > 0 {
             let fetches: Vec<Fetch> = session.uid_fetch(format!("{}:*", max + 1), HEADER_QUERY).await?.try_collect().await?;
             // «N:*» всегда возвращает хотя бы последнее письмо, даже если его UID меньше N.
             let fresh: Vec<Message> = fetches
@@ -1103,12 +1146,6 @@ async fn refresh(app: &AppHandle, session: &mut Session, email: &str, cursors: &
                     .collect();
                 crate::notify::new_mail(app, mail);
             }
-        }
-        // Писем на сервере не столько, сколько у нас, — что-то удалили или перенесли в другом клиенте.
-        // Тогда сверяем список UID (только когда история папки уже загружена).
-        if cursor.missing.is_empty() && mailbox.exists as usize != store.uids(email, cursor.folder).len() {
-            let on_server: HashSet<u32> = session.uid_search("ALL").await?;
-            changed |= store.retain_on_server(email, cursor.folder, &on_server);
         }
         if !with_flags {
             continue;
@@ -1450,6 +1487,15 @@ mod tests {
     fn uid_sets_collapse_runs() {
         assert_eq!(uid_set(&[10, 9, 3, 2, 1, 7]), "1:3,7,9:10");
         assert_eq!(uid_set(&[5]), "5");
+    }
+
+    #[test]
+    fn missing_uids_are_newest_first() {
+        let on_server: HashSet<u32> = [3, 1, 7, 5].into_iter().collect();
+        let known: HashSet<u32> = [1, 7].into_iter().collect();
+        assert_eq!(missing_uids(&on_server, &known), vec![5, 3]);
+        assert!(missing_uids(&on_server, &on_server).is_empty());
+        assert_eq!(missing_uids(&HashSet::new(), &known), Vec::<u32>::new());
     }
 
     #[test]
