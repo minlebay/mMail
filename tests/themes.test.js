@@ -1,6 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { applyTheme, THEMES } from '../src/lib/themes.js';
+import messages from '../src/lib/translations.json' with { type: 'json' };
+
+test('every theme has a unique id and translated name', () => {
+  assert.equal(new Set(THEMES.map((theme) => theme.id)).size, THEMES.length);
+  for (const theme of THEMES) {
+    for (const code of ['en', 'sr']) {
+      assert.ok(messages[theme.name]?.[code], `${code}: ${theme.name}`);
+    }
+  }
+});
 
 test('light and dark themes preserve the selected glass opacity', () => {
   const previous = globalThis.document;

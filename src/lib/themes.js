@@ -4,8 +4,12 @@ import { writable } from 'svelte/store';
 export const THEMES = [
   { id: 'amethyst', name: 'Аметист', accent: '#8b7bff', tint: [22, 17, 34] },
   { id: 'ocean', name: 'Океан', accent: '#4fb3ff', tint: [10, 22, 38] },
+  { id: 'turquoise', name: 'Бирюза', accent: '#2fd4dd', tint: [8, 27, 30] },
   { id: 'emerald', name: 'Изумруд', accent: '#3ddc97', tint: [10, 28, 24] },
+  { id: 'olive', name: 'Олива', accent: '#a8c256', tint: [22, 25, 12] },
+  { id: 'gold', name: 'Золото', accent: '#e8c25c', tint: [32, 26, 12] },
   { id: 'sunset', name: 'Закат', accent: '#ff8a5c', tint: [36, 18, 20] },
+  { id: 'cherry', name: 'Вишня', accent: '#e5484d', tint: [34, 12, 17] },
   { id: 'rose', name: 'Роза', accent: '#ff5c95', tint: [34, 14, 26] },
   { id: 'graphite', name: 'Графит', accent: '#b4b8c2', tint: [18, 18, 22] },
 ];

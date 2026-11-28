@@ -243,13 +243,29 @@
     "en": "Ocean",
     "sr": "Okean"
   },
+  "Бирюза": {
+    "en": "Turquoise",
+    "sr": "Tirkiz"
+  },
   "Изумруд": {
     "en": "Emerald",
     "sr": "Smaragd"
   },
+  "Олива": {
+    "en": "Olive",
+    "sr": "Maslina"
+  },
+  "Золото": {
+    "en": "Gold",
+    "sr": "Zlato"
+  },
   "Закат": {
     "en": "Sunset",
     "sr": "Zalazak sunca"
+  },
+  "Вишня": {
+    "en": "Cherry",
+    "sr": "Višnja"
   },
   "Роза": {
     "en": "Rose",
